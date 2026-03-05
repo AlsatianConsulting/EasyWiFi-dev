@@ -26,8 +26,8 @@ use gtk::prelude::*;
 use gtk::{
     Application, ApplicationWindow, Box as GtkBox, Button, CheckButton, ComboBoxText, Dialog,
     DrawingArea, Entry, EventControllerKey, Expander, FileChooserAction, FileChooserDialog,
-    GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned,
-    Popover, ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
+    GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned, Popover,
+    ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
     Window as GtkWindow,
 };
 use gtk4 as gtk;
@@ -4194,12 +4194,7 @@ fn bind_poll_loop(
                         *last_ap_detail_signature.borrow_mut() = Some(detail_signature);
                     }
 
-                    let assoc_clients = s
-                        .clients
-                        .iter()
-                        .filter(|client| client_seen_on_ap(client, &ap.bssid))
-                        .cloned()
-                        .collect::<Vec<_>>();
+                    let assoc_clients = clients_currently_on_ap(&s.clients, &ap.bssid);
                     let assoc_signature = assoc_clients_signature(
                         &assoc_clients,
                         &ap.bssid,
@@ -4720,7 +4715,7 @@ fn assoc_clients_signature(
     filters: &[(String, String)],
     watchlists: &WatchlistSettings,
 ) -> String {
-    let mut sorted = clients.to_vec();
+    let mut sorted = clients_currently_on_ap(clients, ap_bssid);
     sort_assoc_clients(&mut sorted, ap_bssid, aps, sort, watchlists);
     let visible_columns = layout
         .columns
@@ -4751,10 +4746,7 @@ fn assoc_clients_signature(
         .iter()
         .map(|client| client.probes.len())
         .sum::<usize>();
-    let current_count = filtered
-        .iter()
-        .filter(|client| client.associated_ap.as_deref() == Some(ap_bssid))
-        .count();
+    let current_count = filtered.len();
     let total_items = filtered.len();
     let (current_page, _, start, end) = paged_indices(total_items, current_page, page_size);
     let status_signature = filtered[start..end]
@@ -5649,7 +5641,7 @@ fn refresh_assoc_client_list(
 ) {
     clear_listbox(list);
     let filters = pagination_filter_terms(pagination);
-    let mut sorted = clients.to_vec();
+    let mut sorted = clients_currently_on_ap(clients, ap_bssid);
     sort_assoc_clients(&mut sorted, ap_bssid, aps, sort, watchlists);
     let no_watchlist_classes: Vec<String> = Vec::new();
     let filtered = sorted
@@ -7510,9 +7502,7 @@ fn apply_watchlist_css(provider: &gtk::CssProvider, watchlists: &WatchlistSettin
             let class_name = watchlist_css_class(index);
             let color_hex = normalize_watchlist_color(&entry.color_hex);
             let background = parse_watchlist_color_rgba(&color_hex, 0.30);
-            format!(
-                ".{class_name} {{ background-color: {background}; }}"
-            )
+            format!(".{class_name} {{ background-color: {background}; }}")
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -7676,6 +7666,14 @@ fn bluetooth_watchlist_match(
 
 fn client_seen_on_ap(client: &ClientRecord, ap_bssid: &str) -> bool {
     client.associated_ap.as_deref() == Some(ap_bssid)
+}
+
+fn clients_currently_on_ap(clients: &[ClientRecord], ap_bssid: &str) -> Vec<ClientRecord> {
+    clients
+        .iter()
+        .filter(|client| client_seen_on_ap(client, ap_bssid))
+        .cloned()
+        .collect()
 }
 
 fn emit_alert_tone(freq_hz: u32, duration_ms: u32) {
@@ -11186,7 +11184,9 @@ mod tests {
         }
 
         let columns = table_filter_columns(&layout, ap_column_label);
-        assert!(columns.iter().any(|(id, _, width)| id == "ssid" && *width == 23));
+        assert!(columns
+            .iter()
+            .any(|(id, _, width)| id == "ssid" && *width == 23));
         assert!(!columns.iter().any(|(id, _, _)| id == "bssid"));
     }
 
@@ -11199,5 +11199,53 @@ mod tests {
 
         assert!(client_seen_on_ap(&client, "11:22:33:44:55:66"));
         assert!(!client_seen_on_ap(&client, "77:88:99:AA:BB:CC"));
+    }
+
+    #[test]
+    fn clients_currently_on_ap_excludes_historical_entries() {
+        let now = Utc::now();
+        let mut current = ClientRecord::new("AA:BB:CC:DD:EE:01", now);
+        current.associated_ap = Some("11:22:33:44:55:66".to_string());
+
+        let mut historical = ClientRecord::new("AA:BB:CC:DD:EE:02", now);
+        historical.associated_ap = Some("77:88:99:AA:BB:CC".to_string());
+        historical.seen_access_points = vec!["11:22:33:44:55:66".to_string()];
+
+        let unassociated = ClientRecord::new("AA:BB:CC:DD:EE:03", now);
+        let clients = vec![current.clone(), historical, unassociated];
+
+        let filtered = clients_currently_on_ap(&clients, "11:22:33:44:55:66");
+        let macs = filtered
+            .iter()
+            .map(|client| client.mac.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(macs, vec![current.mac.as_str()]);
+    }
+
+    #[test]
+    fn assoc_clients_signature_ignores_non_current_clients() {
+        let now = Utc::now();
+        let mut current = ClientRecord::new("AA:BB:CC:DD:EE:01", now);
+        current.associated_ap = Some("11:22:33:44:55:66".to_string());
+
+        let mut other_ap = ClientRecord::new("AA:BB:CC:DD:EE:02", now);
+        other_ap.associated_ap = Some("77:88:99:AA:BB:CC".to_string());
+
+        let layout = default_assoc_client_table_layout();
+
+        let sig = assoc_clients_signature(
+            &[current, other_ap],
+            "11:22:33:44:55:66",
+            &[],
+            &layout,
+            &TableSortState::new("last_heard", true),
+            1,
+            50,
+            &[],
+            &WatchlistSettings::default(),
+        );
+
+        assert!(sig.starts_with("1|"));
     }
 }
