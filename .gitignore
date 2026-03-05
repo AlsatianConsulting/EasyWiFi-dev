@@ -1,0 +1,9 @@
+target/
+Cargo.lock
+*.db
+*.sqlite
+*.sqlite3
+*.pcap
+*.pcapng
+output/
+.DS_Store
