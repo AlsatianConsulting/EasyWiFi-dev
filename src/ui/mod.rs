@@ -5430,16 +5430,18 @@ fn refresh_ap_list(
         let row = ListBoxRow::new();
         row.set_widget_name(&ap.bssid);
         attach_row_click_selection(&row, list, selected_key_state.clone());
+        let line = GtkBox::new(Orientation::Horizontal, 14);
+        line.set_hexpand(true);
         let watchlist_match = ap_watchlist_match(&ap, &settings.watchlists);
         set_row_alert_classes(
             &row,
+            &line,
             watchlist_match
                 .as_ref()
                 .map(|matched| matched.css_class.as_str()),
             &watchlist_classes,
             ap.handshake_count > 0,
         );
-        let line = GtkBox::new(Orientation::Horizontal, 14);
         for column in settings
             .ap_table_layout
             .columns
@@ -5569,16 +5571,18 @@ fn refresh_client_list(
         let row = ListBoxRow::new();
         row.set_widget_name(&client.mac);
         attach_row_click_selection(&row, list, selected_key_state.clone());
+        let line = GtkBox::new(Orientation::Horizontal, 14);
+        line.set_hexpand(true);
         let watchlist_match = client_watchlist_match(&client, aps, &settings.watchlists);
         set_row_alert_classes(
             &row,
+            &line,
             watchlist_match
                 .as_ref()
                 .map(|matched| matched.css_class.as_str()),
             &watchlist_classes,
             false,
         );
-        let line = GtkBox::new(Orientation::Horizontal, 14);
         for column in settings
             .client_table_layout
             .columns
@@ -5663,8 +5667,9 @@ fn refresh_assoc_client_list(
     for client in filtered.iter().skip(start).take(end.saturating_sub(start)) {
         let row = ListBoxRow::new();
         attach_row_click_selection(&row, list, None);
-        set_row_alert_classes(&row, None, &no_watchlist_classes, false);
         let line = GtkBox::new(Orientation::Horizontal, 14);
+        line.set_hexpand(true);
+        set_row_alert_classes(&row, &line, None, &no_watchlist_classes, false);
         for column in layout.columns.iter().filter(|c| c.visible) {
             if let Some(value) = assoc_client_column_value_with_watchlist(
                 client, ap_bssid, aps, &column.id, watchlists,
@@ -5725,17 +5730,18 @@ fn refresh_bluetooth_list(
         let row = ListBoxRow::new();
         row.set_widget_name(&device.mac);
         attach_row_click_selection(&row, list, selected_key_state.clone());
+        let line = GtkBox::new(Orientation::Horizontal, 14);
+        line.set_hexpand(true);
         let watchlist_match = bluetooth_watchlist_match(&device, watchlists);
         set_row_alert_classes(
             &row,
+            &line,
             watchlist_match
                 .as_ref()
                 .map(|matched| matched.css_class.as_str()),
             &watchlist_classes,
             false,
         );
-
-        let line = GtkBox::new(Orientation::Horizontal, 14);
         for column in settings
             .bluetooth_table_layout
             .columns
@@ -6417,20 +6423,21 @@ fn display_dbm(value: Option<i32>) -> String {
 
 fn set_row_alert_classes(
     row: &ListBoxRow,
+    line: &GtkBox,
     watchlist_class: Option<&str>,
     all_watchlist_classes: &[String],
     handshake: bool,
 ) {
     for class_name in all_watchlist_classes {
         row.remove_css_class(class_name);
+        line.remove_css_class(class_name);
     }
+    row.remove_css_class("row-handshake");
+    line.remove_css_class("row-handshake");
     if let Some(class_name) = watchlist_class {
-        row.add_css_class(class_name);
-        row.remove_css_class("row-handshake");
+        line.add_css_class(class_name);
     } else if handshake {
-        row.add_css_class("row-handshake");
-    } else {
-        row.remove_css_class("row-handshake");
+        line.add_css_class("row-handshake");
     }
 }
 
