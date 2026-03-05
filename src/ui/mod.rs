@@ -1242,7 +1242,9 @@ fn build_table_pagination_controls(
     for (column_index, (column_id, column_label, width_chars)) in filter_columns.iter().enumerate()
     {
         let entry = Entry::new();
-        let entry_width = (*width_chars).max(8).min(24);
+        let entry_width = (*width_chars).max(6);
+        entry.add_css_class("table-cell");
+        gtk::prelude::EntryExt::set_alignment(&entry, 0.0);
         entry.set_width_chars(entry_width);
         entry.set_max_width_chars(entry_width);
         entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
