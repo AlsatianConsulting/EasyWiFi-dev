@@ -37,6 +37,8 @@ struct BeaconObservation {
     ssid: Option<String>,
     rssi_dbm: Option<i32>,
     channel: Option<u16>,
+    frame_count: u32,
+    saw_beacon: bool,
 }
 
 pub fn run_wifi_cli(args: &[String]) -> Result<()> {
@@ -1080,7 +1082,7 @@ fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
 fn print_channel_summary(channel: u16, observations: &[BeaconObservation], limit: usize) {
     println!("=== channel {} ===", channel);
     if observations.is_empty() {
-        println!("no beacon frames observed");
+        println!("no 802.11 frames with BSSID observed");
         println!();
         return;
     }
@@ -1095,11 +1097,18 @@ fn print_channel_summary(channel: u16, observations: &[BeaconObservation], limit
             .rssi_dbm
             .map(|value| format!("{} dBm", value))
             .unwrap_or_else(|| "unknown".to_string());
+        let source = if observation.saw_beacon {
+            "beacon"
+        } else {
+            "non-beacon"
+        };
         println!(
-            "{}  {:<16}  {}",
+            "{}  {:<16}  {:>8}  {}  ({} frames)",
             observation.bssid,
             truncate_text(ssid, 16),
-            rssi
+            rssi,
+            source,
+            observation.frame_count
         );
     }
     if observations.len() > limit {
@@ -1141,6 +1150,9 @@ fn capture_beacons_for_channel(
         if bssid.is_empty() {
             continue;
         }
+        if bssid.eq_ignore_ascii_case("ff:ff:ff:ff:ff:ff") {
+            continue;
+        }
         let ssid_raw = fields.next().unwrap_or("").trim().to_string();
         let rssi = fields
             .next()
@@ -1148,6 +1160,11 @@ fn capture_beacons_for_channel(
             .filter(|value| !value.is_empty())
             .and_then(|value| value.parse::<i32>().ok());
         let channel_seen = fields
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(|value| value.parse::<u16>().ok());
+        let subtype = fields
             .next()
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -1160,7 +1177,13 @@ fn capture_beacons_for_channel(
                 ssid: None,
                 rssi_dbm: None,
                 channel: channel_seen.or(Some(channel)),
+                frame_count: 0,
+                saw_beacon: false,
             });
+        entry.frame_count = entry.frame_count.saturating_add(1);
+        if subtype == Some(8) {
+            entry.saw_beacon = true;
+        }
 
         if !ssid_raw.is_empty() {
             entry.ssid = Some(ssid_raw);
@@ -1193,7 +1216,7 @@ fn build_tshark_command(interface: &str, duration_secs: u64) -> Command {
         .arg(format!("duration:{}", duration_secs.max(1)))
         .arg("-l")
         .arg("-Y")
-        .arg("wlan.fc.type_subtype == 8")
+        .arg("wlan.bssid && (wlan.fc.type == 0 || wlan.fc.type == 2)")
         .arg("-T")
         .arg("fields")
         .arg("-E")
@@ -1210,6 +1233,8 @@ fn build_tshark_command(interface: &str, duration_secs: u64) -> Command {
         .arg("radiotap.dbm_antsignal")
         .arg("-e")
         .arg("wlan_radio.channel")
+        .arg("-e")
+        .arg("wlan.fc.type_subtype")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command
