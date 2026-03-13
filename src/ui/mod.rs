@@ -8,11 +8,15 @@ use crate::model::{
     SessionMetadata, SpectrumBand,
 };
 use crate::oui::OuiDatabase;
+use crate::sdr::{
+    self, SdrConfig, SdrDecodeRow, SdrDecoderKind, SdrDependencyStatus, SdrEvent, SdrHardware,
+    SdrMapPoint, SdrRuntime, SdrSatcomObservation, SdrSpectrumFrame,
+};
 use crate::settings::{
     default_ap_table_layout, default_assoc_client_table_layout, default_bluetooth_table_layout,
-    default_client_table_layout, settings_file_path, AppSettings, ChannelSelectionMode,
-    GpsSettings, InterfaceSettings, StreamProtocol, TableColumnLayout, TableLayout,
-    WatchlistDeviceType, WatchlistEntry, WatchlistSettings,
+    default_client_table_layout, settings_file_path, AppSettings, BluetoothScanSource,
+    ChannelSelectionMode, GpsSettings, InterfaceSettings, StreamProtocol, TableColumnLayout,
+    TableLayout, WatchlistDeviceType, WatchlistEntry, WatchlistSettings, WifiPacketHeaderMode,
 };
 use crate::storage::StorageEngine;
 use anyhow::{Context, Result};
@@ -50,7 +54,7 @@ pub fn run() -> Result<()> {
     }
 
     let app = Application::builder()
-        .application_id("com.simplestg.app")
+        .application_id("com.wirelessexplorer.app")
         .build();
 
     app.connect_activate(|app| {
@@ -68,9 +72,11 @@ const ACCESS_POINTS_TAB_INDEX: u32 = 0;
 const CLIENTS_TAB_INDEX: u32 = 1;
 const BLUETOOTH_TAB_INDEX: u32 = 2;
 const CHANNEL_USAGE_TAB_INDEX: u32 = 3;
+const SDR_TAB_INDEX: u32 = 4;
 const UI_POLL_INTERVAL_MS: u64 = 120;
 const MAX_CAPTURE_EVENTS_PER_TICK: usize = 1200;
 const MAX_BLUETOOTH_EVENTS_PER_TICK: usize = 200;
+const MAX_SDR_EVENTS_PER_TICK: usize = 200;
 const MAX_WIFI_GEIGER_UPDATES_PER_TICK: usize = 8;
 const MIN_LIST_REFRESH_INTERVAL_MS: u64 = 140;
 const TABLE_CHAR_WIDTH_PX: i32 = 10;
@@ -87,6 +93,9 @@ const DEFAULT_CLIENT_ROOT_POSITION: i32 = 380;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 360;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 360;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 430;
+const DEFAULT_SDR_ROOT_POSITION: i32 = 420;
+const FAKE_GPS_LATITUDE: f64 = 35.145_395_7;
+const FAKE_GPS_LONGITUDE: f64 = -79.474_718_1;
 
 #[derive(Clone)]
 enum PersistenceCommand {
@@ -144,6 +153,8 @@ struct AppState {
     capture_sender: Sender<CaptureEvent>,
     bluetooth_runtime: Option<BluetoothRuntime>,
     bluetooth_sender: Sender<BluetoothEvent>,
+    sdr_runtime: Option<SdrRuntime>,
+    sdr_sender: Sender<SdrEvent>,
     session_capture_path: PathBuf,
     gps_track: Vec<GeoObservation>,
     last_gps_track_point_at: Option<chrono::DateTime<Utc>>,
@@ -169,6 +180,24 @@ struct AppState {
 }
 
 impl AppState {
+    fn fixed_gps_observation(&self, rssi_dbm: Option<i32>) -> GeoObservation {
+        GeoObservation {
+            timestamp: Utc::now(),
+            latitude: FAKE_GPS_LATITUDE,
+            longitude: FAKE_GPS_LONGITUDE,
+            altitude_m: None,
+            rssi_dbm,
+        }
+    }
+
+    fn gps_track_for_export(&self) -> Vec<GeoObservation> {
+        if self.gps_track.is_empty() {
+            vec![self.fixed_gps_observation(None)]
+        } else {
+            self.gps_track.clone()
+        }
+    }
+
     fn enqueue_persistence(&self, command: PersistenceCommand) {
         let _ = self.persistence_sender.send(command);
     }
@@ -244,8 +273,8 @@ impl AppState {
             .unwrap_or_else(|| "No fix".to_string());
 
         format!(
-            "GPS {} | {} | Last Fix: {} | {}",
-            status.mode, state, last_fix, status.detail
+            "GPS {} | {} | Last Fix: {} | {} | Output GPS: {}, {}",
+            status.mode, state, last_fix, status.detail, FAKE_GPS_LATITUDE, FAKE_GPS_LONGITUDE
         )
     }
 
@@ -270,7 +299,7 @@ impl AppState {
         let exporter = ExportManager::new(&output_root, &session_id)?;
         exporter.create_initial_outputs()?;
 
-        let sqlite_path = exporter.paths.session_dir.join("simplestg.sqlite");
+        let sqlite_path = exporter.paths.session_dir.join("wirelessexplorer.sqlite");
         let storage = StorageEngine::open(&sqlite_path)?;
 
         let session_meta = SessionMetadata {
@@ -459,7 +488,7 @@ impl AppState {
                     &handshake.bssid,
                     &handshake.client_mac,
                     handshake.timestamp,
-                    &self.gps_track,
+                    &self.gps_track_for_export(),
                 ) {
                     Ok(path) => self.push_status(format!(
                         "saved handshake capture: {}",
@@ -596,17 +625,14 @@ impl AppState {
     }
 
     fn build_geo_observation(&self, rssi_dbm: Option<i32>) -> Option<GeoObservation> {
-        let fix = self.gps_provider.current_fix()?;
-        Some(GeoObservation {
-            timestamp: Utc::now(),
-            latitude: fix.latitude,
-            longitude: fix.longitude,
-            altitude_m: fix.altitude_m,
-            rssi_dbm,
-        })
+        Some(self.fixed_gps_observation(rssi_dbm))
     }
 
     fn maybe_record_gps_track_point(&mut self) {
+        if self.capture_runtime.is_none() && self.bluetooth_runtime.is_none() {
+            return;
+        }
+
         let now = Utc::now();
         if let Some(last) = self.last_gps_track_point_at {
             if now - last < chrono::Duration::seconds(1) {
@@ -614,24 +640,35 @@ impl AppState {
             }
         }
 
-        let Some(fix) = self.gps_provider.current_fix() else {
-            return;
-        };
-
-        if fix.latitude.abs() > 90.0 || fix.longitude.abs() > 180.0 {
-            return;
-        }
-
         let point = GeoObservation {
             timestamp: now,
-            latitude: fix.latitude,
-            longitude: fix.longitude,
-            altitude_m: fix.altitude_m,
+            latitude: FAKE_GPS_LATITUDE,
+            longitude: FAKE_GPS_LONGITUDE,
+            altitude_m: None,
             rssi_dbm: None,
         };
         self.gps_track.push(point.clone());
         self.last_gps_track_point_at = Some(now);
         self.enqueue_persistence(PersistenceCommand::AddGpsTrackPoint(point));
+    }
+
+    fn start_sdr_runtime(&mut self, config: SdrConfig) {
+        if let Some(runtime) = self.sdr_runtime.take() {
+            runtime.stop();
+        }
+        self.push_status(format!(
+            "starting SDR runtime ({}) at {} Hz",
+            config.hardware.label(),
+            config.center_freq_hz
+        ));
+        self.sdr_runtime = Some(sdr::start_runtime(config, self.sdr_sender.clone()));
+    }
+
+    fn stop_sdr_runtime(&mut self) {
+        if let Some(runtime) = self.sdr_runtime.take() {
+            runtime.stop();
+            self.push_status("SDR runtime stopped".to_string());
+        }
     }
 
     fn start_scanning(&mut self) {
@@ -658,12 +695,14 @@ impl AppState {
 
         let interfaces = self.settings.interfaces.clone();
         let session_capture_path = self.session_capture_path.clone();
-        let geoip_city_db_path = self.settings.geoip_city_db_path.clone();
+        let wifi_packet_header_mode = self.settings.wifi_packet_header_mode;
         let gps_enabled = !matches!(self.settings.gps, GpsSettings::Disabled);
         let capture_sender = self.capture_sender.clone();
         let bluetooth_sender = self.bluetooth_sender.clone();
         let bluetooth_config = BluetoothScanConfig {
             controller: self.settings.bluetooth_controller.clone(),
+            source: self.settings.bluetooth_scan_source,
+            ubertooth_device: self.settings.ubertooth_device.clone(),
             scan_timeout_secs: self.settings.bluetooth_scan_timeout_secs,
             pause_ms: self.settings.bluetooth_scan_pause_ms,
         };
@@ -682,7 +721,7 @@ impl AppState {
                 let wifi_result = prepare_and_start_wifi_capture(
                     interfaces,
                     session_capture_path,
-                    geoip_city_db_path,
+                    wifi_packet_header_mode,
                     gps_enabled,
                     capture_sender,
                 );
@@ -732,6 +771,8 @@ impl AppState {
         let runtime = bluetooth::start_scan(
             BluetoothScanConfig {
                 controller: self.settings.bluetooth_controller.clone(),
+                source: self.settings.bluetooth_scan_source,
+                ubertooth_device: self.settings.ubertooth_device.clone(),
                 scan_timeout_secs: self.settings.bluetooth_scan_timeout_secs,
                 pause_ms: self.settings.bluetooth_scan_pause_ms,
             },
@@ -956,7 +997,7 @@ impl AppState {
 }
 
 fn prepare_live_capture_path(session_id: &str) -> Result<PathBuf> {
-    let live_root = std::env::temp_dir().join("simplestg-live");
+    let live_root = std::env::temp_dir().join("wirelessexplorer-live");
     fs::create_dir_all(&live_root)
         .with_context(|| format!("failed to create {}", live_root.display()))?;
     #[cfg(target_family = "unix")]
@@ -1020,7 +1061,9 @@ fn start_persistence_worker(storage: StorageEngine) -> Sender<PersistenceCommand
 }
 
 fn internal_runtime_output_root() -> PathBuf {
-    std::env::temp_dir().join("simplestg-runtime")
+    let base = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
+    let uid = unsafe { libc::geteuid() };
+    base.join(format!("wirelessexplorer-runtime-uid{}", uid))
 }
 
 fn normalize_rssi_fraction(rssi_dbm: i32) -> f64 {
@@ -1103,6 +1146,21 @@ struct WifiGeigerUiState {
     last_animation_at: Option<Instant>,
 }
 
+#[derive(Debug, Default)]
+struct SdrUiModel {
+    current_freq_hz: u64,
+    sample_rate_hz: u32,
+    sweep_paused: bool,
+    decoder_running: Option<String>,
+    squelch_dbm: f32,
+    spectrum_bins: Vec<f32>,
+    spectrogram_rows: Vec<Vec<f32>>,
+    decode_rows: Vec<SdrDecodeRow>,
+    map_points: Vec<SdrMapPoint>,
+    satcom_observations: Vec<SdrSatcomObservation>,
+    dependency_status: Vec<SdrDependencyStatus>,
+}
+
 #[derive(Clone)]
 struct UiWidgets {
     ap_root: Paned,
@@ -1160,6 +1218,19 @@ struct UiWidgets {
     bluetooth_geiger_progress: ProgressBar,
     bluetooth_geiger_state: Rc<RefCell<BluetoothGeigerUiState>>,
     channel_draw: DrawingArea,
+    sdr_frequency_label: Label,
+    sdr_decoder_label: Label,
+    sdr_dependency_label: Label,
+    sdr_fft_draw: DrawingArea,
+    sdr_spectrogram_draw: DrawingArea,
+    sdr_map_draw: DrawingArea,
+    sdr_decode_header_holder: GtkBox,
+    sdr_decode_list: ListBox,
+    sdr_decode_pagination: TablePaginationUi,
+    sdr_satcom_header_holder: GtkBox,
+    sdr_satcom_list: ListBox,
+    sdr_satcom_pagination: TablePaginationUi,
+    sdr_model: Rc<RefCell<SdrUiModel>>,
     status_label: Label,
     gps_status_label: Label,
 }
@@ -1250,6 +1321,7 @@ fn build_table_pagination_controls(
         entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
         entry.set_margin_end(6);
         entry.set_placeholder_text(Some(column_label));
+        entry.set_tooltip_text(Some(&format!("Filter {}", column_label)));
         filter_bar.attach(&entry, column_index as i32, 0, 1, 1);
         filter_entries
             .borrow_mut()
@@ -1459,7 +1531,7 @@ fn table_filter_columns(
 fn build_ui(app: &Application) -> Result<()> {
     let window = ApplicationWindow::builder()
         .application(app)
-        .title("SimpleSTG")
+        .title("WirelessExplorer")
         .default_width(DEFAULT_WINDOW_WIDTH)
         .default_height(DEFAULT_WINDOW_HEIGHT)
         .build();
@@ -1542,7 +1614,7 @@ fn build_ui(app: &Application) -> Result<()> {
     let exporter = ExportManager::new(&runtime_output_dir, &session_id)?;
     exporter.create_initial_outputs()?;
 
-    let sqlite_path = exporter.paths.session_dir.join("simplestg.sqlite");
+    let sqlite_path = exporter.paths.session_dir.join("wirelessexplorer.sqlite");
     let storage = StorageEngine::open(&sqlite_path)?;
     let persistence_sender = start_persistence_worker(storage.clone());
     let existing_gps_track = storage.load_gps_track().unwrap_or_default();
@@ -1581,14 +1653,25 @@ fn build_ui(app: &Application) -> Result<()> {
 
     let (capture_tx, capture_rx) = unbounded::<CaptureEvent>();
     let (bluetooth_tx, bluetooth_rx) = unbounded::<BluetoothEvent>();
+    let (sdr_tx, sdr_rx) = unbounded::<SdrEvent>();
     let session_capture_path = prepare_live_capture_path(&session_id)?;
 
     let runtime: Option<CaptureRuntime> = None;
     let bluetooth_runtime: Option<BluetoothRuntime> = None;
+    let sdr_runtime: Option<SdrRuntime> = None;
 
     let initial_gps_track_points = existing_gps_track.len();
     let bluetooth_controller_status = settings
         .bluetooth_controller
+        .clone()
+        .unwrap_or_else(|| "<default>".to_string());
+    let bluetooth_source_status = match settings.bluetooth_scan_source {
+        BluetoothScanSource::Bluez => "BlueZ",
+        BluetoothScanSource::Ubertooth => "Ubertooth",
+        BluetoothScanSource::Both => "BlueZ + Ubertooth",
+    };
+    let ubertooth_device_status = settings
+        .ubertooth_device
         .clone()
         .unwrap_or_else(|| "<default>".to_string());
 
@@ -1607,6 +1690,8 @@ fn build_ui(app: &Application) -> Result<()> {
         capture_sender: capture_tx,
         bluetooth_runtime,
         bluetooth_sender: bluetooth_tx,
+        sdr_runtime,
+        sdr_sender: sdr_tx,
         session_capture_path,
         gps_track: existing_gps_track,
         last_gps_track_point_at: None,
@@ -1628,9 +1713,15 @@ fn build_ui(app: &Application) -> Result<()> {
                 "bluetooth controller: {}",
                 bluetooth_controller_status
             ));
+            lines.push(format!("bluetooth source: {}", bluetooth_source_status));
+            lines.push(format!("ubertooth device: {}", ubertooth_device_status));
             lines.push(format!(
                 "loaded GPS track points: {}",
                 initial_gps_track_points
+            ));
+            lines.push(format!(
+                "GPS output coordinates fixed to {}, {}",
+                FAKE_GPS_LATITUDE, FAKE_GPS_LONGITUDE
             ));
             lines
         },
@@ -1750,6 +1841,7 @@ fn build_ui(app: &Application) -> Result<()> {
     bind_poll_loop(
         capture_rx,
         bluetooth_rx,
+        sdr_rx,
         state.clone(),
         widgets,
         capture_start_btn,
@@ -1760,11 +1852,15 @@ fn build_ui(app: &Application) -> Result<()> {
         &window,
     );
 
-    if std::env::var_os("SIMPLESTG_AUTOSTART").is_some() {
+    if std::env::var_os("WIRELESSEXPLORER_AUTOSTART").is_some()
+        || std::env::var_os("SIMPLESTG_AUTOSTART").is_some()
+    {
         state.borrow_mut().start_scanning();
     }
 
-    if let Some(value) = std::env::var_os("SIMPLESTG_AUTOSTOP_AFTER_SECS") {
+    if let Some(value) = std::env::var_os("WIRELESSEXPLORER_AUTOSTOP_AFTER_SECS")
+        .or_else(|| std::env::var_os("SIMPLESTG_AUTOSTOP_AFTER_SECS"))
+    {
         if let Ok(delay_secs) = value.to_string_lossy().parse::<u32>() {
             let state_for_autostop = state.clone();
             let armed_at = Rc::new(Cell::new(None::<Instant>));
@@ -1809,6 +1905,9 @@ fn build_ui(app: &Application) -> Result<()> {
         if let Some(runtime) = state.bluetooth_runtime.take() {
             runtime.stop();
         }
+        if let Some(runtime) = state.sdr_runtime.take() {
+            runtime.stop();
+        }
         let restore_status = restore_wifi_interfaces(
             &state.settings.interfaces,
             &state.wifi_interface_restore_types,
@@ -1840,19 +1939,39 @@ fn build_menubar(
         let state = state.clone();
         export_all_action.connect_activate(move |_, _| {
             let mut s = state.borrow_mut();
-            let _ = s.exporter.export_access_points_csv(&s.access_points);
-            let _ = s.exporter.export_clients_csv(&s.clients);
+            let ap_csv = s.exporter.export_access_points_csv(&s.access_points);
+            let client_csv = s.exporter.export_clients_csv(&s.clients);
+            let summary_json =
+                s.exporter
+                    .export_summary_json(&s.access_points, &s.clients, &s.bluetooth_devices);
+            let gps_track = s.gps_track_for_export();
             let gps_pcap = s
                 .exporter
-                .export_session_pcap_with_gps(&s.session_capture_path, &s.gps_track);
-            match gps_pcap {
-                Ok(_) => {
-                    s.push_status("exported AP/client CSV and consolidated GPS PCAPNG".to_string())
-                }
-                Err(err) => s.push_status(format!(
-                    "exported CSV; consolidated GPS PCAPNG failed: {err}"
+                .export_session_pcap_with_gps(&s.session_capture_path, &gps_track);
+            match (ap_csv, client_csv, summary_json, gps_pcap) {
+                (Ok(_), Ok(_), Ok(_), Ok(_)) => s.push_status(
+                    "exported AP/client CSV + summary JSON + consolidated GPS PCAPNG".to_string(),
+                ),
+                (ap_res, client_res, json_res, pcap_res) => s.push_status(format!(
+                    "export incomplete: ap_csv={} client_csv={} summary_json={} pcap={}",
+                    ap_res
+                        .err()
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "ok".to_string()),
+                    client_res
+                        .err()
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "ok".to_string()),
+                    json_res
+                        .err()
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "ok".to_string()),
+                    pcap_res
+                        .err()
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "ok".to_string())
                 )),
-            }
+            };
         });
     }
     app.add_action(&export_all_action);
@@ -1872,15 +1991,33 @@ fn build_menubar(
                 &s.clients,
                 &s.bluetooth_devices,
             );
-            match (csv, kml) {
-                (Ok(_), Ok(_)) => s.push_status("exported location logs (CSV + KML)".to_string()),
-                (csv_res, kml_res) => s.push_status(format!(
-                    "location export incomplete: csv={} kml={}",
+            let kmz = s.exporter.export_location_logs_kmz(
+                &s.access_points,
+                &s.clients,
+                &s.bluetooth_devices,
+            );
+            let summary_json =
+                s.exporter
+                    .export_summary_json(&s.access_points, &s.clients, &s.bluetooth_devices);
+            match (csv, kml, kmz, summary_json) {
+                (Ok(_), Ok(_), Ok(_), Ok(_)) => s.push_status(
+                    "exported location logs (CSV + KML + KMZ) and summary JSON".to_string(),
+                ),
+                (csv_res, kml_res, kmz_res, json_res) => s.push_status(format!(
+                    "location export incomplete: csv={} kml={} kmz={} summary_json={}",
                     csv_res
                         .err()
                         .map(|e| e.to_string())
                         .unwrap_or_else(|| "ok".to_string()),
                     kml_res
+                        .err()
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "ok".to_string()),
+                    kmz_res
+                        .err()
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "ok".to_string()),
+                    json_res
                         .err()
                         .map(|e| e.to_string())
                         .unwrap_or_else(|| "ok".to_string())
@@ -2137,11 +2274,11 @@ fn build_menubar(
 
     let file_menu = gio::Menu::new();
     file_menu.append(
-        Some("Export CSV + Consolidated PCAP"),
+        Some("Export CSV + Summary JSON + Consolidated PCAP"),
         Some("app.export_all"),
     );
     file_menu.append(
-        Some("Export Location Logs (CSV + KML)"),
+        Some("Export Location Logs (CSV + KML + KMZ + JSON)"),
         Some("app.export_locations"),
     );
     file_menu.append(Some("Update OUI Database"), Some("app.update_oui"));
@@ -2400,13 +2537,20 @@ fn migrate_assoc_client_table_layout(layout: &mut TableLayout) {
 fn prepare_and_start_wifi_capture(
     mut interfaces: Vec<InterfaceSettings>,
     session_capture_path: PathBuf,
-    geoip_city_db_path: PathBuf,
+    wifi_packet_header_mode: WifiPacketHeaderMode,
     gps_enabled: bool,
     capture_sender: Sender<CaptureEvent>,
 ) -> WifiStartResult {
     let mut status_lines = Vec::new();
     let mut privilege_alert = None;
     let mut wifi_interface_restore_types = HashMap::new();
+    status_lines.push(format!(
+        "Wi-Fi packet headers set to {}",
+        match wifi_packet_header_mode {
+            WifiPacketHeaderMode::Radiotap => "Radiotap",
+            WifiPacketHeaderMode::Ppi => "PPI",
+        }
+    ));
 
     for iface in interfaces.iter_mut().filter(|i| i.enabled) {
         match capture::prepare_interface_for_capture(iface.clone(), true) {
@@ -2446,7 +2590,7 @@ fn prepare_and_start_wifi_capture(
         CaptureConfig {
             interfaces: interfaces.clone(),
             session_pcap_path: Some(session_capture_path),
-            geoip_city_db_path: Some(geoip_city_db_path),
+            wifi_packet_header_mode,
             gps_enabled,
             passive_only: true,
         },
@@ -2468,12 +2612,12 @@ fn format_wifi_start_failure_text(interface: &str, error_text: &str) -> String {
     let helper_hint = capture::helper_binary_hint();
     if capture::running_as_root() {
         format!(
-            "SimpleSTG could not prepare {} for Wi-Fi capture.\n\n{}\n\nWi-Fi capture was not started.\n\nSimpleSTG is already running as root, so no additional privilege prompt was used. Verify the interface name, driver support, and that `ip`/`iw` succeeded under this root session.",
+            "WirelessExplorer could not prepare {} for Wi-Fi capture.\n\n{}\n\nWi-Fi capture was not started.\n\nWirelessExplorer is already running as root, so no additional privilege prompt was used. Verify the interface name, driver support, and that `ip`/`iw` succeeded under this root session.",
             interface, error_text
         )
     } else {
         format!(
-            "SimpleSTG could not prepare {} for Wi-Fi capture.\n\n{}\n\nWi-Fi capture was not started.\n\nRun the GUI as your normal user. One of these privilege paths must work:\n1. `pkexec` with a working polkit agent\n2. passwordless `sudo -n` for `{}`\n3. helper capabilities:\n   sudo setcap cap_net_admin,cap_net_raw=eip {}",
+            "WirelessExplorer could not prepare {} for Wi-Fi capture.\n\n{}\n\nWi-Fi capture was not started.\n\nRun the GUI as your normal user. One of these privilege paths must work:\n1. `pkexec` with a working polkit agent\n2. passwordless `sudo -n` for `{}`\n3. helper capabilities:\n   sudo setcap cap_net_admin,cap_net_raw=eip {}",
             interface, error_text, helper_hint, helper_hint
         )
     }
@@ -2541,9 +2685,9 @@ fn open_privilege_failure_dialog(window: &ApplicationWindow, message: &str) {
     let wrapper = GtkBox::new(Orientation::Vertical, 8);
 
     let intro = Label::new(Some(if capture::running_as_root() {
-        "SimpleSTG could not start Wi-Fi capture because a root-level Wi-Fi command failed."
+        "WirelessExplorer could not start Wi-Fi capture because a root-level Wi-Fi command failed."
     } else {
-        "SimpleSTG could not start Wi-Fi capture because privilege escalation failed."
+        "WirelessExplorer could not start Wi-Fi capture because privilege escalation failed."
     }));
     intro.set_xalign(0.0);
     intro.set_wrap(true);
@@ -3295,6 +3439,325 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     channel_root.set_end_child(Some(&channel_status_scrolled));
     notebook.append_page(&channel_root, Some(&Label::new(Some("Channel Usage"))));
 
+    let sdr_model = Rc::new(RefCell::new(SdrUiModel {
+        current_freq_hz: SdrConfig::default().center_freq_hz,
+        sample_rate_hz: SdrConfig::default().sample_rate_hz,
+        squelch_dbm: SdrConfig::default().squelch_dbm,
+        ..SdrUiModel::default()
+    }));
+    let sdr_frequency_label = Label::new(Some(
+        "Center: 433920000 Hz | Sample Rate: 2400000 Hz | Sweep: active",
+    ));
+    sdr_frequency_label.set_xalign(0.0);
+    let sdr_decoder_label = Label::new(Some("Decoder: idle"));
+    sdr_decoder_label.set_xalign(0.0);
+    let sdr_dependency_label = Label::new(Some("Dependencies: not checked"));
+    sdr_dependency_label.set_xalign(0.0);
+    sdr_dependency_label.set_wrap(true);
+
+    let sdr_hardware_combo = ComboBoxText::new();
+    for hardware in [
+        SdrHardware::RtlSdr,
+        SdrHardware::HackRf,
+        SdrHardware::BladeRf,
+        SdrHardware::EttusB210,
+    ] {
+        sdr_hardware_combo.append(Some(hardware.id()), hardware.label());
+    }
+    sdr_hardware_combo.set_active_id(Some(SdrHardware::default().id()));
+
+    let sdr_center_freq_entry = Entry::new();
+    sdr_center_freq_entry.set_width_chars(14);
+    sdr_center_freq_entry.set_text(&SdrConfig::default().center_freq_hz.to_string());
+    let sdr_sample_rate_entry = Entry::new();
+    sdr_sample_rate_entry.set_width_chars(10);
+    sdr_sample_rate_entry.set_text(&SdrConfig::default().sample_rate_hz.to_string());
+    let sdr_set_frequency_btn = Button::with_label("Set Center");
+    let sdr_start_btn = Button::with_label("Start SDR");
+    let sdr_stop_btn = Button::with_label("Stop SDR");
+    let sdr_pause_check = CheckButton::with_label("Pause Sweep");
+
+    let sdr_decoder_combo = ComboBoxText::new();
+    let sdr_builtin_decoders = sdr::builtin_decoders_in_priority_order();
+    let plugin_path = sdr::default_plugin_config_path();
+    let plugin_decoders = sdr::load_plugin_definitions(plugin_path.as_deref())
+        .into_iter()
+        .map(|plugin| SdrDecoderKind::Plugin {
+            id: plugin.id,
+            label: plugin.label,
+            command_template: plugin.command_template,
+            protocol: plugin.protocol,
+        })
+        .collect::<Vec<_>>();
+    let mut sdr_decoders = Vec::with_capacity(sdr_builtin_decoders.len() + plugin_decoders.len());
+    sdr_decoders.extend(sdr_builtin_decoders);
+    sdr_decoders.extend(plugin_decoders);
+    let sdr_decoder_lookup: Rc<RefCell<HashMap<String, SdrDecoderKind>>> =
+        Rc::new(RefCell::new(HashMap::new()));
+    let sdr_decoder_order: Rc<Vec<String>> =
+        Rc::new(sdr_decoders.iter().map(|decoder| decoder.id()).collect());
+    for decoder in &sdr_decoders {
+        let id = decoder.id();
+        let label = decoder.label();
+        sdr_decoder_combo.append(Some(&id), &label);
+        sdr_decoder_lookup
+            .borrow_mut()
+            .insert(id.to_string(), decoder.clone());
+    }
+    sdr_decoder_combo.set_active(Some(0));
+
+    let sdr_decode_start_btn = Button::with_label("Start Decode");
+    let sdr_decode_stop_btn = Button::with_label("Stop Decode");
+    let sdr_dep_refresh_btn = Button::with_label("Refresh Dependencies");
+    let sdr_dep_install_btn = Button::with_label("Install Missing Dependencies");
+
+    let sdr_log_enable_check = CheckButton::with_label("Log decoder output");
+    let sdr_log_dir_entry = Entry::new();
+    sdr_log_dir_entry.set_width_chars(42);
+    sdr_log_dir_entry.set_text(
+        SdrConfig::default()
+            .log_output_dir
+            .to_string_lossy()
+            .as_ref(),
+    );
+    let sdr_scan_enable_check = CheckButton::with_label("Scan Range");
+    sdr_scan_enable_check.set_active(SdrConfig::default().scan_range_enabled);
+    let sdr_scan_start_entry = Entry::new();
+    sdr_scan_start_entry.set_width_chars(12);
+    sdr_scan_start_entry.set_text(&SdrConfig::default().scan_start_hz.to_string());
+    let sdr_scan_end_entry = Entry::new();
+    sdr_scan_end_entry.set_width_chars(12);
+    sdr_scan_end_entry.set_text(&SdrConfig::default().scan_end_hz.to_string());
+    let sdr_scan_step_entry = Entry::new();
+    sdr_scan_step_entry.set_width_chars(10);
+    sdr_scan_step_entry.set_text(&SdrConfig::default().scan_step_hz.to_string());
+    let sdr_scan_speed_entry = Entry::new();
+    sdr_scan_speed_entry.set_width_chars(6);
+    sdr_scan_speed_entry.set_text(&format!("{:.2}", SdrConfig::default().scan_steps_per_sec));
+    let sdr_squelch_scale = gtk::Scale::with_range(Orientation::Horizontal, -130.0, -10.0, 1.0);
+    sdr_squelch_scale.set_hexpand(true);
+    sdr_squelch_scale.set_value(SdrConfig::default().squelch_dbm as f64);
+    let sdr_squelch_value_label = Label::new(Some(&format!(
+        "{:.0} dBm",
+        SdrConfig::default().squelch_dbm
+    )));
+    sdr_squelch_value_label.set_xalign(0.0);
+    let sdr_autotune_check = CheckButton::with_label("Auto-tune decoders");
+    sdr_autotune_check.set_active(SdrConfig::default().auto_tune_decoders);
+    let sdr_bias_tee_check = CheckButton::with_label("Bias-Tee / Antenna Power");
+    sdr_bias_tee_check.set_active(SdrConfig::default().bias_tee_enabled);
+    let sdr_no_payload_satcom_check = CheckButton::with_label("No payload for satcom decoders");
+    sdr_no_payload_satcom_check.set_active(SdrConfig::default().no_payload_satcom);
+    let sdr_sample_duration_spin = SpinButton::with_range(1.0, 600.0, 1.0);
+    sdr_sample_duration_spin.set_value(10.0);
+    let sdr_sample_dir_entry = Entry::new();
+    sdr_sample_dir_entry.set_width_chars(42);
+    sdr_sample_dir_entry.set_text(
+        SdrConfig::default()
+            .log_output_dir
+            .join("iq_samples")
+            .to_string_lossy()
+            .as_ref(),
+    );
+    let sdr_capture_sample_btn = Button::with_label("Capture IQ Sample");
+    let sdr_export_map_btn = Button::with_label("Export Map JSON");
+    let sdr_export_satcom_btn = Button::with_label("Export Satcom JSON");
+
+    let mut initial_sdr_bookmarks = vec![
+        ("ADS-B (1090 MHz)".to_string(), 1_090_000_000),
+        ("ACARS (131.550 MHz)".to_string(), 131_550_000),
+        ("AIS Ch A (161.975 MHz)".to_string(), 161_975_000),
+        ("AIS Ch B (162.025 MHz)".to_string(), 162_025_000),
+        ("POCSAG (929.6125 MHz)".to_string(), 929_612_500),
+        ("NOAA WX 162.550".to_string(), 162_550_000),
+        ("APRS 144.390".to_string(), 144_390_000),
+        ("Iridium 1626 MHz".to_string(), 1_626_000_000),
+        ("Inmarsat Aero 1545.000".to_string(), 1_545_000_000),
+        ("DAB Block 11D 222.064".to_string(), 222_064_000),
+        ("VOR 113.000".to_string(), 113_000_000),
+    ];
+    initial_sdr_bookmarks.extend(load_gqrx_bookmarks());
+    initial_sdr_bookmarks.sort_by_key(|(_, freq)| *freq);
+    initial_sdr_bookmarks.dedup_by(|left, right| left.1 == right.1);
+    let sdr_bookmarks: Rc<RefCell<Vec<(String, u64)>>> =
+        Rc::new(RefCell::new(initial_sdr_bookmarks));
+    let sdr_bookmark_combo = ComboBoxText::new();
+    for (label, freq) in sdr_bookmarks.borrow().iter() {
+        sdr_bookmark_combo.append(Some(&freq.to_string()), label);
+    }
+    sdr_bookmark_combo.set_active(Some(0));
+    let sdr_bookmark_add_btn = Button::with_label("Add Bookmark");
+    let sdr_bookmark_jump_btn = Button::with_label("Jump");
+
+    let sdr_controls = Grid::new();
+    sdr_controls.set_column_spacing(10);
+    sdr_controls.set_row_spacing(6);
+    sdr_controls.attach(&Label::new(Some("Hardware")), 0, 0, 1, 1);
+    sdr_controls.attach(&sdr_hardware_combo, 1, 0, 1, 1);
+    sdr_controls.attach(&Label::new(Some("Center (Hz)")), 2, 0, 1, 1);
+    sdr_controls.attach(&sdr_center_freq_entry, 3, 0, 1, 1);
+    sdr_controls.attach(&Label::new(Some("Sample Rate")), 4, 0, 1, 1);
+    sdr_controls.attach(&sdr_sample_rate_entry, 5, 0, 1, 1);
+    sdr_controls.attach(&sdr_set_frequency_btn, 6, 0, 1, 1);
+    sdr_controls.attach(&sdr_start_btn, 7, 0, 1, 1);
+    sdr_controls.attach(&sdr_stop_btn, 8, 0, 1, 1);
+    sdr_controls.attach(&sdr_pause_check, 9, 0, 1, 1);
+    sdr_controls.attach(&Label::new(Some("Decode")), 0, 1, 1, 1);
+    sdr_controls.attach(&sdr_decoder_combo, 1, 1, 2, 1);
+    sdr_controls.attach(&sdr_decode_start_btn, 3, 1, 1, 1);
+    sdr_controls.attach(&sdr_decode_stop_btn, 4, 1, 1, 1);
+    sdr_controls.attach(&sdr_dep_refresh_btn, 5, 1, 2, 1);
+    sdr_controls.attach(&sdr_dep_install_btn, 7, 1, 3, 1);
+    sdr_controls.attach(&sdr_log_enable_check, 0, 2, 2, 1);
+    sdr_controls.attach(&Label::new(Some("Log Dir")), 2, 2, 1, 1);
+    sdr_controls.attach(&sdr_log_dir_entry, 3, 2, 7, 1);
+    sdr_controls.attach(&sdr_scan_enable_check, 0, 3, 2, 1);
+    sdr_controls.attach(&Label::new(Some("Scan Start")), 2, 3, 1, 1);
+    sdr_controls.attach(&sdr_scan_start_entry, 3, 3, 1, 1);
+    sdr_controls.attach(&Label::new(Some("Scan End")), 4, 3, 1, 1);
+    sdr_controls.attach(&sdr_scan_end_entry, 5, 3, 1, 1);
+    sdr_controls.attach(&Label::new(Some("Step (Hz)")), 6, 3, 1, 1);
+    sdr_controls.attach(&sdr_scan_step_entry, 7, 3, 1, 1);
+    sdr_controls.attach(&Label::new(Some("Steps/s")), 8, 3, 1, 1);
+    sdr_controls.attach(&sdr_scan_speed_entry, 9, 3, 1, 1);
+    sdr_controls.attach(&Label::new(Some("Squelch")), 0, 4, 1, 1);
+    sdr_controls.attach(&sdr_squelch_scale, 1, 4, 7, 1);
+    sdr_controls.attach(&sdr_squelch_value_label, 8, 4, 2, 1);
+    sdr_controls.attach(&sdr_autotune_check, 0, 5, 2, 1);
+    sdr_controls.attach(&sdr_bias_tee_check, 2, 5, 3, 1);
+    sdr_controls.attach(&sdr_no_payload_satcom_check, 5, 5, 3, 1);
+    sdr_controls.attach(&Label::new(Some("Bookmarks")), 0, 6, 1, 1);
+    sdr_controls.attach(&sdr_bookmark_combo, 1, 6, 2, 1);
+    sdr_controls.attach(&sdr_bookmark_jump_btn, 3, 6, 1, 1);
+    sdr_controls.attach(&sdr_bookmark_add_btn, 4, 6, 1, 1);
+    sdr_controls.attach(&Label::new(Some("Sample (s)")), 5, 6, 1, 1);
+    sdr_controls.attach(&sdr_sample_duration_spin, 6, 6, 1, 1);
+    sdr_controls.attach(&Label::new(Some("IQ Dir")), 7, 6, 1, 1);
+    sdr_controls.attach(&sdr_sample_dir_entry, 8, 6, 2, 1);
+    sdr_controls.attach(&sdr_capture_sample_btn, 10, 6, 1, 1);
+    sdr_controls.attach(&sdr_export_map_btn, 9, 7, 1, 1);
+    sdr_controls.attach(&sdr_export_satcom_btn, 10, 7, 1, 1);
+
+    let sdr_spectrogram_draw = DrawingArea::new();
+    sdr_spectrogram_draw.set_content_width(1200);
+    sdr_spectrogram_draw.set_content_height(230);
+    sdr_spectrogram_draw.set_hexpand(true);
+    sdr_spectrogram_draw.set_vexpand(true);
+    {
+        let sdr_model = sdr_model.clone();
+        sdr_spectrogram_draw.set_draw_func(move |_, ctx, width, height| {
+            draw_sdr_spectrogram(ctx, width as f64, height as f64, &sdr_model.borrow());
+        });
+    }
+
+    let sdr_fft_draw = DrawingArea::new();
+    sdr_fft_draw.set_content_width(1200);
+    sdr_fft_draw.set_content_height(220);
+    sdr_fft_draw.set_hexpand(true);
+    sdr_fft_draw.set_vexpand(true);
+    {
+        let sdr_model = sdr_model.clone();
+        sdr_fft_draw.set_draw_func(move |_, ctx, width, height| {
+            draw_sdr_fft(ctx, width as f64, height as f64, &sdr_model.borrow());
+        });
+    }
+
+    let sdr_map_draw = DrawingArea::new();
+    sdr_map_draw.set_content_width(1200);
+    sdr_map_draw.set_content_height(200);
+    sdr_map_draw.set_hexpand(true);
+    sdr_map_draw.set_vexpand(false);
+    {
+        let sdr_model = sdr_model.clone();
+        sdr_map_draw.set_draw_func(move |_, ctx, width, height| {
+            draw_sdr_map(ctx, width as f64, height as f64, &sdr_model.borrow());
+        });
+    }
+
+    let sdr_decode_list = ListBox::new();
+    sdr_decode_list.set_selection_mode(gtk::SelectionMode::None);
+    let sdr_decode_scrolled = ScrolledWindow::builder()
+        .vexpand(true)
+        .hexpand(true)
+        .child(&sdr_decode_list)
+        .build();
+
+    let (sdr_decode_pagination_row, sdr_decode_pagination) = build_table_pagination_controls(
+        default_rows_per_page,
+        vec![
+            ("time".to_string(), "Time".to_string(), 20),
+            ("decoder".to_string(), "Decoder".to_string(), 14),
+            ("freq".to_string(), "Freq".to_string(), 13),
+            ("protocol".to_string(), "Protocol".to_string(), 14),
+            ("message".to_string(), "Message".to_string(), 50),
+            ("raw".to_string(), "Raw".to_string(), 50),
+        ],
+    );
+    let sdr_decode_header_holder = GtkBox::new(Orientation::Vertical, 0);
+    sdr_decode_header_holder.append(&sdr_decode_table_header());
+    sdr_decode_header_holder.append(&sdr_decode_pagination.filter_bar);
+
+    let sdr_decode_box = GtkBox::new(Orientation::Vertical, 4);
+    sdr_decode_box.append(&sdr_decode_header_holder);
+    sdr_decode_box.append(&sdr_decode_scrolled);
+    sdr_decode_box.append(&sdr_decode_pagination_row);
+
+    let sdr_satcom_list = ListBox::new();
+    sdr_satcom_list.set_selection_mode(gtk::SelectionMode::None);
+    let sdr_satcom_scrolled = ScrolledWindow::builder()
+        .vexpand(true)
+        .hexpand(true)
+        .child(&sdr_satcom_list)
+        .build();
+    let (sdr_satcom_pagination_row, sdr_satcom_pagination) = build_table_pagination_controls(
+        default_rows_per_page,
+        vec![
+            ("time".to_string(), "Time".to_string(), 20),
+            ("decoder".to_string(), "Decoder".to_string(), 14),
+            ("protocol".to_string(), "Protocol".to_string(), 14),
+            ("freq".to_string(), "Freq".to_string(), 13),
+            ("band".to_string(), "Band".to_string(), 14),
+            ("posture".to_string(), "Encryption".to_string(), 12),
+            ("coords".to_string(), "Coords".to_string(), 8),
+            ("identifiers".to_string(), "Identifiers".to_string(), 20),
+            ("summary".to_string(), "Summary".to_string(), 40),
+        ],
+    );
+    let sdr_satcom_header_holder = GtkBox::new(Orientation::Vertical, 0);
+    sdr_satcom_header_holder.append(&sdr_satcom_table_header());
+    sdr_satcom_header_holder.append(&sdr_satcom_pagination.filter_bar);
+    let sdr_satcom_box = GtkBox::new(Orientation::Vertical, 4);
+    sdr_satcom_box.append(&sdr_satcom_header_holder);
+    sdr_satcom_box.append(&sdr_satcom_scrolled);
+    sdr_satcom_box.append(&sdr_satcom_pagination_row);
+
+    let sdr_output_notebook = Notebook::new();
+    sdr_output_notebook.append_page(&sdr_decode_box, Some(&Label::new(Some("Decode Output"))));
+    sdr_output_notebook.append_page(&sdr_satcom_box, Some(&Label::new(Some("Satcom Audit"))));
+
+    let sdr_top = GtkBox::new(Orientation::Vertical, 6);
+    sdr_top.append(&sdr_controls);
+    sdr_top.append(&sdr_frequency_label);
+    sdr_top.append(&sdr_decoder_label);
+    sdr_top.append(&sdr_dependency_label);
+    sdr_top.append(&Label::new(Some("Spectrogram")));
+    sdr_top.append(&sdr_spectrogram_draw);
+    sdr_top.append(&Label::new(Some("FFT")));
+    sdr_top.append(&sdr_fft_draw);
+    sdr_top.append(&Label::new(Some("Map (decoded coordinates)")));
+    sdr_top.append(&sdr_map_draw);
+
+    let sdr_root = Paned::new(Orientation::Vertical);
+    sdr_root.set_wide_handle(true);
+    sdr_root.set_position(DEFAULT_SDR_ROOT_POSITION);
+    sdr_root.set_resize_start_child(true);
+    sdr_root.set_resize_end_child(true);
+    sdr_root.set_shrink_start_child(false);
+    sdr_root.set_shrink_end_child(false);
+    sdr_root.set_start_child(Some(&sdr_top));
+    sdr_root.set_end_child(Some(&sdr_output_notebook));
+    notebook.append_page(&sdr_root, Some(&Label::new(Some("SDR"))));
+
     let selected_packet_mix: Rc<RefCell<PacketTypeBreakdown>> =
         Rc::new(RefCell::new(PacketTypeBreakdown::default()));
     {
@@ -3658,11 +4121,12 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         ap_export_pcap.connect_clicked(move |_| {
             if let Some(ap) = selected_ap(&state, &ap_list) {
                 let mut s = state.borrow_mut();
+                let gps_track = s.gps_track_for_export();
                 let out = s.exporter.export_filtered_pcap(
                     &s.session_capture_path,
                     &format!("ap_{}.pcapng", sanitize_name(&ap.bssid)),
                     &format!("wlan.bssid == {}", ap.bssid),
-                    &s.gps_track,
+                    &gps_track,
                 );
                 if out.is_ok() {
                     s.push_status("exported AP filtered PCAPNG with GPS".to_string());
@@ -3678,10 +4142,11 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         ap_export_hs.connect_clicked(move |_| {
             if let Some(ap) = selected_ap(&state, &ap_list) {
                 let mut s = state.borrow_mut();
+                let gps_track = s.gps_track_for_export();
                 let out = s.exporter.export_handshake_pcap(
                     &s.session_capture_path,
                     &ap.bssid,
-                    &s.gps_track,
+                    &gps_track,
                 );
                 if out.is_ok() {
                     s.push_status("exported handshake-only PCAPNG with GPS".to_string());
@@ -3705,11 +4170,12 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         client_export_pcap.connect_clicked(move |_| {
             if let Some(client) = selected_client(&state, &client_list) {
                 let mut s = state.borrow_mut();
+                let gps_track = s.gps_track_for_export();
                 let out = s.exporter.export_filtered_pcap(
                     &s.session_capture_path,
                     &format!("client_{}.pcapng", sanitize_name(&client.mac)),
                     &format!("wlan.sa == {} || wlan.da == {}", client.mac, client.mac),
-                    &s.gps_track,
+                    &gps_track,
                 );
                 if out.is_ok() {
                     s.push_status("exported client filtered PCAPNG with GPS".to_string());
@@ -3741,6 +4207,697 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 channel_band_combo.active_id().as_deref(),
             );
         });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        sdr_start_btn.connect_clicked(move |_| {
+            let config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+            );
+            let mut s = state.borrow_mut();
+            s.start_sdr_runtime(config.clone());
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                apply_sdr_runtime_controls(runtime, &config);
+                runtime.refresh_dependencies();
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        sdr_stop_btn.connect_clicked(move |_| {
+            state.borrow_mut().stop_sdr_runtime();
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        sdr_set_frequency_btn.connect_clicked(move |_| {
+            let config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+            );
+            let mut s = state.borrow_mut();
+            if s.sdr_runtime.is_none() {
+                s.start_sdr_runtime(config.clone());
+            }
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                runtime.set_center_freq(config.center_freq_hz);
+                apply_sdr_runtime_controls(runtime, &config);
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        sdr_pause_check.connect_toggled(move |check| {
+            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
+                runtime.set_sweep_paused(check.is_active());
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_scan_enable_check_for_apply = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry_for_apply = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry_for_apply = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry_for_apply = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry_for_apply = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale_for_apply = sdr_squelch_scale.clone();
+        let sdr_autotune_check_for_apply = sdr_autotune_check.clone();
+        let sdr_bias_tee_check_for_apply = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check_for_apply = sdr_no_payload_satcom_check.clone();
+
+        let apply_scan: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
+                let config = sdr_config_from_inputs(
+                    &sdr_hardware_combo,
+                    &sdr_center_freq_entry,
+                    &sdr_sample_rate_entry,
+                    &sdr_log_enable_check,
+                    &sdr_log_dir_entry,
+                    &sdr_scan_enable_check_for_apply,
+                    &sdr_scan_start_entry_for_apply,
+                    &sdr_scan_end_entry_for_apply,
+                    &sdr_scan_step_entry_for_apply,
+                    &sdr_scan_speed_entry_for_apply,
+                    &sdr_squelch_scale_for_apply,
+                    &sdr_autotune_check_for_apply,
+                    &sdr_bias_tee_check_for_apply,
+                    &sdr_no_payload_satcom_check_for_apply,
+                );
+                runtime.set_scan_range(
+                    config.scan_range_enabled,
+                    config.scan_start_hz,
+                    config.scan_end_hz,
+                    config.scan_step_hz,
+                    config.scan_steps_per_sec,
+                );
+            }
+        });
+
+        {
+            let apply_scan = apply_scan.clone();
+            sdr_scan_enable_check.connect_toggled(move |_| (apply_scan)());
+        }
+        {
+            let apply_scan = apply_scan.clone();
+            sdr_scan_start_entry.connect_activate(move |_| (apply_scan)());
+        }
+        {
+            let apply_scan = apply_scan.clone();
+            sdr_scan_end_entry.connect_activate(move |_| (apply_scan)());
+        }
+        {
+            let apply_scan = apply_scan.clone();
+            sdr_scan_step_entry.connect_activate(move |_| (apply_scan)());
+        }
+        {
+            let apply_scan = apply_scan.clone();
+            sdr_scan_speed_entry.connect_activate(move |_| (apply_scan)());
+        }
+    }
+
+    {
+        let state = state.clone();
+        let sdr_squelch_value_label = sdr_squelch_value_label.clone();
+        sdr_squelch_scale.connect_value_changed(move |scale| {
+            let squelch = scale.value() as f32;
+            sdr_squelch_value_label.set_text(&format!("{squelch:.0} dBm"));
+            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
+                runtime.set_squelch(squelch);
+            }
+        });
+    }
+
+    {
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_spectrogram_draw_for_click = sdr_spectrogram_draw.clone();
+        let click = GestureClick::new();
+        click.set_button(1);
+        click.connect_pressed(move |_, _, _x, y| {
+            let height = sdr_spectrogram_draw_for_click.allocated_height().max(1) as f64;
+            let normalized = (1.0 - (y / height)).clamp(0.0, 1.0);
+            let squelch = -130.0 + (normalized * 120.0);
+            sdr_squelch_scale.set_value(squelch);
+        });
+        sdr_spectrogram_draw.add_controller(click);
+    }
+
+    {
+        let state = state.clone();
+        sdr_autotune_check.connect_toggled(move |check| {
+            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
+                runtime.set_auto_tune(check.is_active());
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        sdr_bias_tee_check.connect_toggled(move |check| {
+            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
+                runtime.set_bias_tee(check.is_active());
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+        sdr_bookmark_jump_btn.connect_clicked(move |_| {
+            let Some(active_id) = sdr_bookmark_combo.active_id() else {
+                return;
+            };
+            let Ok(freq_hz) = active_id.as_str().parse::<u64>() else {
+                return;
+            };
+            sdr_center_freq_entry.set_text(&freq_hz.to_string());
+            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
+                runtime.set_center_freq(freq_hz);
+            }
+        });
+    }
+
+    {
+        let sdr_bookmarks = sdr_bookmarks.clone();
+        let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        sdr_bookmark_add_btn.connect_clicked(move |_| {
+            let Ok(freq_hz) = sdr_center_freq_entry.text().trim().parse::<u64>() else {
+                return;
+            };
+            if freq_hz < 100_000 {
+                return;
+            }
+            let key = freq_hz.to_string();
+            let label = format!("{:.6} MHz", freq_hz as f64 / 1_000_000.0);
+            if !sdr_bookmarks
+                .borrow()
+                .iter()
+                .any(|(_, freq)| *freq == freq_hz)
+            {
+                sdr_bookmarks.borrow_mut().push((label.clone(), freq_hz));
+                sdr_bookmark_combo.append(Some(&key), &label);
+            }
+            sdr_bookmark_combo.set_active_id(Some(&key));
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_sample_duration_spin = sdr_sample_duration_spin.clone();
+        let sdr_sample_dir_entry = sdr_sample_dir_entry.clone();
+        sdr_capture_sample_btn.connect_clicked(move |_| {
+            let config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+            );
+            let duration_secs = sdr_sample_duration_spin.value_as_int().max(1) as u32;
+            let output_dir_text = sdr_sample_dir_entry.text().trim().to_string();
+            let output_dir = if output_dir_text.is_empty() {
+                config.log_output_dir.join("iq_samples")
+            } else {
+                PathBuf::from(output_dir_text)
+            };
+
+            let mut s = state.borrow_mut();
+            if s.sdr_runtime.is_none() {
+                s.start_sdr_runtime(config.clone());
+            }
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                runtime.set_center_freq(config.center_freq_hz);
+                apply_sdr_runtime_controls(runtime, &config);
+                runtime.capture_sample(duration_secs, output_dir.clone());
+                s.push_status(format!(
+                    "capturing IQ sample at {} Hz for {}s into {}",
+                    config.center_freq_hz,
+                    duration_secs,
+                    output_dir.display()
+                ));
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_model = sdr_model.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        sdr_export_map_btn.connect_clicked(move |_| {
+            let points = sdr_model.borrow().map_points.clone();
+            if points.is_empty() {
+                state
+                    .borrow_mut()
+                    .push_status("SDR map export skipped: no coordinate points yet".to_string());
+                return;
+            }
+
+            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
+            let output_dir = if output_dir_text.is_empty() {
+                SdrConfig::default().log_output_dir
+            } else {
+                PathBuf::from(output_dir_text)
+            };
+
+            if let Err(err) = fs::create_dir_all(&output_dir) {
+                state.borrow_mut().push_status(format!(
+                    "SDR map export failed (create dir {}): {err}",
+                    output_dir.display()
+                ));
+                return;
+            }
+
+            let file_path = output_dir.join(format!(
+                "sdr_map_points_{}.json",
+                Utc::now().format("%Y%m%dT%H%M%SZ")
+            ));
+            match serde_json::to_vec_pretty(&points) {
+                Ok(data) => {
+                    if let Err(err) = fs::write(&file_path, data) {
+                        state.borrow_mut().push_status(format!(
+                            "SDR map export failed (write {}): {err}",
+                            file_path.display()
+                        ));
+                    } else {
+                        state.borrow_mut().push_status(format!(
+                            "exported SDR map points: {}",
+                            file_path.display()
+                        ));
+                    }
+                }
+                Err(err) => {
+                    state
+                        .borrow_mut()
+                        .push_status(format!("SDR map export serialization failed: {err}"));
+                }
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_model = sdr_model.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        sdr_export_satcom_btn.connect_clicked(move |_| {
+            let observations = sdr_model.borrow().satcom_observations.clone();
+            if observations.is_empty() {
+                state.borrow_mut().push_status(
+                    "SDR satcom export skipped: no satcom observations yet".to_string(),
+                );
+                return;
+            }
+
+            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
+            let output_dir = if output_dir_text.is_empty() {
+                SdrConfig::default().log_output_dir
+            } else {
+                PathBuf::from(output_dir_text)
+            };
+
+            if let Err(err) = fs::create_dir_all(&output_dir) {
+                state.borrow_mut().push_status(format!(
+                    "SDR satcom export failed (create dir {}): {err}",
+                    output_dir.display()
+                ));
+                return;
+            }
+
+            let file_path = output_dir.join(format!(
+                "sdr_satcom_audit_{}.json",
+                Utc::now().format("%Y%m%dT%H%M%SZ")
+            ));
+            match serde_json::to_vec_pretty(&observations) {
+                Ok(data) => {
+                    if let Err(err) = fs::write(&file_path, data) {
+                        state.borrow_mut().push_status(format!(
+                            "SDR satcom export failed (write {}): {err}",
+                            file_path.display()
+                        ));
+                    } else {
+                        state.borrow_mut().push_status(format!(
+                            "exported SDR satcom audit: {}",
+                            file_path.display()
+                        ));
+                    }
+                }
+                Err(err) => {
+                    state
+                        .borrow_mut()
+                        .push_status(format!("SDR satcom export serialization failed: {err}"));
+                }
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        sdr_dep_refresh_btn.connect_clicked(move |_| {
+            let config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+            );
+            let mut s = state.borrow_mut();
+            if s.sdr_runtime.is_none() {
+                s.start_sdr_runtime(config.clone());
+            }
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                apply_sdr_runtime_controls(runtime, &config);
+                runtime.refresh_dependencies();
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        sdr_dep_install_btn.connect_clicked(move |_| {
+            let config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+            );
+            let mut s = state.borrow_mut();
+            if s.sdr_runtime.is_none() {
+                s.start_sdr_runtime(config.clone());
+            }
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                apply_sdr_runtime_controls(runtime, &config);
+                runtime.install_missing_dependencies();
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_decoder_combo = sdr_decoder_combo.clone();
+        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
+        sdr_decode_start_btn.connect_clicked(move |_| {
+            let config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+            );
+            let Some(decoder_id) = sdr_decoder_combo.active_id() else {
+                return;
+            };
+            let Some(decoder) = sdr_decoder_lookup
+                .borrow()
+                .get(decoder_id.as_str())
+                .cloned()
+            else {
+                return;
+            };
+
+            let mut s = state.borrow_mut();
+            if s.sdr_runtime.is_none() {
+                s.start_sdr_runtime(config.clone());
+            }
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                runtime.set_center_freq(config.center_freq_hz);
+                apply_sdr_runtime_controls(runtime, &config);
+                runtime.start_decode(decoder);
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        sdr_decode_stop_btn.connect_clicked(move |_| {
+            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
+                runtime.stop_decode();
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_fft_draw = sdr_fft_draw.clone();
+        let sdr_fft_draw_for_click = sdr_fft_draw.clone();
+        let sdr_model = sdr_model.clone();
+        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
+        let sdr_decoder_order = sdr_decoder_order.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let right_click = GestureClick::new();
+        right_click.set_button(3);
+        right_click.connect_pressed(move |_, _, x, y| {
+            let width = sdr_fft_draw_for_click.allocated_width().max(1) as f64;
+            let model = sdr_model.borrow();
+            let sample_rate = model.sample_rate_hz.max(1) as f64;
+            let left_hz = model.current_freq_hz as f64 - sample_rate / 2.0;
+            let click_ratio = (x / width).clamp(0.0, 1.0);
+            let clicked_freq_hz = (left_hz + click_ratio * sample_rate).max(100_000.0) as u64;
+            drop(model);
+
+            sdr_center_freq_entry.set_text(&clicked_freq_hz.to_string());
+
+            let popover = Popover::new();
+            popover.set_has_arrow(true);
+            popover.set_parent(&sdr_fft_draw_for_click);
+            let rect = gdk::Rectangle::new(x as i32, y as i32, 1, 1);
+            popover.set_pointing_to(Some(&rect));
+            let popover_box = GtkBox::new(Orientation::Vertical, 4);
+            let title = Label::new(Some(&format!("Decode {} Hz", clicked_freq_hz)));
+            title.set_xalign(0.0);
+            popover_box.append(&title);
+            for decoder_id in sdr_decoder_order.iter() {
+                let Some(decoder) = sdr_decoder_lookup.borrow().get(decoder_id).cloned() else {
+                    continue;
+                };
+                let button = Button::with_label(&format!("Decode -> {}", decoder.label()));
+                let state = state.clone();
+                let decoder = decoder.clone();
+                let sdr_hardware_combo = sdr_hardware_combo.clone();
+                let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+                let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+                let sdr_log_enable_check = sdr_log_enable_check.clone();
+                let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+                let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+                let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+                let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+                let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+                let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+                let sdr_squelch_scale = sdr_squelch_scale.clone();
+                let sdr_autotune_check = sdr_autotune_check.clone();
+                let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+                let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+                let popover = popover.clone();
+                button.connect_clicked(move |_| {
+                    let config = sdr_config_from_inputs(
+                        &sdr_hardware_combo,
+                        &sdr_center_freq_entry,
+                        &sdr_sample_rate_entry,
+                        &sdr_log_enable_check,
+                        &sdr_log_dir_entry,
+                        &sdr_scan_enable_check,
+                        &sdr_scan_start_entry,
+                        &sdr_scan_end_entry,
+                        &sdr_scan_step_entry,
+                        &sdr_scan_speed_entry,
+                        &sdr_squelch_scale,
+                        &sdr_autotune_check,
+                        &sdr_bias_tee_check,
+                        &sdr_no_payload_satcom_check,
+                    );
+                    let mut s = state.borrow_mut();
+                    if s.sdr_runtime.is_none() {
+                        s.start_sdr_runtime(config.clone());
+                    }
+                    if let Some(runtime) = s.sdr_runtime.as_ref() {
+                        runtime.set_center_freq(clicked_freq_hz);
+                        apply_sdr_runtime_controls(runtime, &config);
+                        runtime.start_decode(decoder.clone());
+                    }
+                    popover.popdown();
+                });
+                popover_box.append(&button);
+            }
+            popover.set_child(Some(&popover_box));
+            popover.popup();
+        });
+        sdr_fft_draw.add_controller(right_click);
     }
 
     (
@@ -3801,6 +4958,19 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             bluetooth_geiger_progress,
             bluetooth_geiger_state,
             channel_draw,
+            sdr_frequency_label,
+            sdr_decoder_label,
+            sdr_dependency_label,
+            sdr_fft_draw,
+            sdr_spectrogram_draw,
+            sdr_map_draw,
+            sdr_decode_header_holder,
+            sdr_decode_list,
+            sdr_decode_pagination,
+            sdr_satcom_header_holder,
+            sdr_satcom_list,
+            sdr_satcom_pagination,
+            sdr_model,
             status_label,
             gps_status_label,
         },
@@ -3810,6 +4980,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
 fn bind_poll_loop(
     receiver: Receiver<CaptureEvent>,
     bluetooth_receiver: Receiver<BluetoothEvent>,
+    sdr_receiver: Receiver<SdrEvent>,
     state: Rc<RefCell<AppState>>,
     widgets: UiWidgets,
     capture_start_btn: Button,
@@ -3875,6 +5046,19 @@ fn bind_poll_loop(
         bluetooth_geiger_progress,
         bluetooth_geiger_state,
         channel_draw,
+        sdr_frequency_label,
+        sdr_decoder_label,
+        sdr_dependency_label,
+        sdr_fft_draw,
+        sdr_spectrogram_draw,
+        sdr_map_draw,
+        sdr_decode_header_holder: _sdr_decode_header_holder,
+        sdr_decode_list,
+        sdr_decode_pagination,
+        sdr_satcom_header_holder: _sdr_satcom_header_holder,
+        sdr_satcom_list,
+        sdr_satcom_pagination,
+        sdr_model,
         status_label,
         gps_status_label,
     } = widgets;
@@ -3892,14 +5076,19 @@ fn bind_poll_loop(
     let last_client_detail_signature = Rc::new(RefCell::new(None::<String>));
     let last_bluetooth_selected_key = Rc::new(RefCell::new(None::<String>));
     let last_bluetooth_detail_signature = Rc::new(RefCell::new(None::<String>));
+    let last_sdr_decode_signature = Rc::new(RefCell::new(None::<String>));
+    let last_sdr_satcom_signature = Rc::new(RefCell::new(None::<String>));
     let last_ap_pagination_generation = Cell::new(ap_pagination.generation.get());
     let last_ap_assoc_pagination_generation = Cell::new(ap_assoc_pagination.generation.get());
     let last_client_pagination_generation = Cell::new(client_pagination.generation.get());
     let last_bluetooth_pagination_generation = Cell::new(bluetooth_pagination.generation.get());
+    let last_sdr_pagination_generation = Cell::new(sdr_decode_pagination.generation.get());
+    let last_sdr_satcom_pagination_generation = Cell::new(sdr_satcom_pagination.generation.get());
     let pending_ap_refresh = Cell::new(true);
     let pending_client_refresh = Cell::new(true);
     let pending_bluetooth_refresh = Cell::new(true);
     let pending_channel_refresh = Cell::new(true);
+    let pending_sdr_refresh = Cell::new(true);
 
     glib::timeout_add_local(Duration::from_millis(UI_POLL_INTERVAL_MS), move || {
         let mut refresh = UiRefreshHint::none();
@@ -3929,6 +5118,75 @@ fn bind_poll_loop(
                 s.apply_bluetooth_event(event).unwrap_or_default()
             };
             refresh.merge(hint);
+        }
+
+        for event in drain_sdr_events_batch(&sdr_receiver, MAX_SDR_EVENTS_PER_TICK) {
+            match event {
+                SdrEvent::Log(text) => {
+                    state.borrow_mut().push_status(format!("SDR: {text}"));
+                    refresh.status = true;
+                }
+                SdrEvent::FrequencyChanged(freq_hz) => {
+                    let mut model = sdr_model.borrow_mut();
+                    model.current_freq_hz = freq_hz;
+                    pending_sdr_refresh.set(true);
+                }
+                SdrEvent::SpectrumFrame(frame) => {
+                    let mut model = sdr_model.borrow_mut();
+                    model.current_freq_hz = frame.center_freq_hz;
+                    model.sample_rate_hz = frame.sample_rate_hz;
+                    model.spectrum_bins = frame.bins_db.clone();
+                    model.spectrogram_rows.push(frame.bins_db);
+                    if model.spectrogram_rows.len() > 160 {
+                        let keep_from = model.spectrogram_rows.len() - 160;
+                        model.spectrogram_rows = model.spectrogram_rows.split_off(keep_from);
+                    }
+                    pending_sdr_refresh.set(true);
+                }
+                SdrEvent::DecodeRow(row) => {
+                    let mut model = sdr_model.borrow_mut();
+                    model.decode_rows.push(row);
+                    if model.decode_rows.len() > 5000 {
+                        let keep_from = model.decode_rows.len() - 5000;
+                        model.decode_rows = model.decode_rows.split_off(keep_from);
+                    }
+                    pending_sdr_refresh.set(true);
+                }
+                SdrEvent::DecoderState { running, decoder } => {
+                    let mut model = sdr_model.borrow_mut();
+                    model.decoder_running = if running { decoder } else { None };
+                    model.sweep_paused = running;
+                    pending_sdr_refresh.set(true);
+                }
+                SdrEvent::DependencyStatus(status) => {
+                    let mut model = sdr_model.borrow_mut();
+                    model.dependency_status = status;
+                    pending_sdr_refresh.set(true);
+                }
+                SdrEvent::MapPoint(point) => {
+                    let mut model = sdr_model.borrow_mut();
+                    model.map_points.push(point);
+                    if model.map_points.len() > 20_000 {
+                        let keep_from = model.map_points.len() - 20_000;
+                        model.map_points = model.map_points.split_off(keep_from);
+                    }
+                    pending_sdr_refresh.set(true);
+                }
+                SdrEvent::SatcomObservation(observation) => {
+                    let mut model = sdr_model.borrow_mut();
+                    model.satcom_observations.push(observation);
+                    if model.satcom_observations.len() > 20_000 {
+                        let keep_from = model.satcom_observations.len() - 20_000;
+                        model.satcom_observations = model.satcom_observations.split_off(keep_from);
+                    }
+                    pending_sdr_refresh.set(true);
+                }
+                SdrEvent::SquelchChanged(squelch_dbm) => {
+                    let mut model = sdr_model.borrow_mut();
+                    model.squelch_dbm = squelch_dbm;
+                    pending_sdr_refresh.set(true);
+                }
+            }
         }
 
         let privilege_alert = {
@@ -4084,12 +5342,23 @@ fn bind_poll_loop(
             *last_bluetooth_list_signature.borrow_mut() = None;
             pending_bluetooth_refresh.set(true);
         }
+        if last_sdr_pagination_generation.get() != sdr_decode_pagination.generation.get() {
+            last_sdr_pagination_generation.set(sdr_decode_pagination.generation.get());
+            *last_sdr_decode_signature.borrow_mut() = None;
+            pending_sdr_refresh.set(true);
+        }
+        if last_sdr_satcom_pagination_generation.get() != sdr_satcom_pagination.generation.get() {
+            last_sdr_satcom_pagination_generation.set(sdr_satcom_pagination.generation.get());
+            *last_sdr_satcom_signature.borrow_mut() = None;
+            pending_sdr_refresh.set(true);
+        }
 
         let active_tab = notebook.current_page().unwrap_or(ACCESS_POINTS_TAB_INDEX);
         let ap_tab_active = active_tab == ACCESS_POINTS_TAB_INDEX;
         let client_tab_active = active_tab == CLIENTS_TAB_INDEX;
         let bluetooth_tab_active = active_tab == BLUETOOTH_TAB_INDEX;
         let channel_tab_active = active_tab == CHANNEL_USAGE_TAB_INDEX;
+        let sdr_tab_active = active_tab == SDR_TAB_INDEX;
 
         let ap_selected_key_now = ap_selected_key.borrow().clone();
         let client_selected_key_now = client_selected_key.borrow().clone();
@@ -4524,6 +5793,71 @@ fn bind_poll_loop(
             pending_channel_refresh.set(false);
         }
 
+        if sdr_tab_active && pending_sdr_refresh.get() {
+            let model = sdr_model.borrow();
+            let decode_signature = sdr_decode_signature(
+                &model.decode_rows,
+                sdr_decode_pagination.current_page.get(),
+                sdr_decode_pagination.page_size.get(),
+                &pagination_filter_terms(&sdr_decode_pagination),
+            );
+            let decode_changed =
+                last_sdr_decode_signature.borrow().as_deref() != Some(decode_signature.as_str());
+            if decode_changed {
+                refresh_sdr_decode_list(
+                    &sdr_decode_list,
+                    &model.decode_rows,
+                    &sdr_decode_pagination,
+                );
+                *last_sdr_decode_signature.borrow_mut() = Some(decode_signature);
+            }
+
+            let satcom_signature = sdr_satcom_signature(
+                &model.satcom_observations,
+                sdr_satcom_pagination.current_page.get(),
+                sdr_satcom_pagination.page_size.get(),
+                &pagination_filter_terms(&sdr_satcom_pagination),
+            );
+            let satcom_changed =
+                last_sdr_satcom_signature.borrow().as_deref() != Some(satcom_signature.as_str());
+            if satcom_changed {
+                refresh_sdr_satcom_list(
+                    &sdr_satcom_list,
+                    &model.satcom_observations,
+                    &sdr_satcom_pagination,
+                );
+                *last_sdr_satcom_signature.borrow_mut() = Some(satcom_signature);
+            }
+            sdr_fft_draw.queue_draw();
+            sdr_spectrogram_draw.queue_draw();
+            sdr_map_draw.queue_draw();
+            pending_sdr_refresh.set(false);
+        }
+
+        {
+            let model = sdr_model.borrow();
+            let sweep_state = if model.sweep_paused {
+                "paused"
+            } else {
+                "active"
+            };
+            sdr_frequency_label.set_text(&format!(
+                "Center: {} Hz | Sample Rate: {} Hz | Sweep: {} | Satcom Audit Rows: {}",
+                model.current_freq_hz,
+                model.sample_rate_hz,
+                sweep_state,
+                model.satcom_observations.len()
+            ));
+            sdr_decoder_label.set_text(
+                &model
+                    .decoder_running
+                    .as_ref()
+                    .map(|decoder| format!("Decoder: running {decoder}"))
+                    .unwrap_or_else(|| "Decoder: idle".to_string()),
+            );
+            sdr_dependency_label.set_text(&format_sdr_dependency_status(&model.dependency_status));
+        }
+
         let (status_text, gps_text, wifi_running, bluetooth_running, scan_transition_in_progress) = {
             let s = state.borrow();
             (
@@ -4624,46 +5958,22 @@ fn client_detail_signature(client: &ClientRecord) -> String {
 }
 
 fn client_network_intel_signature(intel: &ClientNetworkIntel) -> String {
-    let local_ipv4 = intel.local_ipv4_addresses.join(",");
-    let local_ipv6 = intel.local_ipv6_addresses.join(",");
-    let dhcp_hostnames = intel.dhcp_hostnames.join(",");
-    let dhcp_fqdns = intel.dhcp_fqdns.join(",");
-    let dhcp_vendor_classes = intel.dhcp_vendor_classes.join(",");
-    let dns_names = intel.dns_names.join(",");
     let qos_priorities = intel
         .qos_priorities
         .iter()
         .map(|value| value.to_string())
         .collect::<Vec<_>>()
         .join(",");
-    let endpoints = intel
-        .remote_endpoints
-        .iter()
-        .map(|endpoint| {
-            format!(
-                "{}:{}:{}:{}:{}:{}",
-                endpoint.protocol,
-                endpoint.ip_address,
-                endpoint.port.unwrap_or_default(),
-                endpoint.domain.as_deref().unwrap_or(""),
-                endpoint.geo_city.as_deref().unwrap_or(""),
-                endpoint.packet_count
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("|");
 
     format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        local_ipv4,
-        local_ipv6,
-        dhcp_hostnames,
-        dhcp_fqdns,
-        dhcp_vendor_classes,
-        dns_names,
-        endpoints,
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        intel.packet_mix.management,
+        intel.packet_mix.control,
+        intel.packet_mix.data,
+        intel.packet_mix.other,
         intel.uplink_bytes,
         intel.downlink_bytes,
+        intel.retry_frame_count,
         intel.power_save_observed,
         qos_priorities,
         intel.eapol_frame_count,
@@ -4987,31 +6297,6 @@ fn sort_clients(
                 .network_intel
                 .pmkid_count
                 .cmp(&b.network_intel.pmkid_count),
-            "ipv4_addresses" => a
-                .network_intel
-                .local_ipv4_addresses
-                .join(",")
-                .cmp(&b.network_intel.local_ipv4_addresses.join(",")),
-            "ipv6_addresses" => a
-                .network_intel
-                .local_ipv6_addresses
-                .join(",")
-                .cmp(&b.network_intel.local_ipv6_addresses.join(",")),
-            "dhcp_hostnames" => a
-                .network_intel
-                .dhcp_hostnames
-                .join(",")
-                .cmp(&b.network_intel.dhcp_hostnames.join(",")),
-            "dns_names" => a
-                .network_intel
-                .dns_names
-                .join(",")
-                .cmp(&b.network_intel.dns_names.join(",")),
-            "remote_endpoints" => a
-                .network_intel
-                .remote_endpoints
-                .len()
-                .cmp(&b.network_intel.remote_endpoints.len()),
             "first_location" => cmp_option_ord(
                 observation_highlights(&a.observations)
                     .first
@@ -5367,8 +6652,9 @@ fn row_matches_column_filters(
     value_for: impl Fn(&str) -> Option<String>,
 ) -> bool {
     filters.iter().all(|(column_id, needle)| {
+        let normalized_needle = needle.to_ascii_lowercase();
         value_for(column_id)
-            .map(|value| value.to_ascii_lowercase().contains(needle))
+            .map(|value| value.to_ascii_lowercase().contains(&normalized_needle))
             .unwrap_or(false)
     })
 }
@@ -5522,6 +6808,75 @@ fn drain_capture_events_batch(
     );
     events.extend(handshakes.into_iter().map(CaptureEvent::HandshakeSeen));
     events.extend(latest_usage.into_values().map(CaptureEvent::ChannelUsage));
+    events
+}
+
+fn drain_sdr_events_batch(receiver: &Receiver<SdrEvent>, limit: usize) -> Vec<SdrEvent> {
+    let mut logs: Vec<String> = Vec::new();
+    let mut latest_freq: Option<u64> = None;
+    let mut latest_spectrum: Option<SdrSpectrumFrame> = None;
+    let mut decode_rows: Vec<SdrDecodeRow> = Vec::new();
+    let mut map_points: Vec<SdrMapPoint> = Vec::new();
+    let mut satcom_observations: Vec<SdrSatcomObservation> = Vec::new();
+    let mut latest_decoder_state: Option<(bool, Option<String>)> = None;
+    let mut latest_dependencies: Option<Vec<SdrDependencyStatus>> = None;
+    let mut latest_squelch: Option<f32> = None;
+
+    for _ in 0..limit {
+        let Ok(event) = receiver.try_recv() else {
+            break;
+        };
+        match event {
+            SdrEvent::Log(text) => logs.push(text),
+            SdrEvent::FrequencyChanged(freq_hz) => latest_freq = Some(freq_hz),
+            SdrEvent::SpectrumFrame(frame) => latest_spectrum = Some(frame),
+            SdrEvent::DecodeRow(row) => decode_rows.push(row),
+            SdrEvent::DecoderState { running, decoder } => {
+                latest_decoder_state = Some((running, decoder));
+            }
+            SdrEvent::DependencyStatus(status) => latest_dependencies = Some(status),
+            SdrEvent::MapPoint(point) => map_points.push(point),
+            SdrEvent::SatcomObservation(observation) => satcom_observations.push(observation),
+            SdrEvent::SquelchChanged(value) => latest_squelch = Some(value),
+        }
+    }
+
+    let mut events = Vec::with_capacity(
+        logs.len()
+            + decode_rows.len()
+            + map_points.len()
+            + satcom_observations.len()
+            + usize::from(latest_freq.is_some())
+            + usize::from(latest_spectrum.is_some())
+            + usize::from(latest_decoder_state.is_some())
+            + usize::from(latest_dependencies.is_some())
+            + usize::from(latest_squelch.is_some()),
+    );
+
+    events.extend(logs.into_iter().map(SdrEvent::Log));
+    if let Some(freq_hz) = latest_freq {
+        events.push(SdrEvent::FrequencyChanged(freq_hz));
+    }
+    if let Some(frame) = latest_spectrum {
+        events.push(SdrEvent::SpectrumFrame(frame));
+    }
+    events.extend(decode_rows.into_iter().map(SdrEvent::DecodeRow));
+    if let Some((running, decoder)) = latest_decoder_state {
+        events.push(SdrEvent::DecoderState { running, decoder });
+    }
+    if let Some(status) = latest_dependencies {
+        events.push(SdrEvent::DependencyStatus(status));
+    }
+    events.extend(map_points.into_iter().map(SdrEvent::MapPoint));
+    events.extend(
+        satcom_observations
+            .into_iter()
+            .map(SdrEvent::SatcomObservation),
+    );
+    if let Some(value) = latest_squelch {
+        events.push(SdrEvent::SquelchChanged(value));
+    }
+
     events
 }
 
@@ -5850,6 +7205,612 @@ fn attach_row_click_selection(
         list_ref.select_row(Some(&row_ref));
     });
     row.add_controller(click);
+}
+
+fn sdr_hardware_from_active_id(active_id: Option<glib::GString>) -> SdrHardware {
+    match active_id.as_deref().map(str::trim) {
+        Some("hackrf") => SdrHardware::HackRf,
+        Some("bladerf") => SdrHardware::BladeRf,
+        Some("ettus_b210") => SdrHardware::EttusB210,
+        _ => SdrHardware::RtlSdr,
+    }
+}
+
+fn load_gqrx_bookmarks() -> Vec<(String, u64)> {
+    let Some(config_dir) = dirs::config_dir() else {
+        return Vec::new();
+    };
+    let path = config_dir.join("gqrx/bookmarks.csv");
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+
+    let mut bookmarks = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let parts = line
+            .split([';', ',', '\t'])
+            .map(str::trim)
+            .collect::<Vec<_>>();
+        if parts.len() < 2 {
+            continue;
+        }
+
+        let Some(freq_hz) = parse_frequency_to_hz(parts[1]) else {
+            continue;
+        };
+        if freq_hz < 100_000 {
+            continue;
+        }
+
+        let label = if parts[0].is_empty() {
+            format!("GQRX {:.6} MHz", (freq_hz as f64) / 1_000_000.0)
+        } else {
+            format!("GQRX {}", parts[0])
+        };
+        bookmarks.push((label, freq_hz));
+    }
+    bookmarks
+}
+
+fn parse_frequency_to_hz(value: &str) -> Option<u64> {
+    let normalized = value.trim().replace('_', "");
+    if normalized.is_empty() {
+        return None;
+    }
+    if let Ok(hz) = normalized.parse::<u64>() {
+        return Some(hz);
+    }
+    if let Ok(mhz) = normalized.parse::<f64>() {
+        if mhz.is_finite() && mhz > 0.0 {
+            return Some((mhz * 1_000_000.0).round() as u64);
+        }
+    }
+    None
+}
+
+fn sdr_config_from_inputs(
+    hardware_combo: &ComboBoxText,
+    center_freq_entry: &Entry,
+    sample_rate_entry: &Entry,
+    log_enable_check: &CheckButton,
+    log_dir_entry: &Entry,
+    scan_enable_check: &CheckButton,
+    scan_start_entry: &Entry,
+    scan_end_entry: &Entry,
+    scan_step_entry: &Entry,
+    scan_speed_entry: &Entry,
+    squelch_scale: &gtk::Scale,
+    autotune_check: &CheckButton,
+    bias_tee_check: &CheckButton,
+    no_payload_satcom_check: &CheckButton,
+) -> SdrConfig {
+    let defaults = SdrConfig::default();
+    let center_freq_hz = center_freq_entry
+        .text()
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value >= 100_000)
+        .unwrap_or(defaults.center_freq_hz);
+    let sample_rate_hz = sample_rate_entry
+        .text()
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|value| *value >= 200_000)
+        .unwrap_or(defaults.sample_rate_hz);
+
+    let log_output_dir = {
+        let raw = log_dir_entry.text().trim().to_string();
+        if raw.is_empty() {
+            defaults.log_output_dir.clone()
+        } else {
+            PathBuf::from(raw)
+        }
+    };
+
+    let mut scan_start_hz = scan_start_entry
+        .text()
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value >= 100_000)
+        .unwrap_or(defaults.scan_start_hz);
+    let mut scan_end_hz = scan_end_entry
+        .text()
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value >= 100_000)
+        .unwrap_or(defaults.scan_end_hz);
+    if scan_start_hz > scan_end_hz {
+        std::mem::swap(&mut scan_start_hz, &mut scan_end_hz);
+    }
+    let scan_step_hz = scan_step_entry
+        .text()
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .unwrap_or(defaults.scan_step_hz);
+    let scan_steps_per_sec = scan_speed_entry
+        .text()
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(defaults.scan_steps_per_sec);
+    let squelch_dbm = squelch_scale.value() as f32;
+
+    SdrConfig {
+        hardware: sdr_hardware_from_active_id(hardware_combo.active_id()),
+        center_freq_hz,
+        sample_rate_hz,
+        fft_bins: defaults.fft_bins,
+        refresh_ms: defaults.refresh_ms,
+        log_output_enabled: log_enable_check.is_active(),
+        log_output_dir,
+        plugin_config_path: defaults.plugin_config_path,
+        scan_range_enabled: scan_enable_check.is_active(),
+        scan_start_hz,
+        scan_end_hz,
+        scan_step_hz,
+        scan_steps_per_sec,
+        squelch_dbm,
+        auto_tune_decoders: autotune_check.is_active(),
+        bias_tee_enabled: bias_tee_check.is_active(),
+        no_payload_satcom: no_payload_satcom_check.is_active(),
+    }
+}
+
+fn apply_sdr_runtime_controls(runtime: &SdrRuntime, config: &SdrConfig) {
+    runtime.set_logging(config.log_output_enabled, config.log_output_dir.clone());
+    runtime.set_scan_range(
+        config.scan_range_enabled,
+        config.scan_start_hz,
+        config.scan_end_hz,
+        config.scan_step_hz,
+        config.scan_steps_per_sec,
+    );
+    runtime.set_squelch(config.squelch_dbm);
+    runtime.set_auto_tune(config.auto_tune_decoders);
+    runtime.set_bias_tee(config.bias_tee_enabled);
+    runtime.set_no_payload_satcom(config.no_payload_satcom);
+}
+
+fn sdr_decode_table_header() -> Grid {
+    let grid = Grid::new();
+    grid.set_column_spacing(14);
+    let columns = [
+        ("Time", 20),
+        ("Decoder", 14),
+        ("Freq", 13),
+        ("Protocol", 14),
+        ("Message", 50),
+        ("Raw", 50),
+    ];
+    for (idx, (label, width_chars)) in columns.iter().enumerate() {
+        grid.attach(
+            &static_header_widget(label, *width_chars),
+            idx as i32,
+            0,
+            1,
+            1,
+        );
+    }
+    grid
+}
+
+fn sdr_satcom_table_header() -> Grid {
+    let grid = Grid::new();
+    grid.set_column_spacing(14);
+    let columns = [
+        ("Time", 20),
+        ("Decoder", 14),
+        ("Protocol", 14),
+        ("Freq", 13),
+        ("Band", 14),
+        ("Encryption", 12),
+        ("Coords", 8),
+        ("Identifiers", 20),
+        ("Summary", 40),
+    ];
+    for (idx, (label, width_chars)) in columns.iter().enumerate() {
+        grid.attach(
+            &static_header_widget(label, *width_chars),
+            idx as i32,
+            0,
+            1,
+            1,
+        );
+    }
+    grid
+}
+
+fn static_header_widget(label_text: &str, width_chars: i32) -> Label {
+    let label = Label::new(Some(label_text));
+    label.add_css_class("heading");
+    label.add_css_class("table-cell");
+    label.set_xalign(0.0);
+    let width_chars = width_chars.max(6);
+    label.set_width_chars(width_chars);
+    label.set_max_width_chars(width_chars);
+    label.set_single_line_mode(true);
+    label.set_size_request(width_chars * TABLE_CHAR_WIDTH_PX, -1);
+    label.set_margin_end(6);
+    label
+}
+
+fn sdr_decode_row_column_value(row: &SdrDecodeRow, column_id: &str) -> Option<String> {
+    match column_id {
+        "time" => Some(row.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+        "decoder" => Some(row.decoder.clone()),
+        "freq" => Some(format!("{}", row.freq_hz)),
+        "protocol" => Some(row.protocol.clone()),
+        "message" => Some(row.message.clone()),
+        "raw" => Some(row.raw.clone()),
+        _ => None,
+    }
+}
+
+fn sdr_satcom_row_column_value(row: &SdrSatcomObservation, column_id: &str) -> Option<String> {
+    match column_id {
+        "time" => Some(row.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+        "decoder" => Some(row.decoder.clone()),
+        "protocol" => Some(row.protocol.clone()),
+        "freq" => Some(row.freq_hz.to_string()),
+        "band" => Some(row.band.clone()),
+        "posture" => Some(row.encryption_posture.clone()),
+        "coords" => Some(if row.has_coordinates {
+            "Yes".to_string()
+        } else {
+            "No".to_string()
+        }),
+        "identifiers" => Some(row.identifier_hints.join(", ")),
+        "summary" => Some(row.summary.clone()),
+        _ => None,
+    }
+}
+
+fn refresh_sdr_decode_list(list: &ListBox, rows: &[SdrDecodeRow], pagination: &TablePaginationUi) {
+    clear_listbox(list);
+    let filters = pagination_filter_terms(pagination);
+    let filtered = rows
+        .iter()
+        .filter(|row| {
+            row_matches_column_filters(&filters, |column_id| {
+                sdr_decode_row_column_value(row, column_id)
+            })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let total_items = filtered.len();
+    let page_size = pagination.page_size.get();
+    let (current_page, total_pages, start, end) =
+        paged_indices(total_items, pagination.current_page.get(), page_size);
+
+    for row in filtered
+        .into_iter()
+        .skip(start)
+        .take(end.saturating_sub(start))
+    {
+        let line = GtkBox::new(Orientation::Horizontal, 14);
+        line.set_hexpand(true);
+        line.append(&label_cell(
+            row.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+            20,
+        ));
+        line.append(&label_cell(row.decoder, 14));
+        line.append(&label_cell(row.freq_hz.to_string(), 13));
+        line.append(&label_cell(row.protocol, 14));
+        line.append(&label_cell(row.message, 50));
+        line.append(&label_cell(row.raw, 50));
+        let item = ListBoxRow::new();
+        item.set_child(Some(&line));
+        list.append(&item);
+    }
+
+    update_table_pagination_summary(
+        pagination,
+        total_items,
+        current_page,
+        total_pages,
+        start,
+        end,
+    );
+}
+
+fn refresh_sdr_satcom_list(
+    list: &ListBox,
+    rows: &[SdrSatcomObservation],
+    pagination: &TablePaginationUi,
+) {
+    clear_listbox(list);
+    let filters = pagination_filter_terms(pagination);
+    let filtered = rows
+        .iter()
+        .filter(|row| {
+            row_matches_column_filters(&filters, |column_id| {
+                sdr_satcom_row_column_value(row, column_id)
+            })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let total_items = filtered.len();
+    let page_size = pagination.page_size.get();
+    let (current_page, total_pages, start, end) =
+        paged_indices(total_items, pagination.current_page.get(), page_size);
+
+    for row in filtered
+        .into_iter()
+        .skip(start)
+        .take(end.saturating_sub(start))
+    {
+        let line = GtkBox::new(Orientation::Horizontal, 14);
+        line.set_hexpand(true);
+        line.append(&label_cell(
+            row.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+            20,
+        ));
+        line.append(&label_cell(row.decoder, 14));
+        line.append(&label_cell(row.protocol, 14));
+        line.append(&label_cell(row.freq_hz.to_string(), 13));
+        line.append(&label_cell(row.band, 14));
+        line.append(&label_cell(row.encryption_posture, 12));
+        line.append(&label_cell(
+            if row.has_coordinates {
+                "Yes".to_string()
+            } else {
+                "No".to_string()
+            },
+            8,
+        ));
+        line.append(&label_cell(row.identifier_hints.join(", "), 20));
+        line.append(&label_cell(row.summary, 40));
+        let item = ListBoxRow::new();
+        item.set_child(Some(&line));
+        list.append(&item);
+    }
+
+    update_table_pagination_summary(
+        pagination,
+        total_items,
+        current_page,
+        total_pages,
+        start,
+        end,
+    );
+}
+
+fn sdr_decode_signature(
+    rows: &[SdrDecodeRow],
+    current_page: usize,
+    page_size: usize,
+    filters: &[(String, String)],
+) -> String {
+    let latest = rows
+        .last()
+        .map(|row| {
+            format!(
+                "{}|{}|{}|{}|{}",
+                row.timestamp.timestamp_millis(),
+                row.decoder,
+                row.freq_hz,
+                row.protocol,
+                row.message
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "rows={}|latest={}|page={}|size={}|filters={}",
+        rows.len(),
+        latest,
+        current_page,
+        page_size,
+        pagination_filter_signature(filters)
+    )
+}
+
+fn sdr_satcom_signature(
+    rows: &[SdrSatcomObservation],
+    current_page: usize,
+    page_size: usize,
+    filters: &[(String, String)],
+) -> String {
+    let latest = rows
+        .last()
+        .map(|row| {
+            format!(
+                "{}|{}|{}|{}|{}|{}|{}",
+                row.timestamp.timestamp_millis(),
+                row.decoder,
+                row.protocol,
+                row.freq_hz,
+                row.band,
+                row.encryption_posture,
+                row.summary
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "rows={}|latest={}|page={}|size={}|filters={}",
+        rows.len(),
+        latest,
+        current_page,
+        page_size,
+        pagination_filter_signature(filters)
+    )
+}
+
+fn format_sdr_dependency_status(statuses: &[SdrDependencyStatus]) -> String {
+    if statuses.is_empty() {
+        return "Dependencies: no data".to_string();
+    }
+    let missing = statuses
+        .iter()
+        .filter(|status| !status.installed)
+        .map(|status| format!("{} ({})", status.tool, status.package_hint))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        "Dependencies: all installed".to_string()
+    } else {
+        format!("Missing: {}", missing.join(", "))
+    }
+}
+
+fn draw_sdr_fft(ctx: &cairo::Context, width: f64, height: f64, model: &SdrUiModel) {
+    ctx.set_source_rgb(0.03, 0.05, 0.09);
+    let _ = ctx.paint();
+    if model.spectrum_bins.is_empty() {
+        ctx.set_source_rgb(0.7, 0.7, 0.7);
+        ctx.move_to(14.0, height / 2.0);
+        let _ = ctx.show_text("No SDR spectrum data yet");
+        return;
+    }
+
+    let min_db = -120.0_f64;
+    let max_db = -20.0_f64;
+    let bins = &model.spectrum_bins;
+    let bin_count = bins.len().max(2);
+    ctx.set_source_rgb(0.31, 0.83, 0.95);
+    ctx.set_line_width(1.2);
+
+    for (index, value) in bins.iter().enumerate() {
+        let x = (index as f64 / (bin_count - 1) as f64) * width;
+        let normalized = (((*value as f64) - min_db) / (max_db - min_db)).clamp(0.0, 1.0);
+        let y = height - normalized * (height - 8.0) - 4.0;
+        if index == 0 {
+            ctx.move_to(x, y);
+        } else {
+            ctx.line_to(x, y);
+        }
+    }
+    let _ = ctx.stroke();
+
+    ctx.set_source_rgb(0.88, 0.42, 0.12);
+    ctx.set_line_width(1.0);
+    let center_x = width / 2.0;
+    ctx.move_to(center_x, 0.0);
+    ctx.line_to(center_x, height);
+    let _ = ctx.stroke();
+}
+
+fn draw_sdr_spectrogram(ctx: &cairo::Context, width: f64, height: f64, model: &SdrUiModel) {
+    ctx.set_source_rgb(0.02, 0.03, 0.06);
+    let _ = ctx.paint();
+    if model.spectrogram_rows.is_empty() {
+        ctx.set_source_rgb(0.7, 0.7, 0.7);
+        ctx.move_to(14.0, height / 2.0);
+        let _ = ctx.show_text("No SDR spectrogram data yet");
+        return;
+    }
+
+    let rows = &model.spectrogram_rows;
+    let row_count = rows.len().max(1);
+    let bins = rows.first().map(|entry| entry.len()).unwrap_or(0).max(1);
+    let cell_w = (width / bins as f64).max(1.0);
+    let cell_h = (height / row_count as f64).max(1.0);
+    for (row_idx, row) in rows.iter().enumerate() {
+        let y = height - ((row_idx + 1) as f64 * cell_h);
+        for (bin_idx, power) in row.iter().enumerate() {
+            let x = bin_idx as f64 * cell_w;
+            let normalized = (((*power as f64) + 120.0) / 100.0).clamp(0.0, 1.0);
+            let red = normalized;
+            let green = (normalized * 0.75).min(1.0);
+            let blue = (1.0 - normalized).clamp(0.0, 1.0);
+            ctx.set_source_rgb(red, green, blue);
+            ctx.rectangle(x, y, cell_w + 0.4, cell_h + 0.4);
+            let _ = ctx.fill();
+        }
+    }
+}
+
+fn draw_sdr_map(ctx: &cairo::Context, width: f64, height: f64, model: &SdrUiModel) {
+    ctx.set_source_rgb(0.02, 0.03, 0.05);
+    let _ = ctx.paint();
+    if model.map_points.is_empty() {
+        ctx.set_source_rgb(0.7, 0.7, 0.7);
+        ctx.move_to(14.0, height / 2.0);
+        let _ = ctx.show_text("No decoded coordinate points yet");
+        return;
+    }
+
+    let margin_left = 44.0;
+    let margin_top = 14.0;
+    let margin_right = 18.0;
+    let margin_bottom = 20.0;
+    let plot_width = (width - margin_left - margin_right).max(20.0);
+    let plot_height = (height - margin_top - margin_bottom).max(20.0);
+
+    let mut min_lat = f64::INFINITY;
+    let mut max_lat = f64::NEG_INFINITY;
+    let mut min_lon = f64::INFINITY;
+    let mut max_lon = f64::NEG_INFINITY;
+    for point in &model.map_points {
+        min_lat = min_lat.min(point.latitude);
+        max_lat = max_lat.max(point.latitude);
+        min_lon = min_lon.min(point.longitude);
+        max_lon = max_lon.max(point.longitude);
+    }
+
+    if !min_lat.is_finite() || !max_lat.is_finite() || !min_lon.is_finite() || !max_lon.is_finite()
+    {
+        ctx.set_source_rgb(0.7, 0.7, 0.7);
+        ctx.move_to(14.0, height / 2.0);
+        let _ = ctx.show_text("Coordinate data invalid");
+        return;
+    }
+
+    let mut lat_span = (max_lat - min_lat).abs();
+    let mut lon_span = (max_lon - min_lon).abs();
+    if lat_span < 1e-6 {
+        min_lat -= 0.01;
+        max_lat += 0.01;
+        lat_span = max_lat - min_lat;
+    }
+    if lon_span < 1e-6 {
+        min_lon -= 0.01;
+        max_lon += 0.01;
+        lon_span = max_lon - min_lon;
+    }
+
+    ctx.set_source_rgb(0.14, 0.18, 0.22);
+    ctx.rectangle(margin_left, margin_top, plot_width, plot_height);
+    let _ = ctx.fill();
+    ctx.set_source_rgb(0.34, 0.38, 0.42);
+    ctx.set_line_width(1.0);
+    ctx.rectangle(margin_left, margin_top, plot_width, plot_height);
+    let _ = ctx.stroke();
+
+    for point in model.map_points.iter().rev().take(5000).rev() {
+        let x_ratio = ((point.longitude - min_lon) / lon_span).clamp(0.0, 1.0);
+        let y_ratio = ((point.latitude - min_lat) / lat_span).clamp(0.0, 1.0);
+        let x = margin_left + x_ratio * plot_width;
+        let y = margin_top + (1.0 - y_ratio) * plot_height;
+        let (r, g, b) = match point.protocol.to_ascii_lowercase().as_str() {
+            "adsb" => (0.95, 0.74, 0.21),
+            "ais" => (0.22, 0.80, 0.95),
+            "acars" => (0.63, 0.88, 0.38),
+            "iridium" => (0.86, 0.40, 0.98),
+            _ => (0.34, 0.84, 0.42),
+        };
+        ctx.set_source_rgba(r, g, b, 0.8);
+        ctx.arc(x, y, 2.2, 0.0, std::f64::consts::TAU);
+        let _ = ctx.fill();
+    }
+
+    ctx.set_source_rgb(0.84, 0.86, 0.88);
+    ctx.move_to(margin_left, height - 4.0);
+    let _ = ctx.show_text(&format!("Lon {:.4} .. {:.4}", min_lon, max_lon));
+    ctx.move_to(4.0, margin_top + 10.0);
+    let _ = ctx.show_text(&format!("{:.4}", max_lat));
+    ctx.move_to(4.0, margin_top + plot_height);
+    let _ = ctx.show_text(&format!("{:.4}", min_lat));
 }
 
 fn ap_table_header(
@@ -6222,24 +8183,6 @@ fn client_column_value(
         "power_save" => bool_text(client.network_intel.power_save_observed),
         "eapol_frames" => client.network_intel.eapol_frame_count.to_string(),
         "pmkid_count" => client.network_intel.pmkid_count.to_string(),
-        "ipv4_addresses" => client.network_intel.local_ipv4_addresses.join(", "),
-        "ipv6_addresses" => client.network_intel.local_ipv6_addresses.join(", "),
-        "dhcp_hostnames" => client.network_intel.dhcp_hostnames.join(", "),
-        "dns_names" => client.network_intel.dns_names.join(", "),
-        "remote_endpoints" => client
-            .network_intel
-            .remote_endpoints
-            .iter()
-            .take(4)
-            .map(|endpoint| {
-                let port = endpoint
-                    .port
-                    .map(|value| format!(":{value}"))
-                    .unwrap_or_default();
-                format!("{} {}{}", endpoint.protocol, endpoint.ip_address, port)
-            })
-            .collect::<Vec<_>>()
-            .join(" | "),
         "first_location" => highlights
             .first
             .as_ref()
@@ -6621,39 +8564,6 @@ fn retry_rate_text(client: &ClientRecord) -> String {
     format!("{:.1}%", rate)
 }
 
-fn format_endpoint_summary(client: &ClientRecord) -> String {
-    if client.network_intel.remote_endpoints.is_empty() {
-        return "None observed".to_string();
-    }
-
-    client
-        .network_intel
-        .remote_endpoints
-        .iter()
-        .take(16)
-        .map(|endpoint| {
-            let port = endpoint
-                .port
-                .map(|value| format!(":{value}"))
-                .unwrap_or_default();
-            let domain = endpoint.domain.as_deref().unwrap_or("unresolved");
-            let geo = endpoint.geo_city.as_deref().unwrap_or("location unknown");
-            format!(
-                "{} {}{} | domain={} | city={} | packets={} | first={} | last={}",
-                endpoint.protocol,
-                endpoint.ip_address,
-                port,
-                domain,
-                geo,
-                endpoint.packet_count,
-                endpoint.first_seen.format("%H:%M:%S"),
-                endpoint.last_seen.format("%H:%M:%S")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn format_client_detail_text(client: &ClientRecord, aps: &[AccessPointRecord]) -> String {
     let highlights = observation_highlights(&client.observations);
     let (avg_rssi, min_rssi, max_rssi, rssi_samples) =
@@ -6687,47 +8597,15 @@ fn format_client_detail_text(client: &ClientRecord, aps: &[AccessPointRecord]) -
         highlights.strongest.as_ref(),
         !client.observations.is_empty(),
     );
-    let local_ipv4 = if client.network_intel.local_ipv4_addresses.is_empty() {
-        "None observed".to_string()
-    } else {
-        client.network_intel.local_ipv4_addresses.join(", ")
-    };
-    let local_ipv6 = if client.network_intel.local_ipv6_addresses.is_empty() {
-        "None observed".to_string()
-    } else {
-        client.network_intel.local_ipv6_addresses.join(", ")
-    };
-    let dhcp_hostnames = if client.network_intel.dhcp_hostnames.is_empty() {
-        "None observed".to_string()
-    } else {
-        client.network_intel.dhcp_hostnames.join(", ")
-    };
-    let dhcp_fqdns = if client.network_intel.dhcp_fqdns.is_empty() {
-        "None observed".to_string()
-    } else {
-        client.network_intel.dhcp_fqdns.join(", ")
-    };
-    let dhcp_vendor_classes = if client.network_intel.dhcp_vendor_classes.is_empty() {
-        "None observed".to_string()
-    } else {
-        client.network_intel.dhcp_vendor_classes.join(", ")
-    };
-    let dns_names = if client.network_intel.dns_names.is_empty() {
-        "None observed".to_string()
-    } else {
-        client.network_intel.dns_names.join(", ")
-    };
-    let open_network_endpoints = format_endpoint_summary(client);
     let roam_count = client.seen_access_points.len().saturating_sub(1);
     let associated_ssid =
         associated_ssid_for_client(aps, client).unwrap_or_else(|| "Unknown".to_string());
 
     format!(
-        "Identity\nMAC: {}\nOUI: {}\nRandomized MAC: {}\nDHCP Vendor Class: {}\n\nAssociation\nAssociated AP: {}\nAssociated SSID: {}\nSeen AP Count: {}\nSeen APs: {}\nRoam Count: {}\nProbe Count: {}\nProbes: {}\nFirst Heard: {}\nLast Heard: {}\n\nRadio And Behavior\nBand: {}\nLast Channel: {}\nLast Frequency: {}\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nPacket Mix: mgmt={} control={} data={} other={}\nData Transferred: {} bytes\nUplink Bytes: {}\nDownlink Bytes: {}\nRetry Frames: {}\nRetry Rate: {}\nPower Save Observed: {}\nQoS Priorities: {}\nLast Frame: {}\nListen Interval: {}\n\nSecurity\nWPS: {}\nEAPOL Frames: {}\nPMKID Count: {}\nHandshake Network Count: {}\nHandshake Networks: {}\nLast Status Code: {}\nLast Reason Code: {}\n\nOpen Network Metadata\nLocal IPv4 Addresses: {}\nLocal IPv6 Addresses: {}\nDHCP Hostnames: {}\nDHCP FQDNs: {}\nDNS Names: {}\nRemote Endpoints:\n{}\n\nPresence\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}",
+        "Identity\nMAC: {}\nOUI: {}\nRandomized MAC: {}\n\nAssociation\nAssociated AP: {}\nAssociated SSID: {}\nSeen AP Count: {}\nSeen APs: {}\nRoam Count: {}\nProbe Count: {}\nProbes: {}\nFirst Heard: {}\nLast Heard: {}\n\nRadio And Behavior\nBand: {}\nLast Channel: {}\nLast Frequency: {}\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nPacket Mix: mgmt={} control={} data={} other={}\nData Transferred: {} bytes\nUplink Bytes: {}\nDownlink Bytes: {}\nRetry Frames: {}\nRetry Rate: {}\nPower Save Observed: {}\nQoS Priorities: {}\nLast Frame: {}\nListen Interval: {}\n\nSecurity\nWPS: {}\nEAPOL Frames: {}\nPMKID Count: {}\nHandshake Network Count: {}\nHandshake Networks: {}\nLast Status Code: {}\nLast Reason Code: {}\n\nPresence\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}",
         client.mac,
         client.oui_manufacturer.clone().unwrap_or_else(|| "Unknown".into()),
         bool_text(is_randomized_mac(&client.mac)),
-        dhcp_vendor_classes,
         client.associated_ap.clone().unwrap_or_else(|| "Unknown".to_string()),
         associated_ssid,
         client.seen_access_points.len(),
@@ -6788,12 +8666,6 @@ fn format_client_detail_text(client: &ClientRecord, aps: &[AccessPointRecord]) -
             .last_reason_code
             .map(|value| value.to_string())
             .unwrap_or_else(|| "Unknown".to_string()),
-        local_ipv4,
-        local_ipv6,
-        dhcp_hostnames,
-        dhcp_fqdns,
-        dns_names,
-        open_network_endpoints,
         client.observations.len(),
         first_location,
         last_location,
@@ -9034,8 +10906,11 @@ fn apply_interface_selection(
     state: Rc<RefCell<AppState>>,
     iface_name: String,
     mode: ChannelSelectionMode,
+    wifi_packet_header_mode: WifiPacketHeaderMode,
     bluetooth_enabled: bool,
+    bluetooth_scan_source: BluetoothScanSource,
     bluetooth_controller: Option<String>,
+    ubertooth_device: Option<String>,
     output_to_files: bool,
     start_after_apply: bool,
     selected_output_root: Option<PathBuf>,
@@ -9050,7 +10925,10 @@ fn apply_interface_selection(
         enabled: true,
     }];
     s.settings.bluetooth_enabled = bluetooth_enabled;
+    s.settings.bluetooth_scan_source = bluetooth_scan_source;
     s.settings.bluetooth_controller = bluetooth_controller;
+    s.settings.ubertooth_device = ubertooth_device;
+    s.settings.wifi_packet_header_mode = wifi_packet_header_mode;
     s.settings.output_to_files = output_to_files;
 
     if output_to_files {
@@ -9150,6 +11028,11 @@ fn open_interface_settings_dialog_inner(
     mode_combo.append(Some("locked"), "Lock Channel");
     mode_combo.set_active_id(Some("hop_specific"));
 
+    let packet_header_combo = ComboBoxText::new();
+    packet_header_combo.append(Some("radiotap"), "Radiotap");
+    packet_header_combo.append(Some("ppi"), "PPI");
+    packet_header_combo.set_active_id(Some("radiotap"));
+
     let dwell_entry = Entry::new();
     dwell_entry.set_placeholder_text(Some("Dwell ms (200 = 5 ch/sec)"));
     dwell_entry.set_text("200");
@@ -9173,6 +11056,12 @@ fn open_interface_settings_dialog_inner(
     lock_ht_combo.set_active_id(Some("HT20"));
 
     let bluetooth_scan_check = CheckButton::with_label("Scan Bluetooth");
+    let bluetooth_source_combo = ComboBoxText::new();
+    bluetooth_source_combo.append(Some("bluez"), "BlueZ");
+    bluetooth_source_combo.append(Some("ubertooth"), "Ubertooth");
+    bluetooth_source_combo.append(Some("both"), "BlueZ + Ubertooth");
+    bluetooth_source_combo.set_active_id(Some("bluez"));
+
     let bluetooth_controller_combo = ComboBoxText::new();
     bluetooth_controller_combo.append(Some("default"), "Default Controller");
     for ctrl in bluetooth::list_controllers().unwrap_or_default() {
@@ -9191,6 +11080,13 @@ fn open_interface_settings_dialog_inner(
         );
     }
     bluetooth_controller_combo.set_active_id(Some("default"));
+
+    let ubertooth_combo = ComboBoxText::new();
+    ubertooth_combo.append(Some("default"), "Default Ubertooth Device");
+    for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
+        ubertooth_combo.append(Some(&device.id), &device.name);
+    }
+    ubertooth_combo.set_active_id(Some("default"));
 
     let output_to_files_check = CheckButton::with_label("Output to Files");
     let output_dir_entry = Entry::new();
@@ -9211,6 +11107,13 @@ fn open_interface_settings_dialog_inner(
     mode_label.set_width_chars(18);
     mode_row.append(&mode_label);
     mode_row.append(&mode_combo);
+
+    let packet_header_row = GtkBox::new(Orientation::Horizontal, 8);
+    let packet_header_label = Label::new(Some("Packet Headers"));
+    packet_header_label.set_xalign(0.0);
+    packet_header_label.set_width_chars(18);
+    packet_header_row.append(&packet_header_label);
+    packet_header_row.append(&packet_header_combo);
 
     let channels_row = GtkBox::new(Orientation::Horizontal, 8);
     let channels_label = Label::new(Some("Specific Channels"));
@@ -9255,12 +11158,26 @@ fn open_interface_settings_dialog_inner(
     bluetooth_row.append(&bluetooth_label);
     bluetooth_row.append(&bluetooth_scan_check);
 
+    let bluetooth_source_row = GtkBox::new(Orientation::Horizontal, 8);
+    let bluetooth_source_label = Label::new(Some("Bluetooth Source"));
+    bluetooth_source_label.set_xalign(0.0);
+    bluetooth_source_label.set_width_chars(18);
+    bluetooth_source_row.append(&bluetooth_source_label);
+    bluetooth_source_row.append(&bluetooth_source_combo);
+
     let bluetooth_controller_row = GtkBox::new(Orientation::Horizontal, 8);
     let bluetooth_controller_label = Label::new(Some("Bluetooth Radio"));
     bluetooth_controller_label.set_xalign(0.0);
     bluetooth_controller_label.set_width_chars(18);
     bluetooth_controller_row.append(&bluetooth_controller_label);
     bluetooth_controller_row.append(&bluetooth_controller_combo);
+
+    let ubertooth_row = GtkBox::new(Orientation::Horizontal, 8);
+    let ubertooth_label = Label::new(Some("Ubertooth Device"));
+    ubertooth_label.set_xalign(0.0);
+    ubertooth_label.set_width_chars(18);
+    ubertooth_row.append(&ubertooth_label);
+    ubertooth_row.append(&ubertooth_combo);
 
     let output_toggle_row = GtkBox::new(Orientation::Horizontal, 8);
     let output_toggle_label = Label::new(Some("Output"));
@@ -9287,13 +11204,16 @@ fn open_interface_settings_dialog_inner(
     root.append(&iface_row);
     root.append(&interface_status);
     root.append(&mode_row);
+    root.append(&packet_header_row);
     root.append(&channels_row);
     root.append(&dwell_row);
     root.append(&band_row);
     root.append(&lock_row);
     root.append(&ht_row);
     root.append(&bluetooth_row);
+    root.append(&bluetooth_source_row);
     root.append(&bluetooth_controller_row);
+    root.append(&ubertooth_row);
     root.append(&output_toggle_row);
     root.append(&output_dir_row);
     root.append(&action_row);
@@ -9486,10 +11406,42 @@ fn open_interface_settings_dialog_inner(
         });
     }
 
+    let update_bluetooth_control_visibility = Rc::new(RefCell::new(None::<Box<dyn Fn()>>));
     {
+        let bluetooth_scan_check = bluetooth_scan_check.clone();
+        let bluetooth_source_combo = bluetooth_source_combo.clone();
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
-        bluetooth_scan_check.connect_toggled(move |check| {
-            bluetooth_controller_combo.set_sensitive(check.is_active());
+        let ubertooth_combo = ubertooth_combo.clone();
+        let update = update_bluetooth_control_visibility.clone();
+        *update.borrow_mut() = Some(Box::new(move || {
+            let enabled = bluetooth_scan_check.is_active();
+            let source = bluetooth_source_combo
+                .active_id()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "bluez".to_string());
+            let needs_bluez = matches!(source.as_str(), "bluez" | "both");
+            let needs_ubertooth = matches!(source.as_str(), "ubertooth" | "both");
+            bluetooth_source_combo.set_sensitive(enabled);
+            bluetooth_controller_combo.set_sensitive(enabled && needs_bluez);
+            ubertooth_combo.set_sensitive(enabled && needs_ubertooth);
+        }));
+    }
+
+    {
+        let update = update_bluetooth_control_visibility.clone();
+        bluetooth_scan_check.connect_toggled(move |_| {
+            if let Some(cb) = update.borrow().as_ref() {
+                cb();
+            }
+        });
+    }
+
+    {
+        let update = update_bluetooth_control_visibility.clone();
+        bluetooth_source_combo.connect_changed(move |_| {
+            if let Some(cb) = update.borrow().as_ref() {
+                cb();
+            }
         });
     }
 
@@ -9507,8 +11459,11 @@ fn open_interface_settings_dialog_inner(
         let s = state.borrow();
         (
             s.settings.interfaces.first().cloned(),
+            s.settings.wifi_packet_header_mode,
             s.settings.bluetooth_enabled,
+            s.settings.bluetooth_scan_source,
             s.settings.bluetooth_controller.clone(),
+            s.settings.ubertooth_device.clone(),
             s.settings.output_to_files,
             s.settings.output_root.clone(),
         )
@@ -9553,9 +11508,18 @@ fn open_interface_settings_dialog_inner(
         interface_combo.set_active(Some(0));
     }
 
-    bluetooth_scan_check.set_active(current_interface.1);
-    bluetooth_controller_combo.set_sensitive(current_interface.1);
-    match current_interface.2.as_deref() {
+    packet_header_combo.set_active_id(Some(match current_interface.1 {
+        WifiPacketHeaderMode::Radiotap => "radiotap",
+        WifiPacketHeaderMode::Ppi => "ppi",
+    }));
+
+    bluetooth_scan_check.set_active(current_interface.2);
+    bluetooth_source_combo.set_active_id(Some(match current_interface.3 {
+        BluetoothScanSource::Bluez => "bluez",
+        BluetoothScanSource::Ubertooth => "ubertooth",
+        BluetoothScanSource::Both => "both",
+    }));
+    match current_interface.4.as_deref() {
         Some(ctrl) => {
             if !bluetooth_controller_combo.set_active_id(Some(ctrl)) {
                 bluetooth_controller_combo.set_active_id(Some("default"));
@@ -9565,15 +11529,28 @@ fn open_interface_settings_dialog_inner(
             bluetooth_controller_combo.set_active_id(Some("default"));
         }
     }
-    output_to_files_check.set_active(current_interface.3);
-    output_dir_entry.set_text(&current_interface.4.display().to_string());
-    output_dir_entry.set_sensitive(current_interface.3);
-    browse_output_btn.set_sensitive(current_interface.3);
+    match current_interface.5.as_deref() {
+        Some(device) => {
+            if !ubertooth_combo.set_active_id(Some(device)) {
+                ubertooth_combo.set_active_id(Some("default"));
+            }
+        }
+        None => {
+            ubertooth_combo.set_active_id(Some("default"));
+        }
+    }
+    output_to_files_check.set_active(current_interface.6);
+    output_dir_entry.set_text(&current_interface.7.display().to_string());
+    output_dir_entry.set_sensitive(current_interface.6);
+    browse_output_btn.set_sensitive(current_interface.6);
 
     if let Some(cb) = apply_interface_capability.borrow().as_ref() {
         cb();
     }
     if let Some(cb) = update_mode_visibility.borrow().as_ref() {
+        cb();
+    }
+    if let Some(cb) = update_bluetooth_control_visibility.borrow().as_ref() {
         cb();
     }
 
@@ -9614,13 +11591,16 @@ fn open_interface_settings_dialog_inner(
         let capabilities_rc = capabilities_rc.clone();
         let interface_combo = interface_combo.clone();
         let mode_combo = mode_combo.clone();
+        let packet_header_combo = packet_header_combo.clone();
         let channels_entry = channels_entry.clone();
         let dwell_entry = dwell_entry.clone();
         let band_combo = band_combo.clone();
         let lock_channel_entry = lock_channel_entry.clone();
         let lock_ht_combo = lock_ht_combo.clone();
         let bluetooth_scan_check = bluetooth_scan_check.clone();
+        let bluetooth_source_combo = bluetooth_source_combo.clone();
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
+        let ubertooth_combo = ubertooth_combo.clone();
         let output_to_files_check = output_to_files_check.clone();
         let output_dir_entry = output_dir_entry.clone();
         let start_btn = start_btn.clone();
@@ -9642,6 +11622,10 @@ fn open_interface_settings_dialog_inner(
                 .split(',')
                 .filter_map(|v| v.trim().parse::<u16>().ok())
                 .collect::<Vec<_>>();
+            let wifi_packet_header_mode = match packet_header_combo.active_id().as_deref() {
+                Some("ppi") => WifiPacketHeaderMode::Ppi,
+                _ => WifiPacketHeaderMode::Radiotap,
+            };
             let dwell_ms = dwell_entry
                 .text()
                 .parse::<u64>()
@@ -9653,10 +11637,27 @@ fn open_interface_settings_dialog_inner(
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "HT20".to_string());
             let bluetooth_enabled = bluetooth_scan_check.is_active();
+            let bluetooth_scan_source = match bluetooth_source_combo.active_id().as_deref() {
+                Some("ubertooth") => BluetoothScanSource::Ubertooth,
+                Some("both") => BluetoothScanSource::Both,
+                _ => BluetoothScanSource::Bluez,
+            };
             let bluetooth_controller = if !bluetooth_enabled {
                 None
             } else {
                 match bluetooth_controller_combo.active_id().as_deref() {
+                    Some("default") | None => None,
+                    Some(id) => Some(id.to_string()),
+                }
+            };
+            let ubertooth_device = if !bluetooth_enabled
+                || !matches!(
+                    bluetooth_scan_source,
+                    BluetoothScanSource::Ubertooth | BluetoothScanSource::Both
+                ) {
+                None
+            } else {
+                match ubertooth_combo.active_id().as_deref() {
                     Some("default") | None => None,
                     Some(id) => Some(id.to_string()),
                 }
@@ -9750,8 +11751,11 @@ fn open_interface_settings_dialog_inner(
                 state.clone(),
                 iface_name,
                 mode,
+                wifi_packet_header_mode,
                 bluetooth_enabled,
+                bluetooth_scan_source,
                 bluetooth_controller,
+                ubertooth_device,
                 output_to_files,
                 start_after_apply,
                 output_root,
@@ -9822,7 +11826,6 @@ fn open_preferences_window(
     };
 
     let settings_snapshot = state.borrow().settings.clone();
-    let default_geoip_path = settings_snapshot.geoip_city_db_path.clone();
     let default_oui_path = settings_snapshot.oui_source_path.clone();
     let show_status_bar_check = CheckButton::with_label("Status Pane");
     show_status_bar_check.set_active(settings_snapshot.show_status_bar);
@@ -9870,6 +11873,21 @@ fn open_preferences_window(
 
     let wifi_page = page(&stack, "wifi_capture", "Wi-Fi / Capture");
     wifi_page.append(&section_heading("Wi-Fi / Capture"));
+    let packet_header_row = GtkBox::new(Orientation::Horizontal, 8);
+    let packet_header_label = Label::new(Some("Packet Headers"));
+    packet_header_label.set_width_chars(24);
+    packet_header_label.set_xalign(0.0);
+    let packet_header_combo = ComboBoxText::new();
+    packet_header_combo.append(Some("radiotap"), "Radiotap");
+    packet_header_combo.append(Some("ppi"), "PPI");
+    packet_header_combo.set_active_id(Some(match settings_snapshot.wifi_packet_header_mode {
+        WifiPacketHeaderMode::Radiotap => "radiotap",
+        WifiPacketHeaderMode::Ppi => "ppi",
+    }));
+    packet_header_row.append(&packet_header_label);
+    packet_header_row.append(&packet_header_combo);
+    wifi_page.append(&packet_header_row);
+
     let wifi_summary = Label::new(None);
     wifi_summary.set_xalign(0.0);
     wifi_summary.set_wrap(true);
@@ -10023,7 +12041,27 @@ fn open_preferences_window(
             .as_deref()
             .or(Some("default")),
     );
-    bluetooth_controller_combo.set_sensitive(settings_snapshot.bluetooth_enabled);
+    let bluetooth_source_combo = ComboBoxText::new();
+    bluetooth_source_combo.append(Some("bluez"), "BlueZ");
+    bluetooth_source_combo.append(Some("ubertooth"), "Ubertooth");
+    bluetooth_source_combo.append(Some("both"), "BlueZ + Ubertooth");
+    bluetooth_source_combo.set_active_id(Some(match settings_snapshot.bluetooth_scan_source {
+        BluetoothScanSource::Bluez => "bluez",
+        BluetoothScanSource::Ubertooth => "ubertooth",
+        BluetoothScanSource::Both => "both",
+    }));
+
+    let ubertooth_device_combo = ComboBoxText::new();
+    ubertooth_device_combo.append(Some("default"), "Default Ubertooth Device");
+    for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
+        ubertooth_device_combo.append(Some(&device.id), &device.name);
+    }
+    ubertooth_device_combo.set_active_id(
+        settings_snapshot
+            .ubertooth_device
+            .as_deref()
+            .or(Some("default")),
+    );
 
     let bluetooth_timeout_entry = Entry::new();
     bluetooth_timeout_entry.set_text(&settings_snapshot.bluetooth_scan_timeout_secs.to_string());
@@ -10032,8 +12070,16 @@ fn open_preferences_window(
 
     for (label_text, widget) in [
         (
+            "Bluetooth Source",
+            bluetooth_source_combo.upcast_ref::<gtk::Widget>(),
+        ),
+        (
             "Bluetooth Radio",
             bluetooth_controller_combo.upcast_ref::<gtk::Widget>(),
+        ),
+        (
+            "Ubertooth Device",
+            ubertooth_device_combo.upcast_ref::<gtk::Widget>(),
         ),
         (
             "Scan Timeout Seconds",
@@ -10054,27 +12100,88 @@ fn open_preferences_window(
     }
 
     {
+        let bluetooth_enabled_check = bluetooth_enabled_check.clone();
+        let bluetooth_source_combo = bluetooth_source_combo.clone();
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
-        bluetooth_enabled_check.connect_toggled(move |check| {
-            bluetooth_controller_combo.set_sensitive(check.is_active());
+        let ubertooth_device_combo = ubertooth_device_combo.clone();
+        let enabled_for_update = bluetooth_enabled_check.clone();
+        let source_for_update = bluetooth_source_combo.clone();
+        let controller_for_update = bluetooth_controller_combo.clone();
+        let ubertooth_for_update = ubertooth_device_combo.clone();
+        let update_controls = move || {
+            let enabled = enabled_for_update.is_active();
+            let source = source_for_update
+                .active_id()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "bluez".to_string());
+            let uses_bluez = matches!(source.as_str(), "bluez" | "both");
+            let uses_ubertooth = matches!(source.as_str(), "ubertooth" | "both");
+            source_for_update.set_sensitive(enabled);
+            controller_for_update.set_sensitive(enabled && uses_bluez);
+            ubertooth_for_update.set_sensitive(enabled && uses_ubertooth);
+        };
+        update_controls();
+
+        let update_controls = Rc::new(update_controls);
+
+        {
+            let update_controls = update_controls.clone();
+            let bluetooth_enabled_check = bluetooth_enabled_check.clone();
+            bluetooth_enabled_check.connect_toggled(move |_| {
+                (update_controls)();
+            });
+        }
+
+        {
+            let update_controls = update_controls.clone();
+            let bluetooth_source_combo = bluetooth_source_combo.clone();
+            bluetooth_source_combo.connect_changed(move |_| {
+                (update_controls)();
+            });
+        }
+    }
+
+    {
+        let bluetooth_source_combo = bluetooth_source_combo.clone();
+        let ubertooth_device_combo = ubertooth_device_combo.clone();
+        let bluetooth_enabled_check = bluetooth_enabled_check.clone();
+        let refresh_button = Button::with_label("Refresh Ubertooth List");
+        let refresh_row = GtkBox::new(Orientation::Horizontal, 8);
+        let refresh_label = Label::new(Some(""));
+        refresh_label.set_width_chars(24);
+        refresh_row.append(&refresh_label);
+        refresh_row.append(&refresh_button);
+        bluetooth_page.append(&refresh_row);
+
+        refresh_button.connect_clicked(move |_| {
+            let current = ubertooth_device_combo.active_id().map(|v| v.to_string());
+            ubertooth_device_combo.remove_all();
+            ubertooth_device_combo.append(Some("default"), "Default Ubertooth Device");
+            for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
+                ubertooth_device_combo.append(Some(&device.id), &device.name);
+            }
+            if let Some(current) = current {
+                if !ubertooth_device_combo.set_active_id(Some(&current)) {
+                    ubertooth_device_combo.set_active_id(Some("default"));
+                }
+            } else {
+                ubertooth_device_combo.set_active_id(Some("default"));
+            }
+
+            if !bluetooth_enabled_check.is_active() {
+                ubertooth_device_combo.set_sensitive(false);
+            } else {
+                let uses_ubertooth = matches!(
+                    bluetooth_source_combo.active_id().as_deref(),
+                    Some("ubertooth") | Some("both")
+                );
+                ubertooth_device_combo.set_sensitive(uses_ubertooth);
+            }
         });
     }
 
     let data_sources_page = page(&stack, "data_sources", "Data Sources");
     data_sources_page.append(&section_heading("Data Sources"));
-    let geoip_row = GtkBox::new(Orientation::Horizontal, 8);
-    let geoip_label = Label::new(Some("GeoIP Lookup File"));
-    geoip_label.set_width_chars(24);
-    geoip_label.set_xalign(0.0);
-    let geoip_entry = Entry::new();
-    geoip_entry.set_hexpand(true);
-    geoip_entry.set_text(&settings_snapshot.geoip_city_db_path.display().to_string());
-    let geoip_browse_btn = Button::with_label("Browse");
-    geoip_row.append(&geoip_label);
-    geoip_row.append(&geoip_entry);
-    geoip_row.append(&geoip_browse_btn);
-    data_sources_page.append(&geoip_row);
-
     let oui_row = GtkBox::new(Orientation::Horizontal, 8);
     let oui_label = Label::new(Some("OUI File"));
     oui_label.set_width_chars(24);
@@ -10133,30 +12240,6 @@ fn open_preferences_window(
 
     {
         let dialog = dialog.clone();
-        let geoip_entry = geoip_entry.clone();
-        geoip_browse_btn.connect_clicked(move |_| {
-            let current = geoip_entry.text().to_string();
-            let initial = if current.trim().is_empty() {
-                PathBuf::from(".")
-            } else {
-                PathBuf::from(current)
-            };
-            let geoip_entry = geoip_entry.clone();
-            choose_file_path(
-                &dialog,
-                "Select GeoIP Lookup File",
-                initial,
-                move |selected| {
-                    if let Some(path) = selected {
-                        geoip_entry.set_text(&path.display().to_string());
-                    }
-                },
-            );
-        });
-    }
-
-    {
-        let dialog = dialog.clone();
         let oui_entry = oui_entry.clone();
         oui_browse_btn.connect_clicked(move |_| {
             let current = oui_entry.text().to_string();
@@ -10181,7 +12264,6 @@ fn open_preferences_window(
         let global_status_box = global_status_box.clone();
         let pagination_defaults = pagination_defaults.clone();
         let widgets = widgets.clone();
-        let default_geoip_path = default_geoip_path.clone();
         let default_oui_path = default_oui_path.clone();
         dialog.connect_response(move |d, resp| {
             if resp == ResponseType::Apply {
@@ -10214,12 +12296,33 @@ fn open_preferences_window(
                     },
                     _ => GpsSettings::Disabled,
                 };
+                let wifi_packet_header_mode = match packet_header_combo.active_id().as_deref() {
+                    Some("ppi") => WifiPacketHeaderMode::Ppi,
+                    _ => WifiPacketHeaderMode::Radiotap,
+                };
 
                 let bluetooth_enabled = bluetooth_enabled_check.is_active();
+                let bluetooth_scan_source = match bluetooth_source_combo.active_id().as_deref() {
+                    Some("ubertooth") => BluetoothScanSource::Ubertooth,
+                    Some("both") => BluetoothScanSource::Both,
+                    _ => BluetoothScanSource::Bluez,
+                };
                 let bluetooth_controller = if !bluetooth_enabled {
                     None
                 } else {
                     match bluetooth_controller_combo.active_id().as_deref() {
+                        Some("default") | None => None,
+                        Some(id) => Some(id.to_string()),
+                    }
+                };
+                let ubertooth_device = if !bluetooth_enabled
+                    || !matches!(
+                        bluetooth_scan_source,
+                        BluetoothScanSource::Ubertooth | BluetoothScanSource::Both
+                    ) {
+                    None
+                } else {
+                    match ubertooth_device_combo.active_id().as_deref() {
                         Some("default") | None => None,
                         Some(id) => Some(id.to_string()),
                     }
@@ -10235,12 +12338,6 @@ fn open_preferences_window(
                     .unwrap_or(500)
                     .clamp(100, 5_000);
 
-                let geoip_path_text = geoip_entry.text().to_string();
-                let geoip_path = if geoip_path_text.trim().is_empty() {
-                    default_geoip_path.clone()
-                } else {
-                    PathBuf::from(geoip_path_text.trim())
-                };
                 let oui_path_text = oui_entry.text().to_string();
                 let oui_path = if oui_path_text.trim().is_empty() {
                     default_oui_path.clone()
@@ -10285,23 +12382,20 @@ fn open_preferences_window(
                     }
 
                     let bluetooth_changed = s.settings.bluetooth_enabled != bluetooth_enabled
+                        || s.settings.bluetooth_scan_source != bluetooth_scan_source
                         || s.settings.bluetooth_controller != bluetooth_controller
+                        || s.settings.ubertooth_device != ubertooth_device
                         || s.settings.bluetooth_scan_timeout_secs != bluetooth_timeout
                         || s.settings.bluetooth_scan_pause_ms != bluetooth_pause;
                     if bluetooth_changed {
                         s.settings.bluetooth_enabled = bluetooth_enabled;
+                        s.settings.bluetooth_scan_source = bluetooth_scan_source;
                         s.settings.bluetooth_controller = bluetooth_controller;
+                        s.settings.ubertooth_device = ubertooth_device;
                         s.settings.bluetooth_scan_timeout_secs = bluetooth_timeout;
                         s.settings.bluetooth_scan_pause_ms = bluetooth_pause;
                         bluetooth_restart_needed = s.bluetooth_runtime.is_some();
                         applied_messages.push("bluetooth settings applied".to_string());
-                    }
-
-                    if s.settings.geoip_city_db_path != geoip_path {
-                        s.settings.geoip_city_db_path = geoip_path.clone();
-                        full_restart_needed = s.capture_runtime.is_some();
-                        applied_messages
-                            .push(format!("GeoIP lookup file set to {}", geoip_path.display()));
                     }
 
                     if s.settings.oui_source_path != oui_path {
@@ -10324,6 +12418,18 @@ fn open_preferences_window(
                             }
                         }
                         s.layout_dirty = true;
+                    }
+
+                    if s.settings.wifi_packet_header_mode != wifi_packet_header_mode {
+                        s.settings.wifi_packet_header_mode = wifi_packet_header_mode;
+                        full_restart_needed |= s.capture_runtime.is_some();
+                        applied_messages.push(format!(
+                            "wifi packet headers set to {}",
+                            match wifi_packet_header_mode {
+                                WifiPacketHeaderMode::Radiotap => "Radiotap",
+                                WifiPacketHeaderMode::Ppi => "PPI",
+                            }
+                        ));
                     }
 
                     let ap_previous = s.settings.ap_table_layout.columns.clone();
@@ -10567,6 +12673,17 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
         );
     }
 
+    let source_combo = ComboBoxText::new();
+    source_combo.append(Some("bluez"), "BlueZ");
+    source_combo.append(Some("ubertooth"), "Ubertooth");
+    source_combo.append(Some("both"), "BlueZ + Ubertooth");
+
+    let ubertooth_combo = ComboBoxText::new();
+    ubertooth_combo.append(Some("default"), "Default Ubertooth Device");
+    for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
+        ubertooth_combo.append(Some(&device.id), &device.name);
+    }
+
     let scan_timeout_entry = Entry::new();
     scan_timeout_entry.set_placeholder_text(Some("Scan timeout seconds"));
     let scan_pause_entry = Entry::new();
@@ -10580,22 +12697,67 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
                 .as_deref()
                 .or(Some("default")),
         );
+        source_combo.set_active_id(Some(match s.settings.bluetooth_scan_source {
+            BluetoothScanSource::Bluez => "bluez",
+            BluetoothScanSource::Ubertooth => "ubertooth",
+            BluetoothScanSource::Both => "both",
+        }));
+        ubertooth_combo.set_active_id(s.settings.ubertooth_device.as_deref().or(Some("default")));
         scan_timeout_entry.set_text(&s.settings.bluetooth_scan_timeout_secs.to_string());
         scan_pause_entry.set_text(&s.settings.bluetooth_scan_pause_ms.to_string());
     }
 
+    area.append(&Label::new(Some("Bluetooth Source")));
+    area.append(&source_combo);
     area.append(&Label::new(Some("Bluetooth Radio")));
     area.append(&controller_combo);
+    area.append(&Label::new(Some("Ubertooth Device")));
+    area.append(&ubertooth_combo);
     area.append(&Label::new(Some("Scan Timeout Seconds")));
     area.append(&scan_timeout_entry);
     area.append(&Label::new(Some("Scan Pause Milliseconds")));
     area.append(&scan_pause_entry);
 
     {
+        let source_combo = source_combo.clone();
+        let controller_combo = controller_combo.clone();
+        let ubertooth_combo = ubertooth_combo.clone();
+        let source_for_update = source_combo.clone();
+        let controller_for_update = controller_combo.clone();
+        let ubertooth_for_update = ubertooth_combo.clone();
+        let update_visibility = move || {
+            let source = source_for_update
+                .active_id()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "bluez".to_string());
+            controller_for_update.set_sensitive(matches!(source.as_str(), "bluez" | "both"));
+            ubertooth_for_update.set_sensitive(matches!(source.as_str(), "ubertooth" | "both"));
+        };
+        update_visibility();
+        let update_visibility = Rc::new(update_visibility);
+        {
+            let update_visibility = update_visibility.clone();
+            let source_combo = source_combo.clone();
+            source_combo.connect_changed(move |_| {
+                (update_visibility)();
+            });
+        }
+    }
+
+    {
         let state = state.clone();
         dialog.connect_response(move |d, resp| {
             if resp == ResponseType::Apply {
+                let source = match source_combo.active_id().as_deref() {
+                    Some("ubertooth") => BluetoothScanSource::Ubertooth,
+                    Some("both") => BluetoothScanSource::Both,
+                    _ => BluetoothScanSource::Bluez,
+                };
                 let controller = match controller_combo.active_id().as_deref() {
+                    Some("default") | None => None,
+                    Some(v) => Some(v.to_string()),
+                };
+                let ubertooth_device = match ubertooth_combo.active_id().as_deref() {
                     Some("default") | None => None,
                     Some(v) => Some(v.to_string()),
                 };
@@ -10611,7 +12773,9 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
                     .clamp(100, 5_000);
 
                 let mut s = state.borrow_mut();
+                s.settings.bluetooth_scan_source = source;
                 s.settings.bluetooth_controller = controller;
+                s.settings.ubertooth_device = ubertooth_device;
                 s.settings.bluetooth_scan_timeout_secs = timeout;
                 s.settings.bluetooth_scan_pause_ms = pause;
                 s.save_settings_to_disk();
@@ -10821,81 +12985,6 @@ fn merge_client_network_intel(
     existing: &mut ClientRecord,
     incoming: &crate::model::ClientNetworkIntel,
 ) {
-    for value in &incoming.local_ipv4_addresses {
-        if !existing.network_intel.local_ipv4_addresses.contains(value) {
-            existing
-                .network_intel
-                .local_ipv4_addresses
-                .push(value.clone());
-        }
-    }
-    for value in &incoming.local_ipv6_addresses {
-        if !existing.network_intel.local_ipv6_addresses.contains(value) {
-            existing
-                .network_intel
-                .local_ipv6_addresses
-                .push(value.clone());
-        }
-    }
-    for value in &incoming.dhcp_hostnames {
-        if !existing.network_intel.dhcp_hostnames.contains(value) {
-            existing.network_intel.dhcp_hostnames.push(value.clone());
-        }
-    }
-    for value in &incoming.dhcp_fqdns {
-        if !existing.network_intel.dhcp_fqdns.contains(value) {
-            existing.network_intel.dhcp_fqdns.push(value.clone());
-        }
-    }
-    for value in &incoming.dhcp_vendor_classes {
-        if !existing.network_intel.dhcp_vendor_classes.contains(value) {
-            existing
-                .network_intel
-                .dhcp_vendor_classes
-                .push(value.clone());
-        }
-    }
-    for value in &incoming.dns_names {
-        if !existing.network_intel.dns_names.contains(value) {
-            existing.network_intel.dns_names.push(value.clone());
-        }
-    }
-    for endpoint in &incoming.remote_endpoints {
-        if let Some(current) =
-            existing
-                .network_intel
-                .remote_endpoints
-                .iter_mut()
-                .find(|candidate| {
-                    candidate.ip_address == endpoint.ip_address
-                        && candidate.port == endpoint.port
-                        && candidate.protocol == endpoint.protocol
-                })
-        {
-            current.first_seen = current.first_seen.min(endpoint.first_seen);
-            current.last_seen = current.last_seen.max(endpoint.last_seen);
-            current.packet_count = current.packet_count.max(endpoint.packet_count);
-            if current.domain.is_none() && endpoint.domain.is_some() {
-                current.domain = endpoint.domain.clone();
-            }
-            if current.geo_city.is_none() && endpoint.geo_city.is_some() {
-                current.geo_city = endpoint.geo_city.clone();
-            }
-        } else {
-            existing
-                .network_intel
-                .remote_endpoints
-                .push(endpoint.clone());
-        }
-    }
-    existing.network_intel.remote_endpoints.sort_by(|a, b| {
-        b.last_seen
-            .cmp(&a.last_seen)
-            .then_with(|| b.packet_count.cmp(&a.packet_count))
-    });
-    if existing.network_intel.remote_endpoints.len() > 64 {
-        existing.network_intel.remote_endpoints.truncate(64);
-    }
     existing.network_intel.uplink_bytes = existing
         .network_intel
         .uplink_bytes
@@ -11091,10 +13180,9 @@ fn should_persist_device_update(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ClientEndpointRecord, ClientNetworkIntel};
 
     #[test]
-    fn client_detail_text_includes_network_intel_sections() {
+    fn client_detail_text_excludes_ip_metadata_sections() {
         let now = Utc::now();
         let mut client = ClientRecord::new("AA:BB:CC:DD:EE:FF", now);
         client.oui_manufacturer = Some("Example Vendor".to_string());
@@ -11103,73 +13191,40 @@ mod tests {
         client.probes = vec!["ExampleWiFi".to_string()];
         client.seen_access_points = vec!["11:22:33:44:55:66".to_string()];
         client.handshake_networks = vec!["11:22:33:44:55:66".to_string()];
-        client.network_intel = ClientNetworkIntel {
-            local_ipv4_addresses: vec!["192.168.1.25".to_string()],
-            local_ipv6_addresses: vec!["fe80::1234".to_string()],
-            dhcp_hostnames: vec!["phone".to_string()],
-            dhcp_fqdns: vec!["phone.lan".to_string()],
-            dhcp_vendor_classes: vec!["android-dhcp-13".to_string()],
-            dns_names: vec!["example.com".to_string()],
-            remote_endpoints: vec![ClientEndpointRecord {
-                ip_address: "93.184.216.34".to_string(),
-                protocol: "TCP".to_string(),
-                port: Some(443),
-                domain: Some("example.com".to_string()),
-                geo_city: Some("Los Angeles, US".to_string()),
-                first_seen: now,
-                last_seen: now,
-                packet_count: 4,
-            }],
-            uplink_bytes: 512,
-            downlink_bytes: 1024,
-            retry_frame_count: 2,
-            power_save_observed: true,
-            qos_priorities: vec![0, 5],
-            eapol_frame_count: 1,
-            pmkid_count: 1,
-            last_frame_type: Some(2),
-            last_frame_subtype: Some(8),
-            last_channel: Some(6),
-            last_frequency_mhz: Some(2437),
-            band: SpectrumBand::Ghz2_4,
-            last_reason_code: Some(7),
-            last_status_code: Some(0),
-            listen_interval: Some(10),
-            ..ClientNetworkIntel::default()
-        };
+        client.network_intel.uplink_bytes = 512;
+        client.network_intel.downlink_bytes = 1024;
+        client.network_intel.retry_frame_count = 2;
+        client.network_intel.power_save_observed = true;
+        client.network_intel.qos_priorities = vec![0, 5];
+        client.network_intel.eapol_frame_count = 1;
+        client.network_intel.pmkid_count = 1;
+        client.network_intel.last_frame_type = Some(2);
+        client.network_intel.last_frame_subtype = Some(8);
+        client.network_intel.last_channel = Some(6);
+        client.network_intel.last_frequency_mhz = Some(2437);
+        client.network_intel.band = SpectrumBand::Ghz2_4;
+        client.network_intel.last_reason_code = Some(7);
+        client.network_intel.last_status_code = Some(0);
+        client.network_intel.listen_interval = Some(10);
+        client.network_intel.packet_mix.data = 12;
 
         let rendered = format_client_detail_text(&client, &[]);
-        assert!(rendered.contains("Open Network Metadata"));
-        assert!(rendered.contains("192.168.1.25"));
-        assert!(rendered.contains("example.com"));
-        assert!(rendered.contains("93.184.216.34:443"));
         assert!(rendered.contains("Radio And Behavior"));
         assert!(rendered.contains("Security"));
+        assert!(!rendered.contains("Open Network Metadata"));
+        assert!(!rendered.contains("HTTP"));
+        assert!(!rendered.contains("DNS"));
     }
 
     #[test]
-    fn client_detail_signature_changes_when_endpoint_content_changes() {
+    fn client_detail_signature_changes_when_packet_mix_changes() {
         let now = Utc::now();
         let mut client = ClientRecord::new("AA:BB:CC:DD:EE:FF", now);
-        client.network_intel.remote_endpoints = vec![ClientEndpointRecord {
-            ip_address: "93.184.216.34".to_string(),
-            protocol: "TCP".to_string(),
-            port: Some(443),
-            domain: Some("example.com".to_string()),
-            geo_city: Some("Los Angeles, US".to_string()),
-            first_seen: now,
-            last_seen: now,
-            packet_count: 1,
-        }];
-
         let before = client_detail_signature(&client);
-        client.network_intel.remote_endpoints[0].packet_count = 2;
-        let after_packets = client_detail_signature(&client);
-        assert_ne!(before, after_packets);
-
-        client.network_intel.remote_endpoints[0].domain = Some("www.example.com".to_string());
-        let after_domain = client_detail_signature(&client);
-        assert_ne!(after_packets, after_domain);
+        client.network_intel.packet_mix.data = 2;
+        client.network_intel.retry_frame_count = 1;
+        let after = client_detail_signature(&client);
+        assert_ne!(before, after);
     }
 
     #[test]
@@ -11247,5 +13302,37 @@ mod tests {
         );
 
         assert!(sig.starts_with("1|"));
+    }
+
+    #[test]
+    fn row_matches_column_filters_supports_partial_case_insensitive_matching() {
+        let filters = vec![
+            ("ssid".to_string(), "homenet".to_string()),
+            ("encryption".to_string(), "wPa2".to_string()),
+        ];
+        let values = std::collections::HashMap::from([
+            ("ssid".to_string(), "HomeNetwork".to_string()),
+            ("encryption".to_string(), "WPA2-PSK".to_string()),
+        ]);
+
+        assert!(row_matches_column_filters(&filters, |column| values
+            .get(column)
+            .cloned()));
+    }
+
+    #[test]
+    fn row_matches_column_filters_requires_all_active_columns_to_match() {
+        let filters = vec![
+            ("ssid".to_string(), "home".to_string()),
+            ("channel".to_string(), "11".to_string()),
+        ];
+        let values = std::collections::HashMap::from([
+            ("ssid".to_string(), "HomeNetwork".to_string()),
+            ("channel".to_string(), "6".to_string()),
+        ]);
+
+        assert!(!row_matches_column_filters(&filters, |column| values
+            .get(column)
+            .cloned()));
     }
 }
