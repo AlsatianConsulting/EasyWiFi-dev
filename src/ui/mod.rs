@@ -169,8 +169,8 @@ struct AppState {
     assoc_sort: TableSortState,
     bluetooth_sort: TableSortState,
     pending_privilege_alert: Option<String>,
-    wifi_lock_restore_mode: Option<ChannelSelectionMode>,
-    wifi_locked_target: Option<String>,
+    wifi_lock_restore_modes: HashMap<String, ChannelSelectionMode>,
+    wifi_locked_targets: HashMap<String, String>,
     wifi_interface_restore_types: HashMap<String, String>,
     scan_start_in_progress: bool,
     scan_stop_in_progress: bool,
@@ -786,12 +786,7 @@ impl AppState {
             .interfaces
             .iter()
             .find(|iface| iface.enabled)
-            .map(|iface| {
-                iface
-                    .monitor_interface_name
-                    .clone()
-                    .unwrap_or_else(|| iface.interface_name.clone())
-            })
+            .map(active_interface_name_for_settings)
     }
 
     fn lock_wifi_to_channel(
@@ -799,27 +794,26 @@ impl AppState {
         channel: u16,
         ht_mode: &str,
         target_label: impl Into<String>,
+        preferred_interface: Option<&str>,
     ) -> bool {
-        let Some(iface) = self.settings.interfaces.first_mut() else {
+        let Some(index) = self.enabled_wifi_interface_index_for_preferred(preferred_interface) else {
             self.push_status("no Wi-Fi interface configured for AP lock".to_string());
             return false;
         };
 
-        if self.wifi_lock_restore_mode.is_none() {
-            self.wifi_lock_restore_mode = Some(iface.channel_mode.clone());
-        }
+        let iface_name = active_interface_name_for_settings(&self.settings.interfaces[index]);
+        let previous_mode = self.settings.interfaces[index].channel_mode.clone();
+        self.wifi_lock_restore_modes
+            .entry(iface_name.clone())
+            .or_insert(previous_mode);
 
-        iface.channel_mode = ChannelSelectionMode::Locked {
+        self.settings.interfaces[index].channel_mode = ChannelSelectionMode::Locked {
             channel,
             ht_mode: ht_mode.to_string(),
         };
         let target = target_label.into();
-        self.wifi_locked_target = Some(target.clone());
-
-        let iface_name = iface
-            .monitor_interface_name
-            .clone()
-            .unwrap_or_else(|| iface.interface_name.clone());
+        self.wifi_locked_targets
+            .insert(iface_name.clone(), target.clone());
         let restart_message = format!(
             "applying AP lock on {} channel {} ({}) for {}",
             iface_name, channel, ht_mode, target
@@ -833,22 +827,22 @@ impl AppState {
         }
     }
 
-    fn unlock_wifi_card(&mut self) -> bool {
-        let Some(restore_mode) = self.wifi_lock_restore_mode.take() else {
+    fn unlock_wifi_card(&mut self, preferred_interface: Option<&str>) -> bool {
+        let Some(iface_name) = self.locked_wifi_interface_name(preferred_interface) else {
             self.push_status("Wi-Fi card is not locked to an AP".to_string());
             return false;
         };
-        let Some(iface) = self.settings.interfaces.first_mut() else {
+        let Some(restore_mode) = self.wifi_lock_restore_modes.remove(&iface_name) else {
+            self.push_status("Wi-Fi card is not locked to an AP".to_string());
+            return false;
+        };
+        let Some(index) = self.enabled_wifi_interface_index_for_preferred(Some(&iface_name)) else {
             self.push_status("no Wi-Fi interface configured to unlock".to_string());
             return false;
         };
 
-        iface.channel_mode = restore_mode;
-        let iface_name = iface
-            .monitor_interface_name
-            .clone()
-            .unwrap_or_else(|| iface.interface_name.clone());
-        let locked_target = self.wifi_locked_target.take();
+        self.settings.interfaces[index].channel_mode = restore_mode;
+        let locked_target = self.wifi_locked_targets.remove(&iface_name);
         let restart_message = format!(
             "unlocking {}{}",
             iface_name,
@@ -866,10 +860,60 @@ impl AppState {
     }
 
     fn wifi_lock_status_text(&self) -> String {
-        match (&self.wifi_locked_target, &self.wifi_lock_restore_mode) {
-            (Some(target), Some(_)) => format!("Locked to AP: {}", target),
-            _ => "Unlocked".to_string(),
+        match self.wifi_locked_targets.len() {
+            0 => "Unlocked".to_string(),
+            1 => self
+                .wifi_locked_targets
+                .iter()
+                .next()
+                .map(|(iface, target)| format!("{} on {}", target, iface))
+                .unwrap_or_else(|| "Unlocked".to_string()),
+            count => format!("Locked on {} adapters", count),
         }
+    }
+
+    fn active_wifi_interface_name_for_preferred(
+        &self,
+        preferred_interface: Option<&str>,
+    ) -> Option<String> {
+        preferred_interface
+            .and_then(|preferred| {
+                self.settings
+                    .interfaces
+                    .iter()
+                    .find(|iface| iface.enabled && interface_matches_name(iface, preferred))
+                    .map(active_interface_name_for_settings)
+            })
+            .or_else(|| self.active_wifi_interface_name())
+    }
+
+    fn enabled_wifi_interface_index_for_preferred(
+        &self,
+        preferred_interface: Option<&str>,
+    ) -> Option<usize> {
+        if let Some(preferred) = preferred_interface {
+            if let Some(index) = self
+                .settings
+                .interfaces
+                .iter()
+                .position(|iface| iface.enabled && interface_matches_name(iface, preferred))
+            {
+                return Some(index);
+            }
+        }
+
+        self.settings.interfaces.iter().position(|iface| iface.enabled)
+    }
+
+    fn locked_wifi_interface_name(&self, preferred_interface: Option<&str>) -> Option<String> {
+        preferred_interface
+            .and_then(|preferred| {
+                self.wifi_lock_restore_modes
+                    .keys()
+                    .find(|iface| iface.eq_ignore_ascii_case(preferred))
+                    .cloned()
+            })
+            .or_else(|| self.wifi_lock_restore_modes.keys().next().cloned())
     }
 
     fn begin_async_scan_shutdown(&mut self, restart_message: Option<String>) -> bool {
@@ -1132,6 +1176,7 @@ struct WifiGeigerTarget {
     track_id: String,
     display_name: String,
     channel: u16,
+    preferred_interface: Option<String>,
 }
 
 #[derive(Default)]
@@ -1273,6 +1318,8 @@ fn build_table_pagination_controls(
     let filter_bar = Grid::new();
     filter_bar.set_column_spacing(14);
     filter_bar.set_hexpand(true);
+    filter_bar.set_margin_top(2);
+    filter_bar.set_margin_bottom(2);
 
     let rows_label = Label::new(Some("Rows"));
     rows_label.set_xalign(0.0);
@@ -1320,9 +1367,8 @@ fn build_table_pagination_controls(
         entry.set_has_frame(false);
         entry.set_width_chars(entry_width);
         entry.set_max_width_chars(entry_width);
-        entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
+        entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, 22);
         entry.set_margin_end(6);
-        entry.set_placeholder_text(Some(column_label));
         entry.set_tooltip_text(Some(&format!("Filter {}", column_label)));
         filter_bar.attach(&entry, column_index as i32, 0, 1, 1);
         filter_entries
@@ -1737,8 +1783,8 @@ fn build_ui(app: &Application) -> Result<()> {
         assoc_sort: TableSortState::new("last_heard", true),
         bluetooth_sort: TableSortState::new("last_seen", true),
         pending_privilege_alert: None,
-        wifi_lock_restore_mode: None,
-        wifi_locked_target: None,
+        wifi_lock_restore_modes: HashMap::new(),
+        wifi_locked_targets: HashMap::new(),
         wifi_interface_restore_types: HashMap::new(),
         scan_start_in_progress: false,
         scan_stop_in_progress: false,
@@ -3874,14 +3920,22 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             let label = ap.ssid.clone().unwrap_or_else(|| ap.bssid.clone());
             let _ = state
                 .borrow_mut()
-                .lock_wifi_to_channel(channel, "HT20", label);
+                .lock_wifi_to_channel(
+                    channel,
+                    "HT20",
+                    label,
+                    ap.source_adapters.first().map(String::as_str),
+                );
         });
     }
 
     {
         let state = state.clone();
+        let ap_list = ap_list.clone();
         ap_geiger_unlock_btn.connect_clicked(move |_| {
-            let _ = state.borrow_mut().unlock_wifi_card();
+            let preferred = selected_ap(&state, &ap_list)
+                .and_then(|ap| ap.source_adapters.first().cloned());
+            let _ = state.borrow_mut().unlock_wifi_card(preferred.as_deref());
         });
     }
 
@@ -3930,14 +3984,22 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             };
             let _ = state
                 .borrow_mut()
-                .lock_wifi_to_channel(channel, "HT20", label);
+                .lock_wifi_to_channel(
+                    channel,
+                    "HT20",
+                    label,
+                    client.source_adapters.first().map(String::as_str),
+                );
         });
     }
 
     {
         let state = state.clone();
+        let client_list = client_list.clone();
         client_geiger_unlock_btn.connect_clicked(move |_| {
-            let _ = state.borrow_mut().unlock_wifi_card();
+            let preferred = selected_client(&state, &client_list)
+                .and_then(|client| client.source_adapters.first().cloned());
+            let _ = state.borrow_mut().unlock_wifi_card(preferred.as_deref());
         });
     }
 
@@ -3971,7 +4033,14 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     .push_status("no bluetooth device selected for locate".to_string());
                 return;
             };
-            start_bluetooth_geiger_tracking(&state, &bluetooth_geiger_state, &device.mac);
+            if !bluetooth_record_supports_bluez_actions(&device) {
+                state.borrow_mut().push_status(format!(
+                    "bluetooth geiger tracking requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
+                    device.mac
+                ));
+                return;
+            }
+            start_bluetooth_geiger_tracking(&state, &bluetooth_geiger_state, &device);
         });
     }
 
@@ -4007,10 +4076,20 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             let (controller, sender) = {
                 let s = state.borrow();
                 (
-                    s.settings.bluetooth_controller.clone(),
+                    bluetooth_action_controller(
+                        s.settings.bluetooth_controller.as_deref(),
+                        &device,
+                    ),
                     s.bluetooth_sender.clone(),
                 )
             };
+            if !bluetooth_record_supports_bluez_actions(&device) {
+                state.borrow_mut().push_status(format!(
+                    "bluetooth enumeration requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
+                    device.mac
+                ));
+                return;
+            }
             state.borrow_mut().push_status(format!(
                 "starting active bluetooth enumeration for {}",
                 device.mac
@@ -4059,10 +4138,20 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             let (controller, sender) = {
                 let s = state.borrow();
                 (
-                    s.settings.bluetooth_controller.clone(),
+                    bluetooth_action_controller(
+                        s.settings.bluetooth_controller.as_deref(),
+                        &device,
+                    ),
                     s.bluetooth_sender.clone(),
                 )
             };
+            if !bluetooth_record_supports_bluez_actions(&device) {
+                state.borrow_mut().push_status(format!(
+                    "bluetooth disconnect requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
+                    device.mac
+                ));
+                return;
+            }
             state
                 .borrow_mut()
                 .push_status(format!("disconnecting bluetooth device {}", device.mac));
@@ -8418,11 +8507,12 @@ fn format_ap_detail_text(ap: &AccessPointRecord) -> String {
     let advanced_not_captured = "Not captured yet";
 
     format!(
-        "Identity\nSSID: {}\nHidden SSID: {}\nBSSID: {}\nOUI: {}\n802.11d Country: {}\n\nSecurity\nEncryption: {}\nFull Encryption: {}\nAKM Suites: {}\nCipher Suites: {}\nPMF: {}\nWPS:\n{}\nHandshake Count (WPA2 4-way full): {}\nPMKID Count: {}\n\nRadio\nBand: {}\nPrimary Channel: {}\nFrequency: {} MHz\nSecondary Channel: {}\nChannel Width: {}\nCenter Segment 0: {}\nCenter Segment 1: {}\nPHY Generation: {}\nHT/VHT/HE/EHT Summary: {}\nSupported Rates: {}\nBasic Rates: {}\nWMM / QoS: {}\n802.11k: {}\n802.11v: {}\n802.11r: {}\nDFS / TPC: {}\nChannel Switch Announcement: {}\nMulti-BSSID: {}\nRNR / Neighbor Report: {}\n802.11u / Hotspot 2.0: {}\nVendor IEs: {}\n\nPresence\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nClients: {}\nFirst Seen: {}\nLast Seen: {}\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}\nUptime (beacon estimate): {}\nBeacon Interval: {}\nDTIM Period: {}\n\nAnalytics\nPacket Totals: total={} mgmt={} control={} data={} other={}\nBSS Load: {}\nObserved Data Rates: {}\nRetry Rate: {}\n\nNotes\n{}",
+        "Identity\nSSID: {}\nHidden SSID: {}\nBSSID: {}\nOUI: {}\nObserved On Adapters: {}\n802.11d Country: {}\n\nSecurity\nEncryption: {}\nFull Encryption: {}\nAKM Suites: {}\nCipher Suites: {}\nPMF: {}\nWPS:\n{}\nHandshake Count (WPA2 4-way full): {}\nPMKID Count: {}\n\nRadio\nBand: {}\nPrimary Channel: {}\nFrequency: {} MHz\nSecondary Channel: {}\nChannel Width: {}\nCenter Segment 0: {}\nCenter Segment 1: {}\nPHY Generation: {}\nHT/VHT/HE/EHT Summary: {}\nSupported Rates: {}\nBasic Rates: {}\nWMM / QoS: {}\n802.11k: {}\n802.11v: {}\n802.11r: {}\nDFS / TPC: {}\nChannel Switch Announcement: {}\nMulti-BSSID: {}\nRNR / Neighbor Report: {}\n802.11u / Hotspot 2.0: {}\nVendor IEs: {}\n\nPresence\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nClients: {}\nFirst Seen: {}\nLast Seen: {}\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}\nUptime (beacon estimate): {}\nBeacon Interval: {}\nDTIM Period: {}\n\nAnalytics\nPacket Totals: total={} mgmt={} control={} data={} other={}\nBSS Load: {}\nObserved Data Rates: {}\nRetry Rate: {}\n\nNotes\n{}",
         ap.ssid.clone().unwrap_or_else(|| "<hidden>".to_string()),
         hidden_ssid,
         ap.bssid,
         ap.oui_manufacturer.clone().unwrap_or_else(|| "Unknown".into()),
+        format_source_adapters(&ap.source_adapters),
         ap.country_code_80211d
             .clone()
             .unwrap_or_else(|| "Unknown".into()),
@@ -8602,9 +8692,10 @@ fn format_client_detail_text(client: &ClientRecord, aps: &[AccessPointRecord]) -
         associated_ssid_for_client(aps, client).unwrap_or_else(|| "Unknown".to_string());
 
     format!(
-        "Identity\nMAC: {}\nOUI: {}\nRandomized MAC: {}\n\nAssociation\nAssociated AP: {}\nAssociated SSID: {}\nSeen AP Count: {}\nSeen APs: {}\nRoam Count: {}\nProbe Count: {}\nProbes: {}\nFirst Heard: {}\nLast Heard: {}\n\nRadio And Behavior\nBand: {}\nLast Channel: {}\nLast Frequency: {}\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nPacket Mix: mgmt={} control={} data={} other={}\nData Transferred: {} bytes\nUplink Bytes: {}\nDownlink Bytes: {}\nRetry Frames: {}\nRetry Rate: {}\nPower Save Observed: {}\nQoS Priorities: {}\nLast Frame: {}\nListen Interval: {}\n\nSecurity\nWPS: {}\nEAPOL Frames: {}\nPMKID Count: {}\nHandshake Network Count: {}\nHandshake Networks: {}\nLast Status Code: {}\nLast Reason Code: {}\n\nPresence\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}",
+        "Identity\nMAC: {}\nOUI: {}\nObserved On Adapters: {}\nRandomized MAC: {}\n\nAssociation\nAssociated AP: {}\nAssociated SSID: {}\nSeen AP Count: {}\nSeen APs: {}\nRoam Count: {}\nProbe Count: {}\nProbes: {}\nFirst Heard: {}\nLast Heard: {}\n\nRadio And Behavior\nBand: {}\nLast Channel: {}\nLast Frequency: {}\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nPacket Mix: mgmt={} control={} data={} other={}\nData Transferred: {} bytes\nUplink Bytes: {}\nDownlink Bytes: {}\nRetry Frames: {}\nRetry Rate: {}\nPower Save Observed: {}\nQoS Priorities: {}\nLast Frame: {}\nListen Interval: {}\n\nSecurity\nWPS: {}\nEAPOL Frames: {}\nPMKID Count: {}\nHandshake Network Count: {}\nHandshake Networks: {}\nLast Status Code: {}\nLast Reason Code: {}\n\nPresence\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}",
         client.mac,
         client.oui_manufacturer.clone().unwrap_or_else(|| "Unknown".into()),
+        format_source_adapters(&client.source_adapters),
         bool_text(is_randomized_mac(&client.mac)),
         client.associated_ap.clone().unwrap_or_else(|| "Unknown".to_string()),
         associated_ssid,
@@ -8691,7 +8782,7 @@ fn format_bluetooth_identity_section(device: &BluetoothDeviceRecord) -> String {
     );
 
     format!(
-        "MAC: {}\nTransport: {}\nAddress Type: {}\nOUI: {}\nName: {}\nAlias: {}\nDevice Type: {}\nClass: {}\nCurrent RSSI: {}\nFirst Seen: {}\nLast Seen: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}",
+        "MAC: {}\nTransport: {}\nAddress Type: {}\nOUI: {}\nObserved On Adapters: {}\nName: {}\nAlias: {}\nDevice Type: {}\nClass: {}\nCurrent RSSI: {}\nFirst Seen: {}\nLast Seen: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}",
         device.mac,
         device.transport,
         device
@@ -8702,6 +8793,7 @@ fn format_bluetooth_identity_section(device: &BluetoothDeviceRecord) -> String {
             .oui_manufacturer
             .clone()
             .unwrap_or_else(|| "Unknown".to_string()),
+        format_source_adapters(&device.source_adapters),
         device
             .advertised_name
             .clone()
@@ -9254,15 +9346,20 @@ fn install_ui_css() -> gtk::CssProvider {
   font-family: monospace;
 }
 .column-filter {
-  padding-left: 0;
-  padding-right: 0;
-  border: none;
+  padding-left: 4px;
+  padding-right: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
   box-shadow: none;
-  background-color: transparent;
+  background-color: rgba(255, 255, 255, 0.03);
+  border-radius: 2px;
 }
 .column-filter text {
   padding-left: 0;
   padding-right: 0;
+}
+.column-filter:focus-within {
+  border-color: rgba(255, 255, 255, 0.28);
+  background-color: rgba(255, 255, 255, 0.06);
 }
 .sort-header {
   text-decoration-line: underline;
@@ -9623,7 +9720,12 @@ fn attach_ap_context_menu(
                     let label = ap.ssid.clone().unwrap_or_else(|| ap.bssid.clone());
                     let _ = state
                         .borrow_mut()
-                        .lock_wifi_to_channel(channel, "HT20", label);
+                        .lock_wifi_to_channel(
+                            channel,
+                            "HT20",
+                            label,
+                            ap.source_adapters.first().map(String::as_str),
+                        );
                 }
             }
         });
@@ -9631,8 +9733,11 @@ fn attach_ap_context_menu(
 
     {
         let state = state.clone();
+        let ap_list = ap_list.clone();
         unlock_btn.connect_clicked(move |_| {
-            let _ = state.borrow_mut().unlock_wifi_card();
+            let preferred = selected_ap(&state, &ap_list)
+                .and_then(|ap| ap.source_adapters.first().cloned());
+            let _ = state.borrow_mut().unlock_wifi_card(preferred.as_deref());
         });
     }
 
@@ -9736,14 +9841,22 @@ fn attach_client_context_menu(
             };
             let _ = state
                 .borrow_mut()
-                .lock_wifi_to_channel(channel, "HT20", label);
+                .lock_wifi_to_channel(
+                    channel,
+                    "HT20",
+                    label,
+                    client.source_adapters.first().map(String::as_str),
+                );
         });
     }
 
     {
         let state = state.clone();
+        let client_list = client_list.clone();
         unlock_btn.connect_clicked(move |_| {
-            let _ = state.borrow_mut().unlock_wifi_card();
+            let preferred = selected_client(&state, &client_list)
+                .and_then(|client| client.source_adapters.first().cloned());
+            let _ = state.borrow_mut().unlock_wifi_card(preferred.as_deref());
         });
     }
 
@@ -9785,7 +9898,14 @@ fn attach_bluetooth_context_menu(
         let bluetooth_geiger_state = bluetooth_geiger_state.clone();
         locate_btn.connect_clicked(move |_| {
             if let Some(device) = selected_bluetooth(&state, &bluetooth_list) {
-                start_bluetooth_geiger_tracking(&state, &bluetooth_geiger_state, &device.mac);
+                if !bluetooth_record_supports_bluez_actions(&device) {
+                    state.borrow_mut().push_status(format!(
+                        "bluetooth geiger tracking requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
+                        device.mac
+                    ));
+                    return;
+                }
+                start_bluetooth_geiger_tracking(&state, &bluetooth_geiger_state, &device);
             }
         });
     }
@@ -9803,10 +9923,20 @@ fn attach_bluetooth_context_menu(
             let (controller, sender) = {
                 let s = state.borrow();
                 (
-                    s.settings.bluetooth_controller.clone(),
+                    bluetooth_action_controller(
+                        s.settings.bluetooth_controller.as_deref(),
+                        &device,
+                    ),
                     s.bluetooth_sender.clone(),
                 )
             };
+            if !bluetooth_record_supports_bluez_actions(&device) {
+                state.borrow_mut().push_status(format!(
+                    "bluetooth enumeration requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
+                    device.mac
+                ));
+                return;
+            }
             state.borrow_mut().push_status(format!(
                 "starting active bluetooth enumeration for {}",
                 device.mac
@@ -9853,10 +9983,20 @@ fn attach_bluetooth_context_menu(
             let (controller, sender) = {
                 let s = state.borrow();
                 (
-                    s.settings.bluetooth_controller.clone(),
+                    bluetooth_action_controller(
+                        s.settings.bluetooth_controller.as_deref(),
+                        &device,
+                    ),
                     s.bluetooth_sender.clone(),
                 )
             };
+            if !bluetooth_record_supports_bluez_actions(&device) {
+                state.borrow_mut().push_status(format!(
+                    "bluetooth disconnect requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
+                    device.mac
+                ));
+                return;
+            }
             state
                 .borrow_mut()
                 .push_status(format!("disconnecting bluetooth device {}", device.mac));
@@ -9911,6 +10051,7 @@ fn wifi_geiger_target_for_ap(ap: &AccessPointRecord) -> Option<WifiGeigerTarget>
         track_id: ap.bssid.clone(),
         display_name: display_name.clone(),
         channel,
+        preferred_interface: ap.source_adapters.first().cloned(),
     })
 }
 
@@ -9929,6 +10070,11 @@ fn wifi_geiger_target_for_client(
         track_id: client.mac.clone(),
         display_name: format!("{} via {}", client.mac, lock_label),
         channel,
+        preferred_interface: client
+            .source_adapters
+            .first()
+            .cloned()
+            .or_else(|| ap.source_adapters.first().cloned()),
     })
 }
 
@@ -10086,7 +10232,10 @@ fn start_wifi_geiger_tracking_target(
         stop.store(true, Ordering::Relaxed);
     }
 
-    let Some(interface) = state.borrow().active_wifi_interface_name() else {
+    let Some(interface) = state
+        .borrow()
+        .active_wifi_interface_name_for_preferred(target.preferred_interface.as_deref())
+    else {
         state.borrow_mut().push_status(
             "no active Wi-Fi interface available for RSSI geiger tracking".to_string(),
         );
@@ -10218,10 +10367,53 @@ fn selected_bluetooth(
         .cloned()
 }
 
+fn bluetooth_record_bluez_controller(device: &BluetoothDeviceRecord) -> Option<Option<String>> {
+    device.source_adapters.iter().find_map(|adapter| {
+        let trimmed = adapter.trim();
+        if trimmed.eq_ignore_ascii_case("bluez") {
+            Some(None)
+        } else if trimmed.len() > 6 && trimmed[..6].eq_ignore_ascii_case("bluez:") {
+            let controller = trimmed[6..].trim();
+            if controller.is_empty() {
+                Some(None)
+            } else {
+                Some(Some(controller.to_string()))
+            }
+        } else {
+            None
+        }
+    })
+}
+
+fn bluetooth_record_supports_bluez_actions(device: &BluetoothDeviceRecord) -> bool {
+    device.source_adapters.is_empty() || bluetooth_record_bluez_controller(device).is_some()
+}
+
+fn bluetooth_action_controller(
+    configured_controller: Option<&str>,
+    device: &BluetoothDeviceRecord,
+) -> Option<String> {
+    let configured = configured_controller
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match configured {
+        Some(value)
+            if value != bluetooth::ALL_CONTROLLERS_ID
+                && !value.eq_ignore_ascii_case("default") =>
+        {
+            Some(value.to_string())
+        }
+        _ => match bluetooth_record_bluez_controller(device) {
+            Some(Some(controller)) => Some(controller),
+            Some(None) | None => None,
+        },
+    }
+}
+
 fn start_bluetooth_geiger_tracking(
     state: &Rc<RefCell<AppState>>,
     geiger_state: &Rc<RefCell<BluetoothGeigerUiState>>,
-    target_mac: &str,
+    device: &BluetoothDeviceRecord,
 ) {
     if let Some(stop) = geiger_state.borrow_mut().stop.take() {
         stop.store(true, Ordering::Relaxed);
@@ -10230,17 +10422,20 @@ fn start_bluetooth_geiger_tracking(
     let (tx, rx) = unbounded::<GeigerUpdate>();
     let stop = Arc::new(AtomicBool::new(false));
 
-    let controller = state.borrow().settings.bluetooth_controller.clone();
-    let _ = bluetooth::start_geiger_mode(controller.as_deref(), target_mac, tx, stop.clone());
+    let controller = {
+        let configured = state.borrow().settings.bluetooth_controller.clone();
+        bluetooth_action_controller(configured.as_deref(), device)
+    };
+    let _ = bluetooth::start_geiger_mode(controller.as_deref(), &device.mac, tx, stop.clone());
 
     let mut gs = geiger_state.borrow_mut();
     gs.receiver = Some(rx);
     gs.stop = Some(stop);
-    gs.target_mac = Some(target_mac.to_string());
+    gs.target_mac = Some(device.mac.clone());
 
     state
         .borrow_mut()
-        .push_status(format!("bluetooth geiger tracking {}", target_mac));
+        .push_status(format!("bluetooth geiger tracking {}", device.mac));
 }
 
 fn open_layout_dialog(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) {
@@ -11075,6 +11270,10 @@ fn open_interface_settings_dialog_inner(
 
     let bluetooth_controller_combo = ComboBoxText::new();
     bluetooth_controller_combo.append(Some("default"), "Default Controller");
+    bluetooth_controller_combo.append(
+        Some(bluetooth::ALL_CONTROLLERS_ID),
+        "All Controllers",
+    );
     for ctrl in bluetooth::list_controllers().unwrap_or_default() {
         bluetooth_controller_combo.append(
             Some(&ctrl.id),
@@ -11094,6 +11293,10 @@ fn open_interface_settings_dialog_inner(
 
     let ubertooth_combo = ComboBoxText::new();
     ubertooth_combo.append(Some("default"), "Default Ubertooth Device");
+    ubertooth_combo.append(
+        Some(bluetooth::ALL_UBERTOOTH_DEVICES_ID),
+        "All Ubertooth Devices",
+    );
     for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
         ubertooth_combo.append(Some(&device.id), &device.name);
     }
@@ -12031,6 +12234,10 @@ fn open_preferences_window(
 
     let bluetooth_controller_combo = ComboBoxText::new();
     bluetooth_controller_combo.append(Some("default"), "Default Controller");
+    bluetooth_controller_combo.append(
+        Some(bluetooth::ALL_CONTROLLERS_ID),
+        "All Controllers",
+    );
     for ctrl in bluetooth::list_controllers().unwrap_or_default() {
         bluetooth_controller_combo.append(
             Some(&ctrl.id),
@@ -12064,6 +12271,10 @@ fn open_preferences_window(
 
     let ubertooth_device_combo = ComboBoxText::new();
     ubertooth_device_combo.append(Some("default"), "Default Ubertooth Device");
+    ubertooth_device_combo.append(
+        Some(bluetooth::ALL_UBERTOOTH_DEVICES_ID),
+        "All Ubertooth Devices",
+    );
     for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
         ubertooth_device_combo.append(Some(&device.id), &device.name);
     }
@@ -12667,6 +12878,10 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
 
     let controller_combo = ComboBoxText::new();
     controller_combo.append(Some("default"), "Default Controller");
+    controller_combo.append(
+        Some(bluetooth::ALL_CONTROLLERS_ID),
+        "All Controllers",
+    );
     let controllers = bluetooth::list_controllers().unwrap_or_default();
     for ctrl in &controllers {
         controller_combo.append(
@@ -12691,6 +12906,10 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
 
     let ubertooth_combo = ComboBoxText::new();
     ubertooth_combo.append(Some("default"), "Default Ubertooth Device");
+    ubertooth_combo.append(
+        Some(bluetooth::ALL_UBERTOOTH_DEVICES_ID),
+        "All Ubertooth Devices",
+    );
     for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
         ubertooth_combo.append(Some(&device.id), &device.name);
     }
@@ -12909,6 +13128,7 @@ fn merge_ap(aps: &mut Vec<AccessPointRecord>, incoming: AccessPointRecord) {
         if incoming.country_code_80211d.is_some() {
             existing.country_code_80211d = incoming.country_code_80211d;
         }
+        merge_unique_strings(&mut existing.source_adapters, incoming.source_adapters);
         existing.channel = incoming.channel.or(existing.channel);
         existing.frequency_mhz = incoming.frequency_mhz.or(existing.frequency_mhz);
         existing.band = incoming.band;
@@ -12961,6 +13181,7 @@ fn merge_client(clients: &mut Vec<ClientRecord>, incoming: ClientRecord) {
         if incoming.oui_manufacturer.is_some() {
             existing.oui_manufacturer = incoming.oui_manufacturer;
         }
+        merge_unique_strings(&mut existing.source_adapters, incoming.source_adapters);
         if incoming.associated_ap.is_some() {
             existing.associated_ap = incoming.associated_ap;
         }
@@ -13106,6 +13327,7 @@ fn merge_bluetooth_device(
         if incoming.oui_manufacturer.is_some() {
             existing.oui_manufacturer = incoming.oui_manufacturer;
         }
+        merge_unique_strings(&mut existing.source_adapters, incoming.source_adapters);
         if incoming.advertised_name.is_some() {
             existing.advertised_name = incoming.advertised_name;
         }
@@ -13156,6 +13378,37 @@ fn sanitize_name(value: &str) -> String {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect()
+}
+
+fn merge_unique_strings(existing: &mut Vec<String>, incoming: Vec<String>) {
+    for value in incoming {
+        if !existing.iter().any(|current| current.eq_ignore_ascii_case(&value)) {
+            existing.push(value);
+        }
+    }
+}
+
+fn format_source_adapters(adapters: &[String]) -> String {
+    if adapters.is_empty() {
+        "Unknown".to_string()
+    } else {
+        adapters.join(", ")
+    }
+}
+
+fn active_interface_name_for_settings(iface: &InterfaceSettings) -> String {
+    iface.monitor_interface_name
+        .clone()
+        .unwrap_or_else(|| iface.interface_name.clone())
+}
+
+fn interface_matches_name(iface: &InterfaceSettings, name: &str) -> bool {
+    iface.interface_name.eq_ignore_ascii_case(name)
+        || iface
+            .monitor_interface_name
+            .as_deref()
+            .map(|active| active.eq_ignore_ascii_case(name))
+            .unwrap_or(false)
 }
 
 fn should_record_observation(
@@ -13236,6 +13489,42 @@ mod tests {
         client.network_intel.retry_frame_count = 1;
         let after = client_detail_signature(&client);
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn bluetooth_action_controller_prefers_observed_bluez_source_when_unset() {
+        let now = Utc::now();
+        let mut device = BluetoothDeviceRecord::new("AA:BB:CC:DD:EE:FF", now);
+        device.source_adapters = vec![
+            "ubertooth:usb0".to_string(),
+            "bluez:D0:C6:37:4D:3E:05".to_string(),
+        ];
+
+        assert_eq!(
+            bluetooth_action_controller(None, &device),
+            Some("D0:C6:37:4D:3E:05".to_string())
+        );
+    }
+
+    #[test]
+    fn bluetooth_action_controller_respects_explicit_controller_setting() {
+        let now = Utc::now();
+        let mut device = BluetoothDeviceRecord::new("AA:BB:CC:DD:EE:FF", now);
+        device.source_adapters = vec!["bluez:D0:C6:37:4D:3E:05".to_string()];
+
+        assert_eq!(
+            bluetooth_action_controller(Some("11:22:33:44:55:66"), &device),
+            Some("11:22:33:44:55:66".to_string())
+        );
+    }
+
+    #[test]
+    fn bluetooth_record_supports_bluez_actions_rejects_ubertooth_only_device() {
+        let now = Utc::now();
+        let mut device = BluetoothDeviceRecord::new("AA:BB:CC:DD:EE:FF", now);
+        device.source_adapters = vec!["ubertooth:usb0".to_string()];
+
+        assert!(!bluetooth_record_supports_bluez_actions(&device));
     }
 
     #[test]
