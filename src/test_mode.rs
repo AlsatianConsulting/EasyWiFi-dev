@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WifiTestOptions {
-    pub interface: String,
+    pub interfaces: Vec<String>,
     pub channels: Vec<u16>,
     pub duration_secs: u64,
     pub ht_mode: String,
@@ -22,7 +22,7 @@ pub struct WifiTestOptions {
 impl Default for WifiTestOptions {
     fn default() -> Self {
         Self {
-            interface: String::new(),
+            interfaces: Vec::new(),
             channels: vec![1, 6, 11],
             duration_secs: 6,
             ht_mode: "HT20".to_string(),
@@ -130,7 +130,7 @@ fn parse_wifi_test_args(args: &[String]) -> Result<WifiTestOptions> {
                 let value = args
                     .get(idx)
                     .ok_or_else(|| anyhow::anyhow!("missing value for --interface"))?;
-                options.interface = value.clone();
+                options.interfaces.extend(parse_interface_list(value)?);
             }
             "--channels" => {
                 idx += 1;
@@ -177,8 +177,13 @@ fn parse_wifi_test_args(args: &[String]) -> Result<WifiTestOptions> {
         idx += 1;
     }
 
-    if options.interface.trim().is_empty() {
-        bail!("--interface is required for --test-wifi");
+    options.interfaces.sort();
+    options
+        .interfaces
+        .dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+
+    if options.interfaces.is_empty() {
+        bail!("at least one --interface is required for --test-wifi");
     }
     if options.channels.is_empty() {
         bail!("--channels resolved to an empty set");
@@ -191,7 +196,8 @@ pub fn print_wifi_test_usage() {
     println!("WirelessExplorer non-interactive Wi-Fi test mode");
     println!();
     println!("Usage:");
-    println!("  wirelessexplorer --test-wifi --interface <iface> [options]");
+    println!("  wirelessexplorer --test-wifi --interface <iface>[,<iface>...] [options]");
+    println!("  wirelessexplorer --test-wifi --interface <iface1> --interface <iface2> [options]");
     println!();
     println!("Options:");
     println!("  --channels <csv>        Channel list, default: 1,6,11");
@@ -207,9 +213,9 @@ pub fn print_bluetooth_test_usage() {
     println!("  wirelessexplorer --test-bluetooth [options]");
     println!();
     println!("Options:");
-    println!("  --controller <mac>      BlueZ controller MAC (optional)");
+    println!("  --controller <mac|all>  BlueZ controller MAC or all controllers");
     println!("  --source <name>         bluez|ubertooth|both (default: bluez)");
-    println!("  --ubertooth-device <id> Ubertooth serial/id when source uses ubertooth");
+    println!("  --ubertooth-device <id|all> Ubertooth serial/id or all devices");
     println!("  --duration-secs <n>     Total scan duration, default: 12");
     println!("  --scan-timeout-secs <n> Per scan pass timeout, default: 4");
     println!("  --pause-ms <n>          Pause between scan passes, default: 500");
@@ -803,6 +809,7 @@ struct SdrTestSummary {
     last_freq_hz: Option<u64>,
     last_decoder: Option<String>,
     last_message: Option<String>,
+    missing_dependencies: Vec<String>,
 }
 
 fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
@@ -916,6 +923,15 @@ fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
     println!("  decode rows: {}", summary.decode_rows);
     println!("  satcom audit rows: {}", summary.satcom_rows);
     println!("  map points: {}", summary.map_points);
+    if summary.missing_dependencies.is_empty() {
+        println!("  dependencies: all installed");
+    } else {
+        println!(
+            "  dependencies missing ({}): {}",
+            summary.missing_dependencies.len(),
+            summary.missing_dependencies.join(", ")
+        );
+    }
     println!(
         "  last tuned freq: {}",
         summary
@@ -960,7 +976,22 @@ fn apply_sdr_test_event(event: SdrEvent, summary: &mut SdrTestSummary, logs_prin
             summary.satcom_rows += 1;
         }
         SdrEvent::DecoderState { .. } => {}
-        SdrEvent::DependencyStatus(_) => {}
+        SdrEvent::DependencyStatus(statuses) => {
+            let missing = statuses
+                .into_iter()
+                .filter(|status| !status.installed)
+                .map(|status| format!("{} ({})", status.tool, status.package_hint))
+                .collect::<Vec<_>>();
+            if summary.missing_dependencies != missing && *logs_printed < 60 {
+                if missing.is_empty() {
+                    println!("[sdr] dependencies satisfied");
+                } else {
+                    println!("[sdr] missing dependencies: {}", missing.join(", "));
+                }
+                *logs_printed += 1;
+            }
+            summary.missing_dependencies = missing;
+        }
         SdrEvent::SquelchChanged(_) => {}
     }
 }
@@ -1000,6 +1031,21 @@ fn parse_channels(value: &str) -> Result<Vec<u16>> {
     Ok(channels)
 }
 
+fn parse_interface_list(value: &str) -> Result<Vec<String>> {
+    let mut interfaces = value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+    interfaces.sort();
+    interfaces.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    if interfaces.is_empty() {
+        bail!("no valid interfaces in `{}`", value);
+    }
+    Ok(interfaces)
+}
+
 fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
     if !capture::running_as_root() {
         bail!("--test-wifi must be run as root, for example: `sudo -E ./target/debug/wirelessexplorer --test-wifi ...`");
@@ -1010,7 +1056,7 @@ fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
 
     println!("WirelessExplorer Wi-Fi test mode");
     println!("privilege mode: {}", capture::privilege_mode_summary());
-    println!("interface: {}", options.interface);
+    println!("interfaces: {}", options.interfaces.join(", "));
     println!(
         "channels: {}",
         options
@@ -1024,13 +1070,36 @@ fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
     println!("ht mode: {}", options.ht_mode);
     println!();
 
+    let mut interface_totals = Vec::new();
+    for interface in &options.interfaces {
+        println!("=== interface {} ===", interface);
+        let total_networks = run_wifi_test_for_interface(interface, options)?;
+        interface_totals.push((interface.clone(), total_networks));
+        println!();
+    }
+
+    if interface_totals.len() > 1 {
+        println!("Wi-Fi interface summary:");
+        for (interface, total_networks) in &interface_totals {
+            println!("  {}: {} observed access points", interface, total_networks);
+        }
+        let grand_total = interface_totals.iter().map(|(_, count)| *count).sum::<usize>();
+        println!("  combined: {} observed access points", grand_total);
+    } else if let Some((_, total_networks)) = interface_totals.first() {
+        println!("total observed access points: {}", total_networks);
+    }
+
+    Ok(())
+}
+
+fn run_wifi_test_for_interface(interface: &str, options: &WifiTestOptions) -> Result<usize> {
     let prepare_target_channel = *options
         .channels
         .first()
         .ok_or_else(|| anyhow::anyhow!("--channels resolved to an empty set"))?;
     let prepared = capture::prepare_interface_for_capture(
         InterfaceSettings {
-            interface_name: options.interface.clone(),
+            interface_name: interface.to_string(),
             monitor_interface_name: None,
             channel_mode: ChannelSelectionMode::Locked {
                 channel: prepare_target_channel,
@@ -1056,7 +1125,7 @@ fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
         }
     }
     let _restore = RestoreGuard {
-        interface: options.interface.clone(),
+        interface: interface.to_string(),
         restore_type,
     };
 
@@ -1074,9 +1143,8 @@ fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
         print_channel_summary(*channel, &observations, options.max_networks_per_channel);
     }
 
-    println!();
-    println!("total observed access points: {}", total_networks);
-    Ok(())
+    println!("interface total observed access points: {}", total_networks);
+    Ok(total_networks)
 }
 
 fn print_channel_summary(channel: u16, observations: &[BeaconObservation], limit: usize) {
@@ -1252,7 +1320,9 @@ fn command_exists(cmd: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_channels, parse_sdr_decoder_with_plugins, parse_wifi_test_args};
+    use super::{
+        parse_channels, parse_interface_list, parse_sdr_decoder_with_plugins, parse_wifi_test_args,
+    };
     use crate::sdr::{SdrDecoderKind, SdrPluginDefinition};
 
     #[test]
@@ -1275,11 +1345,34 @@ mod tests {
             "25".to_string(),
         ];
         let options = parse_wifi_test_args(&args).unwrap();
-        assert_eq!(options.interface, "wlx1cbfcef8e928");
+        assert_eq!(options.interfaces, vec!["wlx1cbfcef8e928".to_string()]);
         assert_eq!(options.channels, vec![1, 6, 11]);
         assert_eq!(options.duration_secs, 8);
         assert_eq!(options.ht_mode, "HT20");
         assert_eq!(options.max_networks_per_channel, 25);
+    }
+
+    #[test]
+    fn parses_multiple_wifi_interfaces() {
+        let args = vec![
+            "--interface".to_string(),
+            "wlx1cbfcef8e928,wlp0s20f3".to_string(),
+            "--interface".to_string(),
+            "wlp0s20f3".to_string(),
+        ];
+        let options = parse_wifi_test_args(&args).unwrap();
+        assert_eq!(
+            options.interfaces,
+            vec!["wlp0s20f3".to_string(), "wlx1cbfcef8e928".to_string()]
+        );
+    }
+
+    #[test]
+    fn parses_interface_csv_and_deduplicates() {
+        assert_eq!(
+            parse_interface_list("wlx1cbfcef8e928,wlp0s20f3,wlx1cbfcef8e928").unwrap(),
+            vec!["wlp0s20f3".to_string(), "wlx1cbfcef8e928".to_string()]
+        );
     }
 
     #[test]

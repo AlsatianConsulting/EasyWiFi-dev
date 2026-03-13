@@ -34,14 +34,14 @@ Current SDR logging can also emit:
 1. Wi-Fi runtime capture supports multiple enabled interfaces in one session.
 2. Wi-Fi AP, client, and Bluetooth records retain `source_adapters` provenance and surface it in details.
 3. Wi-Fi geiger and lock workflows prefer the adapter that actually observed the selected record.
-4. Bluetooth scan supports default, specific, or `all` BlueZ controllers in one session.
-5. Bluetooth scan supports default, specific, or `all` Ubertooth devices in one session.
-6. Bluetooth enumerate, disconnect, and geiger workflows resolve the selected device back to the BlueZ controller that observed it when controller selection is `default` or `all`.
+4. Wi-Fi test mode accepts one or many interfaces in one invocation and reports per-interface results.
+5. Bluetooth scan supports default, specific, or `all` BlueZ controllers in one session.
+6. Bluetooth scan supports default, specific, or `all` Ubertooth devices in one session.
+7. Bluetooth enumerate, disconnect, and geiger workflows resolve the selected device back to the BlueZ controller that observed it when controller selection is `default` or `all`.
 
 ### Partial
 
-1. Wi-Fi test mode validates one interface per invocation.
-2. Bluetooth multi-adapter logic is implemented, but live validation on this host is limited to one BlueZ controller and one enumerated Ubertooth device.
+1. Bluetooth multi-adapter logic is implemented, but live validation on this host is limited to one BlueZ controller and one enumerated Ubertooth device.
 
 ### Not Yet Implemented
 
@@ -81,11 +81,16 @@ Collected during live tests:
 1. `wlx1cbfcef8e928`, channels `1,6,11`, 10s dwell:
    - channel 1: collected `HomeNetwork` (`80:CC:9C:AE:C1:5C`) at `-39 dBm`
    - channel 11: collected `Precious` (`2C:67:BE:4A:ED:85`) at `-59 dBm`
+2. Multi-interface test, `wlp0s20f3,wlx1cbfcef8e928`, channels `1,6,11`, 6s dwell:
+   - `wlp0s20f3`: collected 0 access points in that sample window
+   - `wlx1cbfcef8e928`, channel 11: collected `Precious` (`2C:67:BE:4A:ED:85`) at `-57 dBm`
 
 Not collected during the sampled windows:
 
 1. `wlx1cbfcef8e928`, channel 6: no BSSID-bearing frames observed in the sample window
 2. `wlp0s20f3`, channels `1,6,11`, 10s dwell: no BSSID-bearing frames observed in the sample window
+3. Multi-interface test, `wlx1cbfcef8e928`, channels 1 and 6: no BSSID-bearing frames observed in the sample window
+4. Multi-interface test, `wlp0s20f3`, channels `1,6,11`: no BSSID-bearing frames observed in the sample window
 
 ### Bluetooth
 
