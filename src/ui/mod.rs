@@ -13335,4 +13335,17 @@ mod tests {
             .get(column)
             .cloned()));
     }
+
+    #[test]
+    fn runtime_output_root_uses_effective_uid_namespace() {
+        let root = internal_runtime_output_root();
+        let uid = unsafe { libc::geteuid() };
+        let marker = format!("wirelessexplorer-runtime-uid{}", uid);
+        assert!(
+            root.to_string_lossy().contains(&marker),
+            "expected runtime output root to include `{}` but got `{}`",
+            marker,
+            root.display()
+        );
+    }
 }
