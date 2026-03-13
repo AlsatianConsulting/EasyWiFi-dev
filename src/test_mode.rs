@@ -1,10 +1,12 @@
 use crate::bluetooth::{self, BluetoothEvent, BluetoothScanConfig};
 use crate::capture;
 use crate::model::BluetoothDeviceRecord;
+use crate::sdr::{self, SdrConfig, SdrDecoderKind, SdrEvent, SdrHardware};
 use crate::settings::{ChannelSelectionMode, InterfaceSettings};
 use anyhow::{bail, Context, Result};
 use crossbeam_channel::unbounded;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -70,6 +72,47 @@ impl Default for BluetoothTestOptions {
 pub fn run_bluetooth_cli(args: &[String]) -> Result<()> {
     let options = parse_bluetooth_test_args(args)?;
     run_bluetooth_test(&options)
+}
+
+#[derive(Debug, Clone)]
+pub struct SdrTestOptions {
+    pub hardware: SdrHardware,
+    pub center_freq_hz: u64,
+    pub sample_rate_hz: u32,
+    pub duration_secs: u64,
+    pub decode: Option<SdrDecoderKind>,
+    pub scan_start_hz: Option<u64>,
+    pub scan_end_hz: Option<u64>,
+    pub scan_step_hz: Option<u64>,
+    pub scan_steps_per_sec: Option<f64>,
+    pub log_output: bool,
+    pub log_output_dir: PathBuf,
+    pub no_payload_satcom: bool,
+}
+
+impl Default for SdrTestOptions {
+    fn default() -> Self {
+        let defaults = SdrConfig::default();
+        Self {
+            hardware: defaults.hardware,
+            center_freq_hz: defaults.center_freq_hz,
+            sample_rate_hz: defaults.sample_rate_hz,
+            duration_secs: 12,
+            decode: None,
+            scan_start_hz: None,
+            scan_end_hz: None,
+            scan_step_hz: None,
+            scan_steps_per_sec: None,
+            log_output: false,
+            log_output_dir: defaults.log_output_dir,
+            no_payload_satcom: true,
+        }
+    }
+}
+
+pub fn run_sdr_cli(args: &[String]) -> Result<()> {
+    let options = parse_sdr_test_args(args)?;
+    run_sdr_test(&options)
 }
 
 fn parse_wifi_test_args(args: &[String]) -> Result<WifiTestOptions> {
@@ -167,6 +210,27 @@ pub fn print_bluetooth_test_usage() {
     println!("  --scan-timeout-secs <n> Per scan pass timeout, default: 4");
     println!("  --pause-ms <n>          Pause between scan passes, default: 500");
     println!("  --max-devices <n>       Max devices shown, default: 100");
+}
+
+pub fn print_sdr_test_usage() {
+    println!("WirelessExplorer non-interactive SDR test mode");
+    println!();
+    println!("Usage:");
+    println!("  wirelessexplorer --test-sdr [options]");
+    println!();
+    println!("Options:");
+    println!("  --hardware <name>       rtl_sdr|hackrf|bladerf|ettus_b210");
+    println!("  --center-freq-hz <n>    Center frequency in Hz");
+    println!("  --sample-rate-hz <n>    Sample rate in Hz");
+    println!("  --duration-secs <n>     Runtime duration, default: 12");
+    println!("  --decode <name>         rtl_433|adsb|acars|ais|pocsag|iridium|dect|gsm_lte");
+    println!("  --scan-start-hz <n>     Optional scan range start in Hz");
+    println!("  --scan-end-hz <n>       Optional scan range end in Hz");
+    println!("  --scan-step-hz <n>      Optional scan step in Hz");
+    println!("  --scan-steps-per-sec <n> Optional scan speed");
+    println!("  --log-output            Save decoder logs to --log-dir");
+    println!("  --log-dir <path>        Log directory (default temp)");
+    println!("  --allow-satcom-payload  Disable satcom payload redaction");
 }
 
 fn parse_bluetooth_test_args(args: &[String]) -> Result<BluetoothTestOptions> {
@@ -278,6 +342,184 @@ fn bluetooth_source_label(source: crate::settings::BluetoothScanSource) -> &'sta
         crate::settings::BluetoothScanSource::Bluez => "bluez",
         crate::settings::BluetoothScanSource::Ubertooth => "ubertooth",
         crate::settings::BluetoothScanSource::Both => "both",
+    }
+}
+
+fn parse_sdr_test_args(args: &[String]) -> Result<SdrTestOptions> {
+    let mut options = SdrTestOptions::default();
+    let mut idx = 0usize;
+
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--hardware" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --hardware"))?;
+                options.hardware = parse_sdr_hardware(value)?;
+            }
+            "--center-freq-hz" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --center-freq-hz"))?;
+                options.center_freq_hz = value
+                    .parse::<u64>()
+                    .context("invalid value for --center-freq-hz")?;
+            }
+            "--sample-rate-hz" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --sample-rate-hz"))?;
+                options.sample_rate_hz = value
+                    .parse::<u32>()
+                    .context("invalid value for --sample-rate-hz")?;
+            }
+            "--duration-secs" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --duration-secs"))?;
+                options.duration_secs = value
+                    .parse::<u64>()
+                    .context("invalid value for --duration-secs")?
+                    .max(1);
+            }
+            "--decode" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --decode"))?;
+                options.decode = Some(parse_sdr_decoder(value)?);
+            }
+            "--scan-start-hz" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --scan-start-hz"))?;
+                options.scan_start_hz = Some(
+                    value
+                        .parse::<u64>()
+                        .context("invalid value for --scan-start-hz")?,
+                );
+            }
+            "--scan-end-hz" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --scan-end-hz"))?;
+                options.scan_end_hz = Some(
+                    value
+                        .parse::<u64>()
+                        .context("invalid value for --scan-end-hz")?,
+                );
+            }
+            "--scan-step-hz" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --scan-step-hz"))?;
+                options.scan_step_hz = Some(
+                    value
+                        .parse::<u64>()
+                        .context("invalid value for --scan-step-hz")?,
+                );
+            }
+            "--scan-steps-per-sec" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --scan-steps-per-sec"))?;
+                options.scan_steps_per_sec = Some(
+                    value
+                        .parse::<f64>()
+                        .context("invalid value for --scan-steps-per-sec")?,
+                );
+            }
+            "--log-output" => {
+                options.log_output = true;
+            }
+            "--log-dir" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --log-dir"))?;
+                options.log_output_dir = PathBuf::from(value);
+            }
+            "--allow-satcom-payload" => {
+                options.no_payload_satcom = false;
+            }
+            "--help" | "-h" => {
+                print_sdr_test_usage();
+                std::process::exit(0);
+            }
+            other => {
+                bail!("unknown option for --test-sdr: {}", other);
+            }
+        }
+        idx += 1;
+    }
+
+    if options.scan_start_hz.is_some()
+        || options.scan_end_hz.is_some()
+        || options.scan_step_hz.is_some()
+        || options.scan_steps_per_sec.is_some()
+    {
+        let start = options.scan_start_hz.ok_or_else(|| {
+            anyhow::anyhow!("--scan-start-hz is required when scan options are set")
+        })?;
+        let end = options.scan_end_hz.ok_or_else(|| {
+            anyhow::anyhow!("--scan-end-hz is required when scan options are set")
+        })?;
+        let step = options.scan_step_hz.ok_or_else(|| {
+            anyhow::anyhow!("--scan-step-hz is required when scan options are set")
+        })?;
+        if start >= end {
+            bail!("--scan-start-hz must be less than --scan-end-hz");
+        }
+        if step == 0 {
+            bail!("--scan-step-hz must be greater than zero");
+        }
+        if let Some(steps_per_sec) = options.scan_steps_per_sec {
+            if !steps_per_sec.is_finite() || steps_per_sec <= 0.0 {
+                bail!("--scan-steps-per-sec must be greater than zero");
+            }
+        } else {
+            options.scan_steps_per_sec = Some(4.0);
+        }
+    }
+
+    Ok(options)
+}
+
+fn parse_sdr_hardware(value: &str) -> Result<SdrHardware> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "rtl_sdr" | "rtlsdr" | "rtl-sdr" => Ok(SdrHardware::RtlSdr),
+        "hackrf" => Ok(SdrHardware::HackRf),
+        "bladerf" | "blade_rf" | "blade-rf" => Ok(SdrHardware::BladeRf),
+        "ettus_b210" | "b210" | "ettus" => Ok(SdrHardware::EttusB210),
+        _ => bail!(
+            "invalid --hardware `{}` (expected rtl_sdr|hackrf|bladerf|ettus_b210)",
+            value
+        ),
+    }
+}
+
+fn parse_sdr_decoder(value: &str) -> Result<SdrDecoderKind> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "rtl_433" | "rtl433" => Ok(SdrDecoderKind::Rtl433),
+        "adsb" | "ads-b" => Ok(SdrDecoderKind::Adsb),
+        "acars" => Ok(SdrDecoderKind::Acars),
+        "ais" => Ok(SdrDecoderKind::Ais),
+        "pocsag" => Ok(SdrDecoderKind::Pocsag),
+        "iridium" => Ok(SdrDecoderKind::Iridium),
+        "dect" => Ok(SdrDecoderKind::Dect),
+        "gsm_lte" | "gsm-lte" | "gsm" => Ok(SdrDecoderKind::GsmLte),
+        _ => bail!(
+            "invalid --decode `{}` (expected rtl_433|adsb|acars|ais|pocsag|iridium|dect|gsm_lte)",
+            value
+        ),
     }
 }
 
@@ -477,6 +719,157 @@ fn merge_bluetooth_record(existing: &mut BluetoothDeviceRecord, incoming: &Bluet
             existing.uuid_names.push(value.clone());
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct SdrTestSummary {
+    spectrum_frames: usize,
+    decode_rows: usize,
+    satcom_rows: usize,
+    map_points: usize,
+    last_freq_hz: Option<u64>,
+    last_decoder: Option<String>,
+    last_message: Option<String>,
+}
+
+fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
+    println!("WirelessExplorer SDR test mode");
+    println!("hardware: {}", options.hardware.label());
+    println!("center frequency: {} Hz", options.center_freq_hz);
+    println!("sample rate: {} Hz", options.sample_rate_hz);
+    println!("duration: {}s", options.duration_secs);
+    println!(
+        "decoder: {}",
+        options
+            .decode
+            .as_ref()
+            .map(|decoder| decoder.label())
+            .unwrap_or_else(|| "(none)".to_string())
+    );
+    if let (Some(start), Some(end), Some(step), Some(speed)) = (
+        options.scan_start_hz,
+        options.scan_end_hz,
+        options.scan_step_hz,
+        options.scan_steps_per_sec,
+    ) {
+        println!(
+            "scan range: {}-{} Hz step {} at {:.2} steps/s",
+            start, end, step, speed
+        );
+    }
+    println!(
+        "satcom payload redaction: {}",
+        if options.no_payload_satcom {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "decoder log output: {} ({})",
+        if options.log_output {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        options.log_output_dir.display()
+    );
+    println!();
+
+    let mut config = SdrConfig::default();
+    config.hardware = options.hardware;
+    config.center_freq_hz = options.center_freq_hz;
+    config.sample_rate_hz = options.sample_rate_hz;
+    config.no_payload_satcom = options.no_payload_satcom;
+    config.log_output_enabled = options.log_output;
+    config.log_output_dir = options.log_output_dir.clone();
+    if let (Some(start), Some(end), Some(step), Some(speed)) = (
+        options.scan_start_hz,
+        options.scan_end_hz,
+        options.scan_step_hz,
+        options.scan_steps_per_sec,
+    ) {
+        config.scan_range_enabled = true;
+        config.scan_start_hz = start;
+        config.scan_end_hz = end;
+        config.scan_step_hz = step;
+        config.scan_steps_per_sec = speed;
+    }
+
+    let (sender, receiver) = unbounded();
+    let runtime = sdr::start_runtime(config, sender);
+    if let Some(decoder) = options.decode.clone() {
+        runtime.start_decode(decoder);
+    }
+
+    let started = Instant::now();
+    let mut summary = SdrTestSummary::default();
+    let mut logs_printed = 0usize;
+    while started.elapsed() < Duration::from_secs(options.duration_secs) {
+        let remaining =
+            Duration::from_secs(options.duration_secs).saturating_sub(started.elapsed());
+        let timeout = std::cmp::min(remaining, Duration::from_millis(350));
+        if timeout.is_zero() {
+            break;
+        }
+
+        match receiver.recv_timeout(timeout) {
+            Ok(SdrEvent::Log(message)) => {
+                if logs_printed < 20 {
+                    println!("[sdr] {}", message);
+                    logs_printed += 1;
+                }
+            }
+            Ok(SdrEvent::FrequencyChanged(freq_hz)) => {
+                summary.last_freq_hz = Some(freq_hz);
+            }
+            Ok(SdrEvent::SpectrumFrame(frame)) => {
+                summary.spectrum_frames += 1;
+                summary.last_freq_hz = Some(frame.center_freq_hz);
+            }
+            Ok(SdrEvent::DecodeRow(row)) => {
+                summary.decode_rows += 1;
+                summary.last_decoder = Some(row.decoder.clone());
+                summary.last_message = Some(truncate_text(&row.message, 120));
+            }
+            Ok(SdrEvent::MapPoint(_)) => {
+                summary.map_points += 1;
+            }
+            Ok(SdrEvent::SatcomObservation(_)) => {
+                summary.satcom_rows += 1;
+            }
+            Ok(SdrEvent::DecoderState { .. }) => {}
+            Ok(SdrEvent::DependencyStatus(_)) => {}
+            Ok(SdrEvent::SquelchChanged(_)) => {}
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    runtime.stop_decode();
+    runtime.stop();
+
+    println!();
+    println!("SDR summary:");
+    println!("  spectrum frames: {}", summary.spectrum_frames);
+    println!("  decode rows: {}", summary.decode_rows);
+    println!("  satcom audit rows: {}", summary.satcom_rows);
+    println!("  map points: {}", summary.map_points);
+    println!(
+        "  last tuned freq: {}",
+        summary
+            .last_freq_hz
+            .map(|freq| format!("{} Hz", freq))
+            .unwrap_or_else(|| "unknown".to_string())
+    );
+    if let Some(decoder) = summary.last_decoder.as_deref() {
+        println!("  last decoder: {}", decoder);
+    }
+    if let Some(message) = summary.last_message.as_deref() {
+        println!("  last message: {}", message);
+    }
+
+    Ok(())
 }
 
 fn parse_channels(value: &str) -> Result<Vec<u16>> {
