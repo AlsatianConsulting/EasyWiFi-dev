@@ -232,6 +232,7 @@ pub fn print_sdr_test_usage() {
     println!("  --log-output            Save decoder logs to --log-dir");
     println!("  --log-dir <path>        Log directory (default temp)");
     println!("  --allow-satcom-payload  Disable satcom payload redaction");
+    println!("  --list-decoders         Print built-in + plugin decoder IDs and exit");
 }
 
 fn parse_bluetooth_test_args(args: &[String]) -> Result<BluetoothTestOptions> {
@@ -350,6 +351,7 @@ fn parse_sdr_test_args(args: &[String]) -> Result<SdrTestOptions> {
     let mut options = SdrTestOptions::default();
     let plugin_defs = sdr::load_plugin_definitions(sdr::default_plugin_config_path().as_deref());
     let mut idx = 0usize;
+    let mut list_decoders = false;
 
     while idx < args.len() {
         match args[idx].as_str() {
@@ -452,6 +454,9 @@ fn parse_sdr_test_args(args: &[String]) -> Result<SdrTestOptions> {
             "--allow-satcom-payload" => {
                 options.no_payload_satcom = false;
             }
+            "--list-decoders" => {
+                list_decoders = true;
+            }
             "--help" | "-h" => {
                 print_sdr_test_usage();
                 std::process::exit(0);
@@ -461,6 +466,11 @@ fn parse_sdr_test_args(args: &[String]) -> Result<SdrTestOptions> {
             }
         }
         idx += 1;
+    }
+
+    if list_decoders {
+        print_sdr_decoder_inventory(&plugin_defs);
+        std::process::exit(0);
     }
 
     if options.scan_start_hz.is_some()
@@ -493,6 +503,28 @@ fn parse_sdr_test_args(args: &[String]) -> Result<SdrTestOptions> {
     }
 
     Ok(options)
+}
+
+fn print_sdr_decoder_inventory(plugin_defs: &[sdr::SdrPluginDefinition]) {
+    println!("Available SDR decoders:");
+    println!("  built-in:");
+    println!("    rtl_433");
+    println!("    adsb");
+    println!("    acars");
+    println!("    ais");
+    println!("    pocsag");
+    println!("    iridium");
+    println!("    dect");
+    println!("    gsm_lte");
+    if plugin_defs.is_empty() {
+        println!("  plugins: none found");
+        return;
+    }
+    println!("  plugins:");
+    for plugin in plugin_defs {
+        let protocol = plugin.protocol.as_deref().unwrap_or("plugin");
+        println!("    {}  ({})  [{}]", plugin.id, plugin.label, protocol);
+    }
 }
 
 fn parse_sdr_hardware(value: &str) -> Result<SdrHardware> {
