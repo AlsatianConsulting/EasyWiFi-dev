@@ -1,8 +1,12 @@
+use crate::bluetooth::{self, BluetoothEvent, BluetoothScanConfig};
 use crate::capture;
+use crate::model::BluetoothDeviceRecord;
 use crate::settings::{ChannelSelectionMode, InterfaceSettings};
 use anyhow::{bail, Context, Result};
+use crossbeam_channel::unbounded;
 use std::collections::BTreeMap;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WifiTestOptions {
@@ -36,6 +40,36 @@ struct BeaconObservation {
 pub fn run_wifi_cli(args: &[String]) -> Result<()> {
     let options = parse_wifi_test_args(args)?;
     run_wifi_test(&options)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BluetoothTestOptions {
+    pub controller: Option<String>,
+    pub source: crate::settings::BluetoothScanSource,
+    pub ubertooth_device: Option<String>,
+    pub duration_secs: u64,
+    pub scan_timeout_secs: u64,
+    pub pause_ms: u64,
+    pub max_devices: usize,
+}
+
+impl Default for BluetoothTestOptions {
+    fn default() -> Self {
+        Self {
+            controller: None,
+            source: crate::settings::BluetoothScanSource::Bluez,
+            ubertooth_device: None,
+            duration_secs: 12,
+            scan_timeout_secs: 4,
+            pause_ms: 500,
+            max_devices: 100,
+        }
+    }
+}
+
+pub fn run_bluetooth_cli(args: &[String]) -> Result<()> {
+    let options = parse_bluetooth_test_args(args)?;
+    run_bluetooth_test(&options)
 }
 
 fn parse_wifi_test_args(args: &[String]) -> Result<WifiTestOptions> {
@@ -107,16 +141,342 @@ fn parse_wifi_test_args(args: &[String]) -> Result<WifiTestOptions> {
 }
 
 pub fn print_wifi_test_usage() {
-    println!("SimpleSTG non-interactive Wi-Fi test mode");
+    println!("WirelessExplorer non-interactive Wi-Fi test mode");
     println!();
     println!("Usage:");
-    println!("  simplestg --test-wifi --interface <iface> [options]");
+    println!("  wirelessexplorer --test-wifi --interface <iface> [options]");
     println!();
     println!("Options:");
     println!("  --channels <csv>        Channel list, default: 1,6,11");
     println!("  --duration-secs <n>     Per-channel capture duration, default: 6");
     println!("  --ht-mode <mode>        HT mode for channel set, default: HT20");
     println!("  --max-networks <n>      Max APs shown per channel, default: 50");
+}
+
+pub fn print_bluetooth_test_usage() {
+    println!("WirelessExplorer non-interactive Bluetooth test mode");
+    println!();
+    println!("Usage:");
+    println!("  wirelessexplorer --test-bluetooth [options]");
+    println!();
+    println!("Options:");
+    println!("  --controller <mac>      BlueZ controller MAC (optional)");
+    println!("  --source <name>         bluez|ubertooth|both (default: bluez)");
+    println!("  --ubertooth-device <id> Ubertooth serial/id when source uses ubertooth");
+    println!("  --duration-secs <n>     Total scan duration, default: 12");
+    println!("  --scan-timeout-secs <n> Per scan pass timeout, default: 4");
+    println!("  --pause-ms <n>          Pause between scan passes, default: 500");
+    println!("  --max-devices <n>       Max devices shown, default: 100");
+}
+
+fn parse_bluetooth_test_args(args: &[String]) -> Result<BluetoothTestOptions> {
+    let mut options = BluetoothTestOptions::default();
+    let mut idx = 0usize;
+
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--controller" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --controller"))?;
+                options.controller = Some(value.clone());
+            }
+            "--source" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --source"))?;
+                options.source = parse_bluetooth_source(value)?;
+            }
+            "--ubertooth-device" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --ubertooth-device"))?;
+                options.ubertooth_device = Some(value.clone());
+            }
+            "--duration-secs" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --duration-secs"))?;
+                options.duration_secs = value
+                    .parse::<u64>()
+                    .context("invalid value for --duration-secs")?
+                    .max(1);
+            }
+            "--scan-timeout-secs" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --scan-timeout-secs"))?;
+                options.scan_timeout_secs = value
+                    .parse::<u64>()
+                    .context("invalid value for --scan-timeout-secs")?
+                    .max(1);
+            }
+            "--pause-ms" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --pause-ms"))?;
+                options.pause_ms = value
+                    .parse::<u64>()
+                    .context("invalid value for --pause-ms")?;
+            }
+            "--max-devices" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --max-devices"))?;
+                options.max_devices = value
+                    .parse::<usize>()
+                    .context("invalid value for --max-devices")?
+                    .max(1);
+            }
+            "--help" | "-h" => {
+                print_bluetooth_test_usage();
+                std::process::exit(0);
+            }
+            other => {
+                bail!("unknown option for --test-bluetooth: {}", other);
+            }
+        }
+        idx += 1;
+    }
+
+    if matches!(
+        options.source,
+        crate::settings::BluetoothScanSource::Ubertooth
+            | crate::settings::BluetoothScanSource::Both
+    ) && !command_exists("ubertooth-btle")
+    {
+        bail!(
+            "ubertooth-btle is required for --source {}",
+            bluetooth_source_label(options.source)
+        );
+    }
+
+    Ok(options)
+}
+
+fn parse_bluetooth_source(value: &str) -> Result<crate::settings::BluetoothScanSource> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "bluez" => Ok(crate::settings::BluetoothScanSource::Bluez),
+        "ubertooth" => Ok(crate::settings::BluetoothScanSource::Ubertooth),
+        "both" => Ok(crate::settings::BluetoothScanSource::Both),
+        _ => bail!(
+            "invalid --source `{}` (expected bluez|ubertooth|both)",
+            value
+        ),
+    }
+}
+
+fn bluetooth_source_label(source: crate::settings::BluetoothScanSource) -> &'static str {
+    match source {
+        crate::settings::BluetoothScanSource::Bluez => "bluez",
+        crate::settings::BluetoothScanSource::Ubertooth => "ubertooth",
+        crate::settings::BluetoothScanSource::Both => "both",
+    }
+}
+
+fn run_bluetooth_test(options: &BluetoothTestOptions) -> Result<()> {
+    println!("WirelessExplorer Bluetooth test mode");
+    println!("source: {}", bluetooth_source_label(options.source));
+    println!(
+        "controller: {}",
+        options.controller.as_deref().unwrap_or("(default)")
+    );
+    println!(
+        "ubertooth device: {}",
+        options.ubertooth_device.as_deref().unwrap_or("(default)")
+    );
+    println!("duration: {}s", options.duration_secs);
+    println!("scan timeout: {}s", options.scan_timeout_secs);
+    println!("pause: {} ms", options.pause_ms);
+    println!();
+
+    match bluetooth::list_controllers() {
+        Ok(controllers) if !controllers.is_empty() => {
+            println!("bluetooth controllers ({}):", controllers.len());
+            for controller in controllers {
+                let suffix = if controller.is_default {
+                    " [default]"
+                } else {
+                    ""
+                };
+                println!("  {}  {}{}", controller.id, controller.name, suffix);
+            }
+            println!();
+        }
+        Ok(_) => {
+            println!("bluetooth controllers: none reported by bluetoothctl");
+            println!();
+        }
+        Err(err) => {
+            println!("bluetooth controller discovery failed: {}", err);
+            println!();
+        }
+    }
+
+    if matches!(
+        options.source,
+        crate::settings::BluetoothScanSource::Ubertooth
+            | crate::settings::BluetoothScanSource::Both
+    ) {
+        match bluetooth::list_ubertooth_devices() {
+            Ok(devices) if !devices.is_empty() => {
+                println!("ubertooth devices ({}):", devices.len());
+                for device in devices {
+                    println!("  {}  {}", device.id, device.name);
+                }
+                println!();
+            }
+            Ok(_) => {
+                println!("ubertooth devices: none detected");
+                println!();
+            }
+            Err(err) => {
+                println!("ubertooth discovery failed: {}", err);
+                println!();
+            }
+        }
+    }
+
+    let config = BluetoothScanConfig {
+        controller: options.controller.clone(),
+        source: options.source,
+        ubertooth_device: options.ubertooth_device.clone(),
+        scan_timeout_secs: options.scan_timeout_secs,
+        pause_ms: options.pause_ms,
+    };
+
+    let (sender, receiver) = unbounded();
+    let runtime = bluetooth::start_scan(config, sender);
+    let started = Instant::now();
+    let mut devices = BTreeMap::<String, BluetoothDeviceRecord>::new();
+    let mut log_count = 0usize;
+
+    while started.elapsed() < Duration::from_secs(options.duration_secs) {
+        let remaining =
+            Duration::from_secs(options.duration_secs).saturating_sub(started.elapsed());
+        let timeout = std::cmp::min(remaining, Duration::from_millis(350));
+        if timeout.is_zero() {
+            break;
+        }
+        match receiver.recv_timeout(timeout) {
+            Ok(BluetoothEvent::DeviceSeen(record)) => {
+                devices
+                    .entry(record.mac.clone())
+                    .and_modify(|existing| merge_bluetooth_record(existing, &record))
+                    .or_insert(record);
+            }
+            Ok(BluetoothEvent::Log(message)) => {
+                log_count += 1;
+                if log_count <= 20 {
+                    println!("[scan] {}", message);
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    runtime.stop();
+
+    let mut observed = devices.into_values().collect::<Vec<_>>();
+    observed.sort_by(|a, b| {
+        b.rssi_dbm
+            .unwrap_or(i32::MIN)
+            .cmp(&a.rssi_dbm.unwrap_or(i32::MIN))
+            .then_with(|| b.last_seen.cmp(&a.last_seen))
+            .then_with(|| a.mac.cmp(&b.mac))
+    });
+
+    println!();
+    println!("observed bluetooth devices: {}", observed.len());
+    for device in observed.iter().take(options.max_devices) {
+        let name = device
+            .advertised_name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .or(device.alias.as_deref())
+            .unwrap_or("<unknown>");
+        let rssi = device
+            .rssi_dbm
+            .map(|value| format!("{} dBm", value))
+            .unwrap_or_else(|| "unknown".to_string());
+        let device_type = device
+            .device_type
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("Unknown");
+        let oui = device
+            .oui_manufacturer
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("Unknown");
+        println!(
+            "{}  {:<10}  {:<22}  {:<28}  first={} last={}",
+            device.mac,
+            rssi,
+            truncate_text(device_type, 22),
+            truncate_text(&format!("{} ({})", name, oui), 28),
+            device.first_seen.format("%H:%M:%S"),
+            device.last_seen.format("%H:%M:%S")
+        );
+    }
+    if observed.len() > options.max_devices {
+        println!("... {} more", observed.len() - options.max_devices);
+    }
+
+    Ok(())
+}
+
+fn merge_bluetooth_record(existing: &mut BluetoothDeviceRecord, incoming: &BluetoothDeviceRecord) {
+    if incoming.first_seen < existing.first_seen {
+        existing.first_seen = incoming.first_seen;
+    }
+    if incoming.last_seen > existing.last_seen {
+        existing.last_seen = incoming.last_seen;
+    }
+
+    if incoming.rssi_dbm.is_some() {
+        existing.rssi_dbm = incoming.rssi_dbm;
+    }
+    if existing.oui_manufacturer.is_none() && incoming.oui_manufacturer.is_some() {
+        existing.oui_manufacturer = incoming.oui_manufacturer.clone();
+    }
+    if existing.advertised_name.is_none() && incoming.advertised_name.is_some() {
+        existing.advertised_name = incoming.advertised_name.clone();
+    }
+    if existing.alias.is_none() && incoming.alias.is_some() {
+        existing.alias = incoming.alias.clone();
+    }
+    if existing.device_type.is_none() && incoming.device_type.is_some() {
+        existing.device_type = incoming.device_type.clone();
+    }
+
+    for value in &incoming.mfgr_ids {
+        if !existing.mfgr_ids.contains(value) {
+            existing.mfgr_ids.push(value.clone());
+        }
+    }
+    for value in &incoming.mfgr_names {
+        if !existing.mfgr_names.contains(value) {
+            existing.mfgr_names.push(value.clone());
+        }
+    }
+    for value in &incoming.uuids {
+        if !existing.uuids.contains(value) {
+            existing.uuids.push(value.clone());
+        }
+    }
+    for value in &incoming.uuid_names {
+        if !existing.uuid_names.contains(value) {
+            existing.uuid_names.push(value.clone());
+        }
+    }
 }
 
 fn parse_channels(value: &str) -> Result<Vec<u16>> {
@@ -141,13 +501,13 @@ fn parse_channels(value: &str) -> Result<Vec<u16>> {
 
 fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
     if !capture::running_as_root() {
-        bail!("--test-wifi must be run as root, for example: `sudo -E ./target/debug/simplestg --test-wifi ...`");
+        bail!("--test-wifi must be run as root, for example: `sudo -E ./target/debug/wirelessexplorer --test-wifi ...`");
     }
     if !command_exists("tshark") {
         bail!("tshark is required for --test-wifi");
     }
 
-    println!("SimpleSTG Wi-Fi test mode");
+    println!("WirelessExplorer Wi-Fi test mode");
     println!("privilege mode: {}", capture::privilege_mode_summary());
     println!("interface: {}", options.interface);
     println!(
