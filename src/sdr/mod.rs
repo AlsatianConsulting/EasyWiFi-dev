@@ -2227,4 +2227,45 @@ mod tests {
             .iter()
             .any(|hint| hint == "mmsi"));
     }
+
+    #[test]
+    fn dependency_plan_dump1090_includes_binary_fallbacks() {
+        let plan = dependency_install_plan("dump1090-mutability");
+        assert!(plan
+            .apt_candidates
+            .iter()
+            .any(|candidate| candidate == "dump1090-mutability"));
+        assert!(plan
+            .apt_candidates
+            .iter()
+            .any(|candidate| candidate == "readsb"));
+        assert!(plan
+            .verify_commands
+            .iter()
+            .any(|command| command == "dump1090"));
+    }
+
+    #[test]
+    fn dependency_plan_op25_has_source_fallback() {
+        let plan = dependency_install_plan("op25");
+        assert!(plan
+            .verify_commands
+            .iter()
+            .any(|command| command == "rx.py" || command == "op25-rx"));
+        let source = plan
+            .source_install_command
+            .expect("op25 should provide source fallback");
+        assert!(
+            source.contains("github.com/boatbod/op25"),
+            "unexpected source fallback command: {source}"
+        );
+    }
+
+    #[test]
+    fn dependency_plan_unknown_uses_hint_as_default() {
+        let plan = dependency_install_plan("example-tool");
+        assert_eq!(plan.apt_candidates, vec!["example-tool".to_string()]);
+        assert_eq!(plan.verify_commands, vec!["example-tool".to_string()]);
+        assert!(plan.pip_candidates.is_empty());
+    }
 }
