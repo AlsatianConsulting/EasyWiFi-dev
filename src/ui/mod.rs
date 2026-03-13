@@ -1315,7 +1315,9 @@ fn build_table_pagination_controls(
         let entry = Entry::new();
         let entry_width = (*width_chars).max(6);
         entry.add_css_class("table-cell");
+        entry.add_css_class("column-filter");
         gtk::prelude::EntryExt::set_alignment(&entry, 0.0);
+        entry.set_has_frame(false);
         entry.set_width_chars(entry_width);
         entry.set_max_width_chars(entry_width);
         entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
@@ -8360,21 +8362,19 @@ fn display_dbm(value: Option<i32>) -> String {
 
 fn set_row_alert_classes(
     row: &ListBoxRow,
-    line: &GtkBox,
+    _line: &GtkBox,
     watchlist_class: Option<&str>,
     all_watchlist_classes: &[String],
     handshake: bool,
 ) {
     for class_name in all_watchlist_classes {
         row.remove_css_class(class_name);
-        line.remove_css_class(class_name);
     }
     row.remove_css_class("row-handshake");
-    line.remove_css_class("row-handshake");
     if let Some(class_name) = watchlist_class {
-        line.add_css_class(class_name);
+        row.add_css_class(class_name);
     } else if handshake {
-        line.add_css_class("row-handshake");
+        row.add_css_class("row-handshake");
     }
 }
 
@@ -9252,6 +9252,17 @@ fn install_ui_css() -> gtk::CssProvider {
 }
 .table-cell {
   font-family: monospace;
+}
+.column-filter {
+  padding-left: 0;
+  padding-right: 0;
+  border: none;
+  box-shadow: none;
+  background-color: transparent;
+}
+.column-filter text {
+  padding-left: 0;
+  padding-right: 0;
 }
 .sort-header {
   text-decoration-line: underline;
