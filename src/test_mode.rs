@@ -88,6 +88,7 @@ pub struct SdrTestOptions {
     pub log_output: bool,
     pub log_output_dir: PathBuf,
     pub no_payload_satcom: bool,
+    pub install_missing_deps: bool,
 }
 
 impl Default for SdrTestOptions {
@@ -106,6 +107,7 @@ impl Default for SdrTestOptions {
             log_output: false,
             log_output_dir: defaults.log_output_dir,
             no_payload_satcom: true,
+            install_missing_deps: false,
         }
     }
 }
@@ -233,6 +235,9 @@ pub fn print_sdr_test_usage() {
     println!("  --log-dir <path>        Log directory (default temp)");
     println!("  --allow-satcom-payload  Disable satcom payload redaction");
     println!("  --list-decoders         Print built-in + plugin decoder IDs and exit");
+    println!(
+        "  --install-missing-deps  Attempt noninteractive install of missing decoder dependencies"
+    );
 }
 
 fn parse_bluetooth_test_args(args: &[String]) -> Result<BluetoothTestOptions> {
@@ -453,6 +458,9 @@ fn parse_sdr_test_args(args: &[String]) -> Result<SdrTestOptions> {
             }
             "--allow-satcom-payload" => {
                 options.no_payload_satcom = false;
+            }
+            "--install-missing-deps" => {
+                options.install_missing_deps = true;
             }
             "--list-decoders" => {
                 list_decoders = true;
@@ -837,6 +845,14 @@ fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
         },
         options.log_output_dir.display()
     );
+    println!(
+        "dependency auto-install: {}",
+        if options.install_missing_deps {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     println!();
 
     let mut config = SdrConfig::default();
@@ -861,6 +877,9 @@ fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
 
     let (sender, receiver) = unbounded();
     let runtime = sdr::start_runtime(config, sender);
+    if options.install_missing_deps {
+        runtime.install_missing_dependencies();
+    }
     if let Some(decoder) = options.decode.clone() {
         runtime.start_decode(decoder);
     }
