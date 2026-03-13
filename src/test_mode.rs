@@ -896,33 +896,9 @@ fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
         }
 
         match receiver.recv_timeout(timeout) {
-            Ok(SdrEvent::Log(message)) => {
-                if logs_printed < 20 {
-                    println!("[sdr] {}", message);
-                    logs_printed += 1;
-                }
+            Ok(event) => {
+                apply_sdr_test_event(event, &mut summary, &mut logs_printed);
             }
-            Ok(SdrEvent::FrequencyChanged(freq_hz)) => {
-                summary.last_freq_hz = Some(freq_hz);
-            }
-            Ok(SdrEvent::SpectrumFrame(frame)) => {
-                summary.spectrum_frames += 1;
-                summary.last_freq_hz = Some(frame.center_freq_hz);
-            }
-            Ok(SdrEvent::DecodeRow(row)) => {
-                summary.decode_rows += 1;
-                summary.last_decoder = Some(row.decoder.clone());
-                summary.last_message = Some(truncate_text(&row.message, 120));
-            }
-            Ok(SdrEvent::MapPoint(_)) => {
-                summary.map_points += 1;
-            }
-            Ok(SdrEvent::SatcomObservation(_)) => {
-                summary.satcom_rows += 1;
-            }
-            Ok(SdrEvent::DecoderState { .. }) => {}
-            Ok(SdrEvent::DependencyStatus(_)) => {}
-            Ok(SdrEvent::SquelchChanged(_)) => {}
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
@@ -930,6 +906,7 @@ fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
 
     runtime.stop_decode();
     runtime.stop();
+    drain_sdr_test_events(&receiver, &mut summary, &mut logs_printed);
 
     println!();
     println!("SDR summary:");
@@ -952,6 +929,53 @@ fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn apply_sdr_test_event(event: SdrEvent, summary: &mut SdrTestSummary, logs_printed: &mut usize) {
+    match event {
+        SdrEvent::Log(message) => {
+            if *logs_printed < 60 {
+                println!("[sdr] {}", message);
+                *logs_printed += 1;
+            }
+        }
+        SdrEvent::FrequencyChanged(freq_hz) => {
+            summary.last_freq_hz = Some(freq_hz);
+        }
+        SdrEvent::SpectrumFrame(frame) => {
+            summary.spectrum_frames += 1;
+            summary.last_freq_hz = Some(frame.center_freq_hz);
+        }
+        SdrEvent::DecodeRow(row) => {
+            summary.decode_rows += 1;
+            summary.last_decoder = Some(row.decoder.clone());
+            summary.last_message = Some(truncate_text(&row.message, 120));
+        }
+        SdrEvent::MapPoint(_) => {
+            summary.map_points += 1;
+        }
+        SdrEvent::SatcomObservation(_) => {
+            summary.satcom_rows += 1;
+        }
+        SdrEvent::DecoderState { .. } => {}
+        SdrEvent::DependencyStatus(_) => {}
+        SdrEvent::SquelchChanged(_) => {}
+    }
+}
+
+fn drain_sdr_test_events(
+    receiver: &crossbeam_channel::Receiver<SdrEvent>,
+    summary: &mut SdrTestSummary,
+    logs_printed: &mut usize,
+) {
+    let deadline = Instant::now() + Duration::from_millis(1200);
+    while Instant::now() < deadline {
+        match receiver.recv_timeout(Duration::from_millis(80)) {
+            Ok(event) => apply_sdr_test_event(event, summary, logs_printed),
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => break,
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        }
+    }
 }
 
 fn parse_channels(value: &str) -> Result<Vec<u16>> {
