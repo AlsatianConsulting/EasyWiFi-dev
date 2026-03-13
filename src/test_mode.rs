@@ -224,6 +224,7 @@ pub fn print_sdr_test_usage() {
     println!("  --sample-rate-hz <n>    Sample rate in Hz");
     println!("  --duration-secs <n>     Runtime duration, default: 12");
     println!("  --decode <name>         rtl_433|adsb|acars|ais|pocsag|iridium|dect|gsm_lte");
+    println!("                          or plugin ID/label from sdr-plugins.json");
     println!("  --scan-start-hz <n>     Optional scan range start in Hz");
     println!("  --scan-end-hz <n>       Optional scan range end in Hz");
     println!("  --scan-step-hz <n>      Optional scan step in Hz");
@@ -347,6 +348,7 @@ fn bluetooth_source_label(source: crate::settings::BluetoothScanSource) -> &'sta
 
 fn parse_sdr_test_args(args: &[String]) -> Result<SdrTestOptions> {
     let mut options = SdrTestOptions::default();
+    let plugin_defs = sdr::load_plugin_definitions(sdr::default_plugin_config_path().as_deref());
     let mut idx = 0usize;
 
     while idx < args.len() {
@@ -391,7 +393,7 @@ fn parse_sdr_test_args(args: &[String]) -> Result<SdrTestOptions> {
                 let value = args
                     .get(idx)
                     .ok_or_else(|| anyhow::anyhow!("missing value for --decode"))?;
-                options.decode = Some(parse_sdr_decoder(value)?);
+                options.decode = Some(parse_sdr_decoder_with_plugins(value, &plugin_defs)?);
             }
             "--scan-start-hz" => {
                 idx += 1;
@@ -506,21 +508,50 @@ fn parse_sdr_hardware(value: &str) -> Result<SdrHardware> {
     }
 }
 
-fn parse_sdr_decoder(value: &str) -> Result<SdrDecoderKind> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "rtl_433" | "rtl433" => Ok(SdrDecoderKind::Rtl433),
-        "adsb" | "ads-b" => Ok(SdrDecoderKind::Adsb),
-        "acars" => Ok(SdrDecoderKind::Acars),
-        "ais" => Ok(SdrDecoderKind::Ais),
-        "pocsag" => Ok(SdrDecoderKind::Pocsag),
-        "iridium" => Ok(SdrDecoderKind::Iridium),
-        "dect" => Ok(SdrDecoderKind::Dect),
-        "gsm_lte" | "gsm-lte" | "gsm" => Ok(SdrDecoderKind::GsmLte),
-        _ => bail!(
-            "invalid --decode `{}` (expected rtl_433|adsb|acars|ais|pocsag|iridium|dect|gsm_lte)",
-            value
-        ),
+fn parse_sdr_decoder_with_plugins(
+    value: &str,
+    plugin_defs: &[sdr::SdrPluginDefinition],
+) -> Result<SdrDecoderKind> {
+    let token = normalize_decoder_token(value);
+    let built_in = match token.as_str() {
+        "rtl433" => Some(SdrDecoderKind::Rtl433),
+        "adsb" => Some(SdrDecoderKind::Adsb),
+        "acars" => Some(SdrDecoderKind::Acars),
+        "ais" => Some(SdrDecoderKind::Ais),
+        "pocsag" => Some(SdrDecoderKind::Pocsag),
+        "iridium" => Some(SdrDecoderKind::Iridium),
+        "dect" => Some(SdrDecoderKind::Dect),
+        "gsmlte" | "gsm" => Some(SdrDecoderKind::GsmLte),
+        _ => None,
+    };
+    if let Some(kind) = built_in {
+        return Ok(kind);
     }
+
+    if let Some(plugin) = plugin_defs.iter().find(|plugin| {
+        normalize_decoder_token(&plugin.id) == token
+            || normalize_decoder_token(&plugin.label) == token
+    }) {
+        return Ok(SdrDecoderKind::Plugin {
+            id: plugin.id.clone(),
+            label: plugin.label.clone(),
+            command_template: plugin.command_template.clone(),
+            protocol: plugin.protocol.clone(),
+        });
+    }
+
+    bail!(
+        "invalid --decode `{}` (expected rtl_433|adsb|acars|ais|pocsag|iridium|dect|gsm_lte or a plugin ID from sdr-plugins.json)",
+        value
+    );
+}
+
+fn normalize_decoder_token(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
 }
 
 fn run_bluetooth_test(options: &BluetoothTestOptions) -> Result<()> {
@@ -1121,7 +1152,8 @@ fn command_exists(cmd: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_channels, parse_wifi_test_args};
+    use super::{parse_channels, parse_sdr_decoder_with_plugins, parse_wifi_test_args};
+    use crate::sdr::{SdrDecoderKind, SdrPluginDefinition};
 
     #[test]
     fn parses_channel_csv() {
@@ -1148,5 +1180,33 @@ mod tests {
         assert_eq!(options.duration_secs, 8);
         assert_eq!(options.ht_mode, "HT20");
         assert_eq!(options.max_networks_per_channel, 25);
+    }
+
+    #[test]
+    fn parses_builtin_sdr_decoder_names() {
+        let parsed = parse_sdr_decoder_with_plugins("ads-b", &[]).unwrap();
+        assert!(matches!(parsed, SdrDecoderKind::Adsb));
+        let parsed = parse_sdr_decoder_with_plugins("GSM_LTE", &[]).unwrap();
+        assert!(matches!(parsed, SdrDecoderKind::GsmLte));
+    }
+
+    #[test]
+    fn parses_plugin_sdr_decoder_by_id_and_label() {
+        let defs = vec![SdrPluginDefinition {
+            id: "drone_dji_droneid".to_string(),
+            label: "Drone: DJI DroneID / RID".to_string(),
+            command_template: "echo plugin".to_string(),
+            protocol: Some("drone_dji".to_string()),
+        }];
+        let by_id = parse_sdr_decoder_with_plugins("drone_dji_droneid", &defs).unwrap();
+        match by_id {
+            SdrDecoderKind::Plugin { id, .. } => assert_eq!(id, "drone_dji_droneid"),
+            _ => panic!("expected plugin decoder"),
+        }
+        let by_label = parse_sdr_decoder_with_plugins("Drone DJI DroneID RID", &defs).unwrap();
+        match by_label {
+            SdrDecoderKind::Plugin { id, .. } => assert_eq!(id, "drone_dji_droneid"),
+            _ => panic!("expected plugin decoder"),
+        }
     }
 }
