@@ -1,4 +1,4 @@
-# SimpleSTG (Rust + GTK)
+# WirelessExplorer (Rust + GTK)
 
 Linux desktop application inspired by Sparrow Wi-Fi, focused on **100% passive** Wi-Fi observation with a refined multi-tab workflow.
 
@@ -95,4 +95,7 @@ cargo run
 
 ## Current limitations
 
-See `docs/LIMITATIONS.md`.
+See:
+
+- `docs/LIMITATIONS.md`
+- `docs/VALIDATION.md`

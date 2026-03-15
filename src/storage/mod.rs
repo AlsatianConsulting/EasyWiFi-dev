@@ -45,6 +45,7 @@ impl StorageEngine {
                 bssid TEXT PRIMARY KEY,
                 ssid TEXT,
                 oui_manufacturer TEXT,
+                source_adapters_json TEXT NOT NULL DEFAULT '[]',
                 country_code_80211d TEXT,
                 channel INTEGER,
                 frequency_mhz INTEGER,
@@ -65,6 +66,7 @@ impl StorageEngine {
             CREATE TABLE IF NOT EXISTS clients (
                 mac TEXT PRIMARY KEY,
                 oui_manufacturer TEXT,
+                source_adapters_json TEXT NOT NULL DEFAULT '[]',
                 associated_ap TEXT,
                 data_transferred_bytes INTEGER NOT NULL DEFAULT 0,
                 rssi_dbm INTEGER,
@@ -82,6 +84,7 @@ impl StorageEngine {
                 address_type TEXT,
                 transport TEXT NOT NULL,
                 oui_manufacturer TEXT,
+                source_adapters_json TEXT NOT NULL DEFAULT '[]',
                 advertised_name TEXT,
                 alias TEXT,
                 device_type TEXT,
@@ -149,6 +152,18 @@ impl StorageEngine {
         ensure_column_exists(&conn, "access_points", "rssi_dbm", "INTEGER")?;
         ensure_column_exists(
             &conn,
+            "access_points",
+            "source_adapters_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column_exists(
+            &conn,
+            "clients",
+            "source_adapters_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column_exists(
+            &conn,
             "clients",
             "network_intel_json",
             "TEXT NOT NULL DEFAULT '{}'",
@@ -158,6 +173,12 @@ impl StorageEngine {
             "bluetooth_devices",
             "active_enum_json",
             "TEXT NOT NULL DEFAULT '{}'",
+        )?;
+        ensure_column_exists(
+            &conn,
+            "bluetooth_devices",
+            "source_adapters_json",
+            "TEXT NOT NULL DEFAULT '[]'",
         )?;
 
         Ok(())
@@ -193,24 +214,26 @@ impl StorageEngine {
             .map(serde_json::to_string)
             .transpose()?
             .unwrap_or_default();
+        let source_adapters_json = serde_json::to_string(&ap.source_adapters)?;
         let packet_mix_json = serde_json::to_string(&ap.packet_mix)?;
 
         conn.execute(
             r#"
             INSERT INTO access_points (
-                bssid, ssid, oui_manufacturer, country_code_80211d, channel, frequency_mhz, band,
+                bssid, ssid, oui_manufacturer, source_adapters_json, country_code_80211d, channel, frequency_mhz, band,
                 encryption_short, encryption_full, rssi_dbm, number_of_clients,
                 first_seen, last_seen, handshake_count, notes, uptime_beacons,
                 wps_json, packet_mix_json
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7,
-                ?8, ?9, ?10, ?11,
-                ?12, ?13, ?14, ?15, ?16,
-                ?17, ?18
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                ?9, ?10, ?11, ?12,
+                ?13, ?14, ?15, ?16, ?17,
+                ?18, ?19
             )
             ON CONFLICT(bssid) DO UPDATE SET
                 ssid=excluded.ssid,
                 oui_manufacturer=excluded.oui_manufacturer,
+                source_adapters_json=excluded.source_adapters_json,
                 country_code_80211d=excluded.country_code_80211d,
                 channel=excluded.channel,
                 frequency_mhz=excluded.frequency_mhz,
@@ -231,6 +254,7 @@ impl StorageEngine {
                 ap.bssid,
                 ap.ssid,
                 ap.oui_manufacturer,
+                source_adapters_json,
                 ap.country_code_80211d,
                 ap.channel.map(|v| v as i64),
                 ap.frequency_mhz.map(|v| v as i64),
@@ -256,6 +280,7 @@ impl StorageEngine {
         let probes_json = serde_json::to_string(&client.probes)?;
         let seen_aps_json = serde_json::to_string(&client.seen_access_points)?;
         let handshake_networks_json = serde_json::to_string(&client.handshake_networks)?;
+        let source_adapters_json = serde_json::to_string(&client.source_adapters)?;
         let network_intel_json = serde_json::to_string(&client.network_intel)?;
         let wps_json = client
             .wps
@@ -267,16 +292,17 @@ impl StorageEngine {
         conn.execute(
             r#"
             INSERT INTO clients (
-                mac, oui_manufacturer, associated_ap, data_transferred_bytes,
+                mac, oui_manufacturer, source_adapters_json, associated_ap, data_transferred_bytes,
                 rssi_dbm, probes_json, first_seen, last_seen,
                 seen_access_points_json, wps_json, handshake_networks_json, network_intel_json
             ) VALUES (
-                ?1, ?2, ?3, ?4,
-                ?5, ?6, ?7, ?8,
-                ?9, ?10, ?11, ?12
+                ?1, ?2, ?3, ?4, ?5,
+                ?6, ?7, ?8, ?9,
+                ?10, ?11, ?12, ?13
             )
             ON CONFLICT(mac) DO UPDATE SET
                 oui_manufacturer=excluded.oui_manufacturer,
+                source_adapters_json=excluded.source_adapters_json,
                 associated_ap=excluded.associated_ap,
                 data_transferred_bytes=excluded.data_transferred_bytes,
                 rssi_dbm=excluded.rssi_dbm,
@@ -291,6 +317,7 @@ impl StorageEngine {
             params![
                 client.mac,
                 client.oui_manufacturer,
+                source_adapters_json,
                 client.associated_ap,
                 client.data_transferred_bytes as i64,
                 client.rssi_dbm,
@@ -325,24 +352,26 @@ impl StorageEngine {
         let mfgr_names_json = serde_json::to_string(&device.mfgr_names)?;
         let uuids_json = serde_json::to_string(&device.uuids)?;
         let uuid_names_json = serde_json::to_string(&device.uuid_names)?;
+        let source_adapters_json = serde_json::to_string(&device.source_adapters)?;
         let active_enum_json =
             serde_json::to_string(&device.active_enumeration.clone().unwrap_or_default())?;
 
         conn.execute(
             r#"
             INSERT INTO bluetooth_devices (
-                mac, address_type, transport, oui_manufacturer, advertised_name, alias,
+                mac, address_type, transport, oui_manufacturer, source_adapters_json, advertised_name, alias,
                 device_type, class_of_device, rssi_dbm, first_seen, last_seen,
                 mfgr_ids_json, mfgr_names_json, uuids_json, uuid_names_json, active_enum_json
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6,
-                ?7, ?8, ?9, ?10, ?11,
-                ?12, ?13, ?14, ?15, ?16
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                ?8, ?9, ?10, ?11, ?12,
+                ?13, ?14, ?15, ?16, ?17
             )
             ON CONFLICT(mac) DO UPDATE SET
                 address_type=excluded.address_type,
                 transport=excluded.transport,
                 oui_manufacturer=excluded.oui_manufacturer,
+                source_adapters_json=excluded.source_adapters_json,
                 advertised_name=excluded.advertised_name,
                 alias=excluded.alias,
                 device_type=excluded.device_type,
@@ -361,6 +390,7 @@ impl StorageEngine {
                 device.address_type,
                 device.transport,
                 device.oui_manufacturer,
+                source_adapters_json,
                 device.advertised_name,
                 device.alias,
                 device.device_type,
@@ -490,7 +520,7 @@ impl StorageEngine {
         let mut stmt = conn.prepare(
             r#"
             SELECT
-                bssid, ssid, oui_manufacturer, country_code_80211d, channel, frequency_mhz, band,
+                bssid, ssid, oui_manufacturer, source_adapters_json, country_code_80211d, channel, frequency_mhz, band,
                 encryption_short, encryption_full, rssi_dbm, number_of_clients,
                 first_seen, last_seen, handshake_count, notes, uptime_beacons,
                 wps_json, packet_mix_json
@@ -500,13 +530,14 @@ impl StorageEngine {
         )?;
 
         let rows = stmt.query_map([], |row| {
-            let channel_opt: Option<i64> = row.get(4)?;
-            let frequency_opt: Option<i64> = row.get(5)?;
-            let band_label: String = row.get(6)?;
-            let first_seen: String = row.get(11)?;
-            let last_seen: String = row.get(12)?;
-            let wps_json: String = row.get(16)?;
-            let packet_mix_json: String = row.get(17)?;
+            let source_adapters_json: String = row.get(3)?;
+            let channel_opt: Option<i64> = row.get(5)?;
+            let frequency_opt: Option<i64> = row.get(6)?;
+            let band_label: String = row.get(7)?;
+            let first_seen: String = row.get(12)?;
+            let last_seen: String = row.get(13)?;
+            let wps_json: String = row.get(17)?;
+            let packet_mix_json: String = row.get(18)?;
 
             let wps = if wps_json.trim().is_empty() {
                 None
@@ -521,19 +552,20 @@ impl StorageEngine {
                 bssid: row.get(0)?,
                 ssid: row.get(1)?,
                 oui_manufacturer: row.get(2)?,
-                country_code_80211d: row.get(3)?,
+                source_adapters: serde_json::from_str(&source_adapters_json).unwrap_or_default(),
+                country_code_80211d: row.get(4)?,
                 channel: channel_opt.map(|v| v as u16),
                 frequency_mhz: frequency_opt.map(|v| v as u32),
                 band: parse_band_label(&band_label),
-                encryption_short: row.get(7)?,
-                encryption_full: row.get(8)?,
-                rssi_dbm: row.get(9)?,
-                number_of_clients: row.get::<_, i64>(10)? as u32,
+                encryption_short: row.get(8)?,
+                encryption_full: row.get(9)?,
+                rssi_dbm: row.get(10)?,
+                number_of_clients: row.get::<_, i64>(11)? as u32,
                 first_seen: parse_ts(&first_seen).unwrap_or_else(|_| Utc::now()),
                 last_seen: parse_ts(&last_seen).unwrap_or_else(|_| Utc::now()),
-                handshake_count: row.get::<_, i64>(13)? as u32,
-                notes: row.get(14)?,
-                uptime_beacons: row.get::<_, Option<i64>>(15)?.map(|v| v as u64),
+                handshake_count: row.get::<_, i64>(14)? as u32,
+                notes: row.get(15)?,
+                uptime_beacons: row.get::<_, Option<i64>>(16)?.map(|v| v as u64),
                 wps,
                 packet_mix,
                 observations: Vec::new(),
@@ -556,7 +588,7 @@ impl StorageEngine {
         let mut stmt = conn.prepare(
             r#"
             SELECT
-                mac, oui_manufacturer, associated_ap, data_transferred_bytes,
+                mac, oui_manufacturer, source_adapters_json, associated_ap, data_transferred_bytes,
                 rssi_dbm, probes_json, first_seen, last_seen,
                 seen_access_points_json, wps_json, handshake_networks_json, network_intel_json
             FROM clients
@@ -565,11 +597,12 @@ impl StorageEngine {
         )?;
 
         let rows = stmt.query_map([], |row| {
-            let probes_json: String = row.get(5)?;
-            let seen_aps_json: String = row.get(8)?;
-            let wps_json: String = row.get(9)?;
-            let handshake_networks_json: String = row.get(10)?;
-            let network_intel_json: String = row.get(11)?;
+            let source_adapters_json: String = row.get(2)?;
+            let probes_json: String = row.get(6)?;
+            let seen_aps_json: String = row.get(9)?;
+            let wps_json: String = row.get(10)?;
+            let handshake_networks_json: String = row.get(11)?;
+            let network_intel_json: String = row.get(12)?;
 
             let probes = serde_json::from_str::<Vec<String>>(&probes_json).unwrap_or_default();
             let seen_access_points =
@@ -583,15 +616,16 @@ impl StorageEngine {
                 Some(serde_json::from_str::<WpsInfo>(&wps_json).unwrap_or_default())
             };
 
-            let first_seen: String = row.get(6)?;
-            let last_seen: String = row.get(7)?;
+            let first_seen: String = row.get(7)?;
+            let last_seen: String = row.get(8)?;
 
             Ok(ClientRecord {
                 mac: row.get(0)?,
                 oui_manufacturer: row.get(1)?,
-                associated_ap: row.get(2)?,
-                data_transferred_bytes: row.get::<_, i64>(3)? as u64,
-                rssi_dbm: row.get(4)?,
+                source_adapters: serde_json::from_str(&source_adapters_json).unwrap_or_default(),
+                associated_ap: row.get(3)?,
+                data_transferred_bytes: row.get::<_, i64>(4)? as u64,
+                rssi_dbm: row.get(5)?,
                 probes,
                 first_seen: parse_ts(&first_seen).unwrap_or_else(|_| Utc::now()),
                 last_seen: parse_ts(&last_seen).unwrap_or_else(|_| Utc::now()),
@@ -648,7 +682,7 @@ impl StorageEngine {
         let mut stmt = conn.prepare(
             r#"
             SELECT
-                mac, address_type, transport, oui_manufacturer, advertised_name, alias,
+                mac, address_type, transport, oui_manufacturer, source_adapters_json, advertised_name, alias,
                 device_type, class_of_device, rssi_dbm, first_seen, last_seen,
                 mfgr_ids_json, mfgr_names_json, uuids_json, uuid_names_json, active_enum_json
             FROM bluetooth_devices
@@ -657,24 +691,26 @@ impl StorageEngine {
         )?;
 
         let rows = stmt.query_map([], |row| {
-            let first_seen: String = row.get(9)?;
-            let last_seen: String = row.get(10)?;
-            let mfgr_ids_json: String = row.get(11)?;
-            let mfgr_names_json: String = row.get(12)?;
-            let uuids_json: String = row.get(13)?;
-            let uuid_names_json: String = row.get(14)?;
-            let active_enum_json: String = row.get(15)?;
+            let source_adapters_json: String = row.get(4)?;
+            let first_seen: String = row.get(10)?;
+            let last_seen: String = row.get(11)?;
+            let mfgr_ids_json: String = row.get(12)?;
+            let mfgr_names_json: String = row.get(13)?;
+            let uuids_json: String = row.get(14)?;
+            let uuid_names_json: String = row.get(15)?;
+            let active_enum_json: String = row.get(16)?;
 
             Ok(BluetoothDeviceRecord {
                 mac: row.get(0)?,
                 address_type: row.get(1)?,
                 transport: row.get(2)?,
                 oui_manufacturer: row.get(3)?,
-                advertised_name: row.get(4)?,
-                alias: row.get(5)?,
-                device_type: row.get(6)?,
-                class_of_device: row.get(7)?,
-                rssi_dbm: row.get(8)?,
+                source_adapters: serde_json::from_str(&source_adapters_json).unwrap_or_default(),
+                advertised_name: row.get(5)?,
+                alias: row.get(6)?,
+                device_type: row.get(7)?,
+                class_of_device: row.get(8)?,
+                rssi_dbm: row.get(9)?,
                 first_seen: parse_ts(&first_seen).unwrap_or_else(|_| Utc::now()),
                 last_seen: parse_ts(&last_seen).unwrap_or_else(|_| Utc::now()),
                 mfgr_ids: serde_json::from_str::<Vec<String>>(&mfgr_ids_json).unwrap_or_default(),

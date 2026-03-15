@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=WirelessExplorer
+Comment=Passive Wi-Fi and Bluetooth analysis
+Exec=wirelessexplorer
+Icon=network-wireless
+Terminal=false
+Categories=Network;Security;Monitor;
+Keywords=wifi;bluetooth;wireless;pcap;monitor;

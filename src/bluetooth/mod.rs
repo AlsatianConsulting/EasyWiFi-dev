@@ -3,6 +3,7 @@ use crate::model::{
     BluetoothActiveEnumeration, BluetoothDeviceRecord, BluetoothGattCharacteristicRecord,
     BluetoothGattDescriptorRecord, BluetoothGattServiceRecord, BluetoothReadableAttributeRecord,
 };
+use crate::settings::BluetoothScanSource;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use crossbeam_channel::Sender;
@@ -18,6 +19,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub const ALL_CONTROLLERS_ID: &str = "all";
+pub const ALL_UBERTOOTH_DEVICES_ID: &str = "all";
+
 #[derive(Debug, Clone)]
 pub struct BluetoothControllerInfo {
     pub id: String,
@@ -26,8 +30,16 @@ pub struct BluetoothControllerInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct UbertoothDeviceInfo {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct BluetoothScanConfig {
     pub controller: Option<String>,
+    pub source: BluetoothScanSource,
+    pub ubertooth_device: Option<String>,
     pub scan_timeout_secs: u64,
     pub pause_ms: u64,
 }
@@ -36,6 +48,8 @@ impl Default for BluetoothScanConfig {
     fn default() -> Self {
         Self {
             controller: None,
+            source: BluetoothScanSource::Bluez,
+            ubertooth_device: None,
             scan_timeout_secs: 4,
             pause_ms: 500,
         }
@@ -67,6 +81,61 @@ struct ScanHit {
     mac: String,
     name: Option<String>,
     rssi_dbm: Option<i32>,
+}
+
+fn bluetooth_source_label(source: &str, id: Option<&str>) -> String {
+    match id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(id) => format!("{}:{}", source, id),
+        None => source.to_string(),
+    }
+}
+
+fn bluetooth_selection_is_all(value: Option<&str>, all_token: &str) -> bool {
+    matches!(value.map(str::trim), Some(token) if token == all_token)
+}
+
+fn resolve_bluez_targets(selection: Option<&str>) -> Vec<Option<String>> {
+    if bluetooth_selection_is_all(selection, ALL_CONTROLLERS_ID) {
+        let mut targets = list_controllers()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|controller| Some(controller.id))
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            targets.push(None);
+        }
+        return targets;
+    }
+
+    match selection.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("default") | None => vec![None],
+        Some(controller) => vec![Some(controller.to_string())],
+    }
+}
+
+fn resolve_ubertooth_targets(selection: Option<&str>) -> Vec<Option<String>> {
+    if bluetooth_selection_is_all(selection, ALL_UBERTOOTH_DEVICES_ID) {
+        let mut targets = list_ubertooth_devices()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|device| {
+                if device.id == "default" {
+                    None
+                } else {
+                    Some(device.id)
+                }
+            })
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            targets.push(None);
+        }
+        return targets;
+    }
+
+    match selection.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("default") | None => vec![None],
+        Some(device) => vec![Some(device.to_string())],
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +291,68 @@ pub fn list_controllers() -> Result<Vec<BluetoothControllerInfo>> {
     }
 
     Ok(out)
+}
+
+pub fn list_ubertooth_devices() -> Result<Vec<UbertoothDeviceInfo>> {
+    let mut devices = Vec::new();
+
+    let entries = fs::read_dir("/sys/bus/usb/devices").ok();
+    if let Some(entries) = entries {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let vendor = fs::read_to_string(path.join("idVendor"))
+                .ok()
+                .map(|v| v.trim().to_ascii_lowercase());
+            let product = fs::read_to_string(path.join("idProduct"))
+                .ok()
+                .map(|v| v.trim().to_ascii_lowercase());
+            if vendor.as_deref() != Some("1d50") || product.as_deref() != Some("6002") {
+                continue;
+            }
+
+            let serial = fs::read_to_string(path.join("serial"))
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            let manufacturer = fs::read_to_string(path.join("manufacturer"))
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            let product_name = fs::read_to_string(path.join("product"))
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            let bus_name = path
+                .file_name()
+                .and_then(|v| v.to_str())
+                .unwrap_or("usb-device")
+                .to_string();
+
+            let id = serial.clone().unwrap_or_else(|| bus_name.clone());
+            let name = format!(
+                "{} {}{}",
+                manufacturer.unwrap_or_else(|| "Great Scott Gadgets".to_string()),
+                product_name.unwrap_or_else(|| "Ubertooth".to_string()),
+                serial
+                    .as_ref()
+                    .map(|s| format!(" ({})", s))
+                    .unwrap_or_default()
+            );
+            devices.push(UbertoothDeviceInfo { id, name });
+        }
+    }
+
+    devices.sort_by(|a, b| a.id.cmp(&b.id));
+    devices.dedup_by(|a, b| a.id == b.id);
+
+    if devices.is_empty() && command_exists("ubertooth-btle") {
+        devices.push(UbertoothDeviceInfo {
+            id: "default".to_string(),
+            name: "Default Ubertooth Device".to_string(),
+        });
+    }
+
+    Ok(devices)
 }
 
 pub fn start_scan(config: BluetoothScanConfig, sender: Sender<BluetoothEvent>) -> BluetoothRuntime {
@@ -402,15 +533,33 @@ fn run_scan_loop(
     sender: Sender<BluetoothEvent>,
     stop_flag: Arc<AtomicBool>,
 ) {
-    let bluetoothctl_available = Command::new("which")
-        .arg("bluetoothctl")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let bluez_available = command_exists("bluetoothctl");
+    let ubertooth_available = command_exists("ubertooth-btle");
+    let wants_bluez = matches!(
+        config.source,
+        BluetoothScanSource::Bluez | BluetoothScanSource::Both
+    );
+    let wants_ubertooth = matches!(
+        config.source,
+        BluetoothScanSource::Ubertooth | BluetoothScanSource::Both
+    );
+    let use_bluez = wants_bluez && bluez_available;
+    let use_ubertooth = wants_ubertooth && ubertooth_available;
 
-    if !bluetoothctl_available {
+    if wants_bluez && !bluez_available {
         let _ = sender.send(BluetoothEvent::Log(
-            "bluetoothctl not found; running simulated bluetooth scanner".to_string(),
+            "bluetoothctl not found; BlueZ scanning disabled".to_string(),
+        ));
+    }
+    if wants_ubertooth && !ubertooth_available {
+        let _ = sender.send(BluetoothEvent::Log(
+            "ubertooth-btle not found; Ubertooth scanning disabled".to_string(),
+        ));
+    }
+
+    if !use_bluez && !use_ubertooth {
+        let _ = sender.send(BluetoothEvent::Log(
+            "no Bluetooth scan backend available; running simulated bluetooth scanner".to_string(),
         ));
         run_simulated_scan(sender, stop_flag);
         return;
@@ -422,68 +571,157 @@ fn run_scan_loop(
     let info_refresh_period = Duration::from_secs(35);
     let pause = Duration::from_millis(config.pause_ms.max(100));
     let scan_timeout = config.scan_timeout_secs.clamp(2, 12);
+    let bluez_targets = if use_bluez {
+        resolve_bluez_targets(config.controller.as_deref())
+    } else {
+        Vec::new()
+    };
+    let ubertooth_targets = if use_ubertooth {
+        resolve_ubertooth_targets(config.ubertooth_device.as_deref())
+    } else {
+        Vec::new()
+    };
 
     while !stop_flag.load(Ordering::Relaxed) {
-        if let Some(controller) = config.controller.as_deref() {
-            select_controller(controller);
-        }
-
-        let hits = match run_scan_once_interruptible(scan_timeout, Some(&stop_flag)) {
-            Ok(hits) => hits,
-            Err(err) => {
+        let mut process_hits =
+            |hits: Vec<ScanHit>,
+             is_ble_only: bool,
+             source_label: &str,
+             info_controller: Option<&str>| {
+            for hit in hits {
                 if stop_flag.load(Ordering::Relaxed) {
                     break;
                 }
-                let _ = sender.send(BluetoothEvent::Log(format!("bluetooth scan failed: {err}")));
-                thread::sleep(Duration::from_millis(750));
-                continue;
+
+                let now = Utc::now();
+                let should_refresh = use_bluez
+                    && last_refresh
+                        .get(&hit.mac)
+                        .map(|t| t.elapsed() >= info_refresh_period)
+                        .unwrap_or(true);
+
+                if should_refresh {
+                    if let Some(fresh) = query_device_info(info_controller, &hit.mac, &resolver) {
+                        cache.insert(hit.mac.clone(), fresh);
+                        last_refresh.insert(hit.mac.clone(), Instant::now());
+                    }
+                }
+
+                let mut record = cache
+                    .get(&hit.mac)
+                    .cloned()
+                    .unwrap_or_else(|| BluetoothDeviceRecord::new(hit.mac.clone(), now));
+
+                if let Some(name) = hit.name.filter(|v| !v.trim().is_empty()) {
+                    if name.replace('-', ":").to_ascii_uppercase() != record.mac.as_str() {
+                        record.advertised_name = Some(name);
+                    }
+                }
+                if hit.rssi_dbm.is_some() {
+                    record.rssi_dbm = hit.rssi_dbm;
+                }
+                if record.transport == "Unknown" {
+                    record.transport = if is_ble_only {
+                        "BLE".to_string()
+                    } else {
+                        "BT/BLE".to_string()
+                    };
+                }
+                if !record
+                    .source_adapters
+                    .iter()
+                    .any(|adapter| adapter == source_label)
+                {
+                    record.source_adapters.push(source_label.to_string());
+                }
+                record.last_seen = now;
+
+                cache.insert(hit.mac.clone(), record.clone());
+                let _ = sender.send(BluetoothEvent::DeviceSeen(record));
             }
         };
 
-        for hit in hits {
-            if stop_flag.load(Ordering::Relaxed) {
-                break;
-            }
-
-            let now = Utc::now();
-            let should_refresh = last_refresh
-                .get(&hit.mac)
-                .map(|t| t.elapsed() >= info_refresh_period)
-                .unwrap_or(true);
-
-            if should_refresh {
-                if let Some(fresh) =
-                    query_device_info(config.controller.as_deref(), &hit.mac, &resolver)
-                {
-                    cache.insert(hit.mac.clone(), fresh);
-                    last_refresh.insert(hit.mac.clone(), Instant::now());
+        if use_bluez {
+            for controller in &bluez_targets {
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                if let Some(controller_id) = controller.as_deref() {
+                    select_controller(controller_id);
+                }
+                match run_scan_once_interruptible(scan_timeout, Some(&stop_flag)) {
+                    Ok(hits) => process_hits(
+                        hits,
+                        false,
+                        &bluetooth_source_label("bluez", controller.as_deref()),
+                        controller.as_deref(),
+                    ),
+                    Err(err) => {
+                        if stop_flag.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let _ = sender.send(BluetoothEvent::Log(format!(
+                            "BlueZ bluetooth scan failed{}: {err}",
+                            controller
+                                .as_deref()
+                                .map(|id| format!(" on {}", id))
+                                .unwrap_or_default()
+                        )));
+                    }
                 }
             }
+        }
 
-            let mut record = cache
-                .get(&hit.mac)
-                .cloned()
-                .unwrap_or_else(|| BluetoothDeviceRecord::new(hit.mac.clone(), now));
-
-            if let Some(name) = hit.name.filter(|v| !v.trim().is_empty()) {
-                if name.replace('-', ":").to_ascii_uppercase() != record.mac.as_str() {
-                    record.advertised_name = Some(name);
+        if use_ubertooth {
+            for device_hint in &ubertooth_targets {
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                match run_ubertooth_scan_once_interruptible(
+                    scan_timeout,
+                    device_hint.as_deref(),
+                    Some(&stop_flag),
+                ) {
+                    Ok((hits, links)) => {
+                        process_hits(
+                            hits,
+                            true,
+                            &bluetooth_source_label("ubertooth", device_hint.as_deref()),
+                            None,
+                        );
+                        for link in links {
+                            let _ = sender.send(BluetoothEvent::Log(link));
+                        }
+                    }
+                    Err(err) => {
+                        if stop_flag.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let _ = sender.send(BluetoothEvent::Log(format!(
+                            "Ubertooth scan failed{}: {err}",
+                            device_hint
+                                .as_deref()
+                                .filter(|value| !value.is_empty())
+                                .map(|id| format!(" on {}", id))
+                                .unwrap_or_default()
+                        )));
+                    }
                 }
             }
-            if hit.rssi_dbm.is_some() {
-                record.rssi_dbm = hit.rssi_dbm;
-            }
-            if record.transport == "Unknown" {
-                record.transport = "BT/BLE".to_string();
-            }
-            record.last_seen = now;
-
-            cache.insert(hit.mac.clone(), record.clone());
-            let _ = sender.send(BluetoothEvent::DeviceSeen(record));
         }
 
         thread::sleep(pause);
     }
+}
+
+fn command_exists(cmd: &str) -> bool {
+    Command::new("which")
+        .arg(cmd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn run_simulated_scan(sender: Sender<BluetoothEvent>, stop_flag: Arc<AtomicBool>) {
@@ -502,6 +740,7 @@ fn run_simulated_scan(sender: Sender<BluetoothEvent>, stop_flag: Arc<AtomicBool>
         } else {
             "BT".to_string()
         };
+        record.source_adapters = vec!["simulated".to_string()];
         record.device_type = Some(if tick % 3 == 0 {
             "Headset".to_string()
         } else {
@@ -567,6 +806,65 @@ fn run_scan_once_interruptible(
     }
 }
 
+fn run_ubertooth_scan_once_interruptible(
+    scan_timeout_secs: u64,
+    device_hint: Option<&str>,
+    stop_flag: Option<&Arc<AtomicBool>>,
+) -> Result<(Vec<ScanHit>, Vec<String>)> {
+    let mut cmd = Command::new("ubertooth-btle");
+    cmd.arg("-f").stdout(Stdio::piped()).stderr(Stdio::piped());
+    if let Some(device_hint) = device_hint.map(str::trim).filter(|v| !v.is_empty()) {
+        if device_hint != "default" {
+            cmd.args(["-U", device_hint]);
+        }
+    }
+
+    let mut child = cmd.spawn().context("failed to run ubertooth-btle -f")?;
+    let started = Instant::now();
+    let timeout = Duration::from_secs(scan_timeout_secs.clamp(2, 12));
+
+    loop {
+        if stop_flag
+            .map(|flag| flag.load(Ordering::Relaxed))
+            .unwrap_or(false)
+            || started.elapsed() >= timeout
+        {
+            let _ = child.kill();
+        }
+
+        if let Some(_status) = child.try_wait().context("failed to poll ubertooth-btle")? {
+            let mut stdout = String::new();
+            let mut stderr = String::new();
+            if let Some(mut pipe) = child.stdout.take() {
+                let _ = pipe.read_to_string(&mut stdout);
+            }
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_string(&mut stderr);
+            }
+
+            let mut combined = String::new();
+            if !stdout.is_empty() {
+                combined.push_str(&stdout);
+            }
+            if !stderr.is_empty() {
+                if !combined.is_empty() {
+                    combined.push('\n');
+                }
+                combined.push_str(&stderr);
+            }
+
+            let hits = parse_ubertooth_output(&combined);
+            let links = parse_ubertooth_links(&combined);
+            if hits.is_empty() && links.is_empty() && combined.trim().is_empty() {
+                anyhow::bail!("ubertooth-btle produced no output");
+            }
+            return Ok((hits, links));
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn parse_scan_output(text: &str) -> Vec<ScanHit> {
     let mut hits: HashMap<String, ScanHit> = HashMap::new();
     let device_re = Regex::new(r"Device\s+([0-9A-Fa-f:]{17})\s*(.*)$").unwrap();
@@ -617,6 +915,86 @@ fn parse_scan_output(text: &str) -> Vec<ScanHit> {
     }
 
     hits.into_values().collect()
+}
+
+fn parse_ubertooth_output(text: &str) -> Vec<ScanHit> {
+    let mac_re = Regex::new(r"(?i)\b([0-9a-f]{2}(?::[0-9a-f]{2}){5})\b").unwrap();
+    let rssi_re = Regex::new(r"(?i)(?:rssi\s*[:=]\s*|)(-?\d+)\s*d?bm\b").unwrap();
+    let local_name_re =
+        Regex::new(r"(?i)(?:name|complete local name)\s*[:=]\s*([A-Za-z0-9 _\-.]+)").unwrap();
+    let mut hits: HashMap<String, ScanHit> = HashMap::new();
+
+    for raw in text.lines() {
+        let line = clean_line(raw);
+        let Some(mac_caps) = mac_re.captures(&line) else {
+            continue;
+        };
+        let mac = normalize_mac(
+            mac_caps
+                .get(1)
+                .map(|m| m.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        );
+        if mac.is_empty() {
+            continue;
+        }
+
+        let entry = hits.entry(mac.clone()).or_insert_with(|| ScanHit {
+            mac: mac.clone(),
+            name: None,
+            rssi_dbm: None,
+        });
+
+        if let Some(caps) = rssi_re.captures(&line) {
+            if let Some(parsed) = caps.get(1).and_then(|m| m.as_str().parse::<i32>().ok()) {
+                entry.rssi_dbm = Some(parsed.clamp(-127, 20));
+            }
+        }
+
+        if let Some(caps) = local_name_re.captures(&line) {
+            if let Some(name) = caps.get(1).map(|m| m.as_str().trim().to_string()) {
+                if !name.is_empty() {
+                    entry.name = Some(name);
+                }
+            }
+        }
+    }
+
+    hits.into_values().collect()
+}
+
+fn parse_ubertooth_links(text: &str) -> Vec<String> {
+    let init_re = Regex::new(r"(?i)(?:inita|initiator)\s*[:=]\s*([0-9a-f:]{17})").unwrap();
+    let adv_re = Regex::new(r"(?i)(?:adva|advertiser)\s*[:=]\s*([0-9a-f:]{17})").unwrap();
+    let mut out = Vec::new();
+
+    for raw in text.lines() {
+        let line = clean_line(raw);
+        let Some(init) = init_re
+            .captures(&line)
+            .and_then(|caps| caps.get(1).map(|m| normalize_mac(m.as_str().to_string())))
+        else {
+            continue;
+        };
+        let Some(adv) = adv_re
+            .captures(&line)
+            .and_then(|caps| caps.get(1).map(|m| normalize_mac(m.as_str().to_string())))
+        else {
+            continue;
+        };
+        if init.is_empty() || adv.is_empty() {
+            continue;
+        }
+        out.push(format!(
+            "ubertooth observed BLE link candidate: {} -> {}",
+            init, adv
+        ));
+    }
+
+    out.sort();
+    out.dedup();
+    out
 }
 
 fn query_device_info(
@@ -2069,16 +2447,29 @@ fn short_assigned_number(uuid: &str) -> Option<String> {
 }
 
 fn manifest_asset(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("assets")
-        .join(name)
+    let candidates = [
+        PathBuf::from("/usr/share/wirelessexplorer/assets").join(name),
+        PathBuf::from("/usr/share/WirelessExplorer/assets").join(name),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join(name),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.exists())
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("assets")
+                .join(name)
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         appearance_name, decode_characteristic_value, decode_descriptor_value, fallback_uuid_name,
-        normalize_assigned_uuid, parse_tab_separated_mappings,
+        normalize_assigned_uuid, parse_tab_separated_mappings, resolve_bluez_targets,
+        resolve_ubertooth_targets,
     };
 
     #[test]
@@ -2150,6 +2541,34 @@ mod tests {
         assert_eq!(
             decode_descriptor_value("2907", &[0x4B, 0x2A]),
             "00002a4b-0000-1000-8000-00805f9b34fb"
+        );
+    }
+
+    #[test]
+    fn default_bluez_target_is_single_default_controller() {
+        assert_eq!(resolve_bluez_targets(None), vec![None]);
+        assert_eq!(resolve_bluez_targets(Some("default")), vec![None]);
+    }
+
+    #[test]
+    fn explicit_bluez_target_is_preserved() {
+        assert_eq!(
+            resolve_bluez_targets(Some("AA:BB:CC:DD:EE:FF")),
+            vec![Some("AA:BB:CC:DD:EE:FF".to_string())]
+        );
+    }
+
+    #[test]
+    fn default_ubertooth_target_is_single_default_device() {
+        assert_eq!(resolve_ubertooth_targets(None), vec![None]);
+        assert_eq!(resolve_ubertooth_targets(Some("default")), vec![None]);
+    }
+
+    #[test]
+    fn explicit_ubertooth_target_is_preserved() {
+        assert_eq!(
+            resolve_ubertooth_targets(Some("usb-1-2")),
+            vec![Some("usb-1-2".to_string())]
         );
     }
 }

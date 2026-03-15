@@ -1,10 +1,9 @@
 use crate::model::{
-    AccessPointRecord, ChannelUsagePoint, ClientEndpointRecord, ClientRecord, GeoObservation,
-    HandshakeRecord, PacketTypeBreakdown, SpectrumBand,
+    AccessPointRecord, ChannelUsagePoint, ClientRecord, GeoObservation, HandshakeRecord,
+    PacketTypeBreakdown, SpectrumBand,
 };
-use crate::netintel::GeoIpLookup;
 use crate::privilege::{HelperRequest, HelperResponse};
-use crate::settings::{ChannelSelectionMode, InterfaceSettings};
+use crate::settings::{ChannelSelectionMode, InterfaceSettings, WifiPacketHeaderMode};
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use crossbeam_channel::Sender;
@@ -27,7 +26,7 @@ use std::time::{Duration, Instant};
 pub struct CaptureConfig {
     pub interfaces: Vec<InterfaceSettings>,
     pub session_pcap_path: Option<PathBuf>,
-    pub geoip_city_db_path: Option<PathBuf>,
+    pub wifi_packet_header_mode: WifiPacketHeaderMode,
     pub gps_enabled: bool,
     pub passive_only: bool,
 }
@@ -201,12 +200,15 @@ struct PrivilegedPassthroughProcess {
 
 fn helper_binary_path() -> Result<PathBuf> {
     let current = std::env::current_exe().context("failed to resolve current executable path")?;
-    let helper = current.with_file_name("simplestg-helper");
-    if helper.exists() {
-        Ok(helper)
-    } else {
-        anyhow::bail!("helper binary not found at {}", helper.display())
+    let primary = current.with_file_name("wirelessexplorer-helper");
+    if primary.exists() {
+        return Ok(primary);
     }
+    let legacy = current.with_file_name("simplestg-helper");
+    if legacy.exists() {
+        return Ok(legacy);
+    }
+    anyhow::bail!("helper binary not found at {}", primary.display())
 }
 
 fn command_exists(cmd: &str) -> bool {
@@ -298,6 +300,10 @@ fn spawn_privileged_helper() -> Result<PrivilegedHelperClient> {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
+            .env(
+                "WIRELESSEXPLORER_PARENT_PID",
+                std::process::id().to_string(),
+            )
             .env("SIMPLESTG_PARENT_PID", std::process::id().to_string());
         configure_parent_death_signal(&mut command);
         match command.spawn() {
@@ -365,7 +371,8 @@ fn spawn_privileged_helper() -> Result<PrivilegedHelperClient> {
     );
     if is_effective_root() {
         message.push(
-            "SimpleSTG is already running as root. Direct helper startup still failed.".to_string(),
+            "WirelessExplorer is already running as root. Direct helper startup still failed."
+                .to_string(),
         );
         message.push(format!(
             "verify that the helper binary exists and is executable: {}",
@@ -376,7 +383,7 @@ fn spawn_privileged_helper() -> Result<PrivilegedHelperClient> {
             "required: keep the GUI unprivileged and make one privilege path work:".to_string(),
         );
         message.push("1. `pkexec` with a working polkit agent".to_string());
-        message.push("2. passwordless `sudo -n` for `simplestg-helper`".to_string());
+        message.push("2. passwordless `sudo -n` for `wirelessexplorer-helper`".to_string());
         message.push(format!(
             "3. capabilities on the helper: `sudo setcap cap_net_admin,cap_net_raw=eip {}`",
             helper.display()
@@ -454,6 +461,10 @@ fn spawn_privileged_helper_command(
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .env(
+                "WIRELESSEXPLORER_PARENT_PID",
+                std::process::id().to_string(),
+            )
             .env("SIMPLESTG_PARENT_PID", std::process::id().to_string());
         configure_parent_death_signal(&mut command);
         match command.spawn() {
@@ -484,7 +495,8 @@ fn spawn_privileged_helper_command(
     );
     if is_effective_root() {
         message.push(
-            "SimpleSTG is already running as root. Direct helper launch still failed.".to_string(),
+            "WirelessExplorer is already running as root. Direct helper launch still failed."
+                .to_string(),
         );
         message.push(format!(
             "verify that the helper binary exists and is executable: {}",
@@ -493,7 +505,7 @@ fn spawn_privileged_helper_command(
     } else {
         message.push(requirements_title.to_string());
         message.push("1. `pkexec` with a working polkit agent".to_string());
-        message.push("2. passwordless `sudo -n` for `simplestg-helper`".to_string());
+        message.push("2. passwordless `sudo -n` for `wirelessexplorer-helper`".to_string());
         message.push(format!(
             "3. capabilities on the helper: `sudo setcap cap_net_admin,cap_net_raw=eip {}`",
             helper.display()
@@ -635,7 +647,7 @@ fn format_prior_launch_attempts(attempts: &[String]) -> String {
 pub fn helper_binary_hint() -> String {
     helper_binary_path()
         .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "simplestg-helper".to_string())
+        .unwrap_or_else(|_| "wirelessexplorer-helper".to_string())
 }
 
 pub fn list_supported_channels(interface: &str) -> Result<Vec<u16>> {
@@ -980,10 +992,16 @@ pub fn start_capture(config: CaptureConfig, sender: Sender<CaptureEvent>) -> Cap
         let mut iface_settings = interface.clone();
         iface_settings.interface_name = active_interface_name.clone();
         let pcap_path = config.session_pcap_path.clone();
-        let geoip_city_db_path = config.geoip_city_db_path.clone();
+        let wifi_packet_header_mode = config.wifi_packet_header_mode;
 
         let handle = thread::spawn(move || {
-            run_interface_capture(&iface_settings, pcap_path, geoip_city_db_path, tx, stop);
+            run_interface_capture(
+                &iface_settings,
+                pcap_path,
+                wifi_packet_header_mode,
+                tx,
+                stop,
+            );
         });
 
         handles.push(handle);
@@ -1072,16 +1090,42 @@ pub fn start_geiger_mode(
     })
 }
 
+fn tshark_capture_link_type(mode: WifiPacketHeaderMode) -> &'static str {
+    match mode {
+        WifiPacketHeaderMode::Radiotap => "IEEE802_11_RADIO",
+        WifiPacketHeaderMode::Ppi => "PPI",
+    }
+}
+
+fn wifi_packet_header_mode_label(mode: WifiPacketHeaderMode) -> &'static str {
+    match mode {
+        WifiPacketHeaderMode::Radiotap => "Radiotap",
+        WifiPacketHeaderMode::Ppi => "PPI",
+    }
+}
+
+fn wifi_packet_header_mode_label_from_link_type(link_type: &str) -> &'static str {
+    if link_type == tshark_capture_link_type(WifiPacketHeaderMode::Ppi) {
+        wifi_packet_header_mode_label(WifiPacketHeaderMode::Ppi)
+    } else {
+        wifi_packet_header_mode_label(WifiPacketHeaderMode::Radiotap)
+    }
+}
+
 fn run_interface_capture(
     interface: &InterfaceSettings,
     session_pcap_path: Option<PathBuf>,
-    geoip_city_db_path: Option<PathBuf>,
+    wifi_packet_header_mode: WifiPacketHeaderMode,
     sender: Sender<CaptureEvent>,
     stop_flag: Arc<AtomicBool>,
 ) {
     let _ = sender.send(CaptureEvent::Log(format!(
         "starting Wi-Fi capture on {}",
         interface.interface_name
+    )));
+    let _ = sender.send(CaptureEvent::Log(format!(
+        "Wi-Fi capture packet header mode: {}",
+        wifi_packet_header_mode_label(wifi_packet_header_mode)
     )));
     let tshark_available = Command::new("which")
         .arg("tshark")
@@ -1153,27 +1197,6 @@ fn run_interface_capture(
     let supports_reason_code_field = tshark_supports_field("wlan.fixed.reason_code");
     let supports_listen_interval_field = tshark_supports_field("wlan.fixed.listen_ival");
     let supports_pmkid_count_field = tshark_supports_field("wlan.rsn.pmkid.count");
-    let supports_ip_src_field = tshark_supports_field("ip.src");
-    let supports_ip_dst_field = tshark_supports_field("ip.dst");
-    let supports_ipv6_src_field = tshark_supports_field("ipv6.src");
-    let supports_ipv6_dst_field = tshark_supports_field("ipv6.dst");
-    let supports_tcp_srcport_field = tshark_supports_field("tcp.srcport");
-    let supports_tcp_dstport_field = tshark_supports_field("tcp.dstport");
-    let supports_udp_srcport_field = tshark_supports_field("udp.srcport");
-    let supports_udp_dstport_field = tshark_supports_field("udp.dstport");
-    let supports_arp_src_ipv4_field = tshark_supports_field("arp.src.proto_ipv4");
-    let supports_arp_dst_ipv4_field = tshark_supports_field("arp.dst.proto_ipv4");
-    let supports_dns_qry_name_field = tshark_supports_field("dns.qry.name");
-    let supports_dns_resp_name_field = tshark_supports_field("dns.resp.name");
-    let supports_dns_a_field = tshark_supports_field("dns.a");
-    let supports_dns_aaaa_field = tshark_supports_field("dns.aaaa");
-    let supports_dhcp_hostname_field = tshark_supports_field("dhcp.option.hostname");
-    let supports_dhcp_fqdn_field = tshark_supports_field("dhcp.fqdn.name");
-    let supports_dhcp_vendor_class_field = tshark_supports_field("dhcp.option.vendor_class_id");
-    let supports_dhcp_requested_ip_field =
-        tshark_supports_field("dhcp.option.requested_ip_address");
-    let supports_dhcp_client_ip_field = tshark_supports_field("dhcp.ip.client");
-    let supports_dhcp_your_ip_field = tshark_supports_field("dhcp.ip.your");
 
     let parse_layout = TSharkParseLayout {
         has_ssid_field: ssid_field.is_some(),
@@ -1196,26 +1219,6 @@ fn run_interface_capture(
         has_reason_code_field: supports_reason_code_field,
         has_listen_interval_field: supports_listen_interval_field,
         has_pmkid_count_field: supports_pmkid_count_field,
-        has_ip_src_field: supports_ip_src_field,
-        has_ip_dst_field: supports_ip_dst_field,
-        has_ipv6_src_field: supports_ipv6_src_field,
-        has_ipv6_dst_field: supports_ipv6_dst_field,
-        has_tcp_srcport_field: supports_tcp_srcport_field,
-        has_tcp_dstport_field: supports_tcp_dstport_field,
-        has_udp_srcport_field: supports_udp_srcport_field,
-        has_udp_dstport_field: supports_udp_dstport_field,
-        has_arp_src_ipv4_field: supports_arp_src_ipv4_field,
-        has_arp_dst_ipv4_field: supports_arp_dst_ipv4_field,
-        has_dns_qry_name_field: supports_dns_qry_name_field,
-        has_dns_resp_name_field: supports_dns_resp_name_field,
-        has_dns_a_field: supports_dns_a_field,
-        has_dns_aaaa_field: supports_dns_aaaa_field,
-        has_dhcp_hostname_field: supports_dhcp_hostname_field,
-        has_dhcp_fqdn_field: supports_dhcp_fqdn_field,
-        has_dhcp_vendor_class_field: supports_dhcp_vendor_class_field,
-        has_dhcp_requested_ip_field: supports_dhcp_requested_ip_field,
-        has_dhcp_client_ip_field: supports_dhcp_client_ip_field,
-        has_dhcp_your_ip_field: supports_dhcp_your_ip_field,
     };
 
     let mut decoder_args = vec![
@@ -1223,6 +1226,8 @@ fn run_interface_capture(
         interface.interface_name.clone(),
         "-l".to_string(),
         "-n".to_string(),
+        "-y".to_string(),
+        tshark_capture_link_type(WifiPacketHeaderMode::Radiotap).to_string(),
         "-T".to_string(),
         "fields".to_string(),
         "-E".to_string(),
@@ -1307,66 +1312,6 @@ fn run_interface_capture(
     if supports_pmkid_count_field {
         push_decoder_field("wlan.rsn.pmkid.count");
     }
-    if supports_ip_src_field {
-        push_decoder_field("ip.src");
-    }
-    if supports_ip_dst_field {
-        push_decoder_field("ip.dst");
-    }
-    if supports_ipv6_src_field {
-        push_decoder_field("ipv6.src");
-    }
-    if supports_ipv6_dst_field {
-        push_decoder_field("ipv6.dst");
-    }
-    if supports_tcp_srcport_field {
-        push_decoder_field("tcp.srcport");
-    }
-    if supports_tcp_dstport_field {
-        push_decoder_field("tcp.dstport");
-    }
-    if supports_udp_srcport_field {
-        push_decoder_field("udp.srcport");
-    }
-    if supports_udp_dstport_field {
-        push_decoder_field("udp.dstport");
-    }
-    if supports_arp_src_ipv4_field {
-        push_decoder_field("arp.src.proto_ipv4");
-    }
-    if supports_arp_dst_ipv4_field {
-        push_decoder_field("arp.dst.proto_ipv4");
-    }
-    if supports_dns_qry_name_field {
-        push_decoder_field("dns.qry.name");
-    }
-    if supports_dns_resp_name_field {
-        push_decoder_field("dns.resp.name");
-    }
-    if supports_dns_a_field {
-        push_decoder_field("dns.a");
-    }
-    if supports_dns_aaaa_field {
-        push_decoder_field("dns.aaaa");
-    }
-    if supports_dhcp_hostname_field {
-        push_decoder_field("dhcp.option.hostname");
-    }
-    if supports_dhcp_fqdn_field {
-        push_decoder_field("dhcp.fqdn.name");
-    }
-    if supports_dhcp_vendor_class_field {
-        push_decoder_field("dhcp.option.vendor_class_id");
-    }
-    if supports_dhcp_requested_ip_field {
-        push_decoder_field("dhcp.option.requested_ip_address");
-    }
-    if supports_dhcp_client_ip_field {
-        push_decoder_field("dhcp.ip.client");
-    }
-    if supports_dhcp_your_ip_field {
-        push_decoder_field("dhcp.ip.your");
-    }
 
     let mut decoder = match spawn_privileged_tshark(&decoder_args) {
         Ok(proc) => {
@@ -1405,39 +1350,75 @@ fn run_interface_capture(
 
     let mut saver = None;
     let saver_stderr_handle = if let Some(path) = session_pcap_path.as_ref() {
-        let saver_args = vec![
-            "-i".to_string(),
-            interface.interface_name.clone(),
-            "-n".to_string(),
-            "-Q".to_string(),
-            "-w".to_string(),
-            path.display().to_string(),
-        ];
+        let preferred_link_type = tshark_capture_link_type(wifi_packet_header_mode);
+        let build_saver_args = |link_type: &str| {
+            vec![
+                "-i".to_string(),
+                interface.interface_name.clone(),
+                "-n".to_string(),
+                "-Q".to_string(),
+                "-y".to_string(),
+                link_type.to_string(),
+                "-w".to_string(),
+                path.display().to_string(),
+            ]
+        };
+        let mut saver_link_type_used = preferred_link_type;
+        let primary_saver_args = build_saver_args(preferred_link_type);
 
-        match spawn_privileged_tshark(&saver_args) {
-            Ok(proc) => {
-                let _ = sender.send(CaptureEvent::Log(format!(
-                    "privileged PCAP saver running on {} via {}",
-                    interface.interface_name, proc.launch_mode
-                )));
-                let mut child = proc.child;
-                let stderr = child.stderr.take().map(|mut stderr| {
-                    thread::spawn(move || {
-                        let mut buf = String::new();
-                        let _ = stderr.read_to_string(&mut buf);
-                        buf
-                    })
-                });
-                saver = Some(child);
-                stderr
+        let saver_proc = match spawn_privileged_tshark(&primary_saver_args) {
+            Ok(proc) => Some(proc),
+            Err(primary_err) => {
+                if wifi_packet_header_mode == WifiPacketHeaderMode::Ppi {
+                    let fallback_link_type =
+                        tshark_capture_link_type(WifiPacketHeaderMode::Radiotap);
+                    let _ = sender.send(CaptureEvent::Log(format!(
+                        "PPI packet header mode failed on {}; retrying PCAP saver with Radiotap ({})",
+                        interface.interface_name, primary_err
+                    )));
+                    let fallback_saver_args = build_saver_args(fallback_link_type);
+                    match spawn_privileged_tshark(&fallback_saver_args) {
+                        Ok(proc) => {
+                            saver_link_type_used = fallback_link_type;
+                            Some(proc)
+                        }
+                        Err(fallback_err) => {
+                            let _ = sender.send(CaptureEvent::Log(format!(
+                                "failed to start privileged PCAP saver on {} with PPI and Radiotap fallback: {}",
+                                interface.interface_name, fallback_err
+                            )));
+                            None
+                        }
+                    }
+                } else {
+                    let _ = sender.send(CaptureEvent::Log(format!(
+                        "failed to start privileged PCAP saver on {}: {}",
+                        interface.interface_name, primary_err
+                    )));
+                    None
+                }
             }
-            Err(err) => {
-                let _ = sender.send(CaptureEvent::Log(format!(
-                    "failed to start privileged PCAP saver on {}: {}",
-                    interface.interface_name, err
-                )));
-                None
-            }
+        };
+
+        if let Some(proc) = saver_proc {
+            let _ = sender.send(CaptureEvent::Log(format!(
+                "privileged PCAP saver running on {} via {} ({})",
+                interface.interface_name,
+                proc.launch_mode,
+                wifi_packet_header_mode_label_from_link_type(saver_link_type_used)
+            )));
+            let mut child = proc.child;
+            let stderr = child.stderr.take().map(|mut stderr| {
+                thread::spawn(move || {
+                    let mut buf = String::new();
+                    let _ = stderr.read_to_string(&mut buf);
+                    buf
+                })
+            });
+            saver = Some(child);
+            stderr
+        } else {
+            None
         }
     } else {
         None
@@ -1450,7 +1431,6 @@ fn run_interface_capture(
         process_live_tshark_fields(
             BufReader::new(decoder_stdout),
             parse_layout,
-            geoip_city_db_path.as_deref(),
             &parse_sender,
             &parse_stop,
             &parse_iface,
@@ -1534,7 +1514,6 @@ fn run_interface_capture(
 fn process_live_tshark_fields(
     reader: BufReader<ChildStdout>,
     parse_layout: TSharkParseLayout,
-    geoip_city_db_path: Option<&std::path::Path>,
     sender: &Sender<CaptureEvent>,
     stop_flag: &Arc<AtomicBool>,
     interface_name: &str,
@@ -1544,21 +1523,8 @@ fn process_live_tshark_fields(
     let mut handshake_state: HashMap<(String, String), HashSet<u8>> = HashMap::new();
     let mut ap_clients: HashMap<String, HashSet<String>> = HashMap::new();
     let mut channel_counts: HashMap<u16, u64> = HashMap::new();
-    let mut dns_ip_map: HashMap<String, String> = HashMap::new();
-    let mut geo_lookup = GeoIpLookup::with_preferred_path(geoip_city_db_path);
     let mut usage_tick = Instant::now();
     let mut saw_frames = false;
-
-    if let Some(path) = geo_lookup.source_path() {
-        let _ = sender.send(CaptureEvent::Log(format!(
-            "IP geolocation enabled from {}",
-            path.display()
-        )));
-    } else {
-        let _ = sender.send(CaptureEvent::Log(
-            "IP geolocation disabled; no local city database found".to_string(),
-        ));
-    }
 
     for line in reader.lines() {
         if stop_flag.load(Ordering::Relaxed) {
@@ -1591,11 +1557,6 @@ fn process_live_tshark_fields(
             let is_probe_request = frame.fc_type == Some(0) && frame.subtype == Some(4);
             let is_probe_response = frame.fc_type == Some(0) && frame.subtype == Some(5);
             let is_beacon = frame.fc_type == Some(0) && frame.subtype == Some(8);
-            let is_open_payload = !frame.protected;
-
-            if is_open_payload {
-                update_passive_dns_map(&frame, &mut dns_ip_map);
-            }
 
             if !bssid.is_empty() && !bssid_is_broadcast {
                 let ap = ap_state
@@ -1609,6 +1570,9 @@ fn process_live_tshark_fields(
 
                 if let Some(ssid) = frame.ssid.clone().filter(|s| !s.is_empty()) {
                     ap.ssid = Some(ssid);
+                }
+                if !ap.source_adapters.iter().any(|name| name == interface_name) {
+                    ap.source_adapters.push(interface_name.to_string());
                 }
                 if let Some(country_code) = frame.country_code.clone().filter(|v| !v.is_empty()) {
                     ap.country_code_80211d = Some(country_code);
@@ -1652,6 +1616,9 @@ fn process_live_tshark_fields(
                     client.last_seen = now;
                     if client.first_seen > now {
                         client.first_seen = now;
+                    }
+                    if !client.source_adapters.iter().any(|name| name == interface_name) {
+                        client.source_adapters.push(interface_name.to_string());
                     }
                     client.associated_ap = if bssid.is_empty() || bssid_is_broadcast {
                         client.associated_ap.clone()
@@ -1738,22 +1705,6 @@ fn process_live_tshark_fields(
                     if (is_beacon || is_probe_response) && !bssid_is_broadcast {
                         client.associated_ap = Some(bssid.clone());
                     }
-                    if is_open_payload {
-                        observe_open_network_activity(
-                            client,
-                            direction,
-                            &frame,
-                            &dns_ip_map,
-                            &mut geo_lookup,
-                            now,
-                        );
-                    } else {
-                        backfill_endpoint_domains(
-                            &mut client.network_intel.remote_endpoints,
-                            &dns_ip_map,
-                            &mut geo_lookup,
-                        );
-                    }
 
                     let _ = sender.send(CaptureEvent::ClientSeen(client.clone()));
                 }
@@ -1839,22 +1790,6 @@ fn client_traffic_direction(
     }
 }
 
-fn push_unique_string(values: &mut Vec<String>, value: Option<String>, limit: usize) {
-    let Some(value) = value
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-    else {
-        return;
-    };
-    if values.iter().any(|existing| existing == &value) {
-        return;
-    }
-    values.push(value);
-    if values.len() > limit {
-        values.drain(0..values.len().saturating_sub(limit));
-    }
-}
-
 fn push_unique_u8(values: &mut Vec<u8>, value: Option<u8>, limit: usize) {
     let Some(value) = value else {
         return;
@@ -1867,236 +1802,6 @@ fn push_unique_u8(values: &mut Vec<u8>, value: Option<u8>, limit: usize) {
     if values.len() > limit {
         values.truncate(limit);
     }
-}
-
-fn update_passive_dns_map(frame: &ParsedFrame, dns_ip_map: &mut HashMap<String, String>) {
-    let Some(domain) = frame
-        .dns_resp_name
-        .clone()
-        .or_else(|| frame.dns_qry_name.clone())
-        .filter(|value| !value.is_empty())
-    else {
-        return;
-    };
-
-    if let Some(ipv4) = frame.dns_a.clone().filter(|value| !value.is_empty()) {
-        dns_ip_map.insert(ipv4, domain.clone());
-    }
-    if let Some(ipv6) = frame.dns_aaaa.clone().filter(|value| !value.is_empty()) {
-        dns_ip_map.insert(ipv6, domain);
-    }
-}
-
-fn backfill_endpoint_domains(
-    endpoints: &mut [ClientEndpointRecord],
-    dns_ip_map: &HashMap<String, String>,
-    geo_lookup: &mut GeoIpLookup,
-) {
-    for endpoint in endpoints.iter_mut() {
-        if endpoint.domain.is_none() {
-            endpoint.domain = dns_ip_map.get(&endpoint.ip_address).cloned();
-        }
-        if endpoint.geo_city.is_none() {
-            endpoint.geo_city = geo_lookup.lookup_city_label(&endpoint.ip_address);
-        }
-    }
-}
-
-fn upsert_client_endpoint(
-    client: &mut ClientRecord,
-    ip_address: String,
-    protocol: &str,
-    port: Option<u16>,
-    domain: Option<String>,
-    geo_city: Option<String>,
-    now: chrono::DateTime<Utc>,
-) {
-    if ip_address.is_empty() {
-        return;
-    }
-
-    if let Some(existing) = client
-        .network_intel
-        .remote_endpoints
-        .iter_mut()
-        .find(|endpoint| {
-            endpoint.ip_address == ip_address
-                && endpoint.port == port
-                && endpoint.protocol.eq_ignore_ascii_case(protocol)
-        })
-    {
-        existing.last_seen = now;
-        existing.packet_count = existing.packet_count.saturating_add(1);
-        if existing.domain.is_none() && domain.is_some() {
-            existing.domain = domain;
-        }
-        if existing.geo_city.is_none() && geo_city.is_some() {
-            existing.geo_city = geo_city;
-        }
-        return;
-    }
-
-    client
-        .network_intel
-        .remote_endpoints
-        .push(ClientEndpointRecord {
-            ip_address,
-            protocol: protocol.to_string(),
-            port,
-            domain,
-            geo_city,
-            first_seen: now,
-            last_seen: now,
-            packet_count: 1,
-        });
-    client.network_intel.remote_endpoints.sort_by(|a, b| {
-        b.last_seen
-            .cmp(&a.last_seen)
-            .then_with(|| b.packet_count.cmp(&a.packet_count))
-    });
-    if client.network_intel.remote_endpoints.len() > 64 {
-        client.network_intel.remote_endpoints.truncate(64);
-    }
-}
-
-fn observe_open_network_activity(
-    client: &mut ClientRecord,
-    direction: ClientTrafficDirection,
-    frame: &ParsedFrame,
-    dns_ip_map: &HashMap<String, String>,
-    geo_lookup: &mut GeoIpLookup,
-    now: chrono::DateTime<Utc>,
-) {
-    match direction {
-        ClientTrafficDirection::Uplink => {
-            push_unique_string(
-                &mut client.network_intel.local_ipv4_addresses,
-                frame
-                    .dhcp_client_ip
-                    .clone()
-                    .or_else(|| frame.dhcp_requested_ip.clone())
-                    .or_else(|| frame.arp_src_ipv4.clone())
-                    .or_else(|| frame.ip_src.clone()),
-                16,
-            );
-            push_unique_string(
-                &mut client.network_intel.local_ipv6_addresses,
-                frame.ipv6_src.clone(),
-                16,
-            );
-        }
-        ClientTrafficDirection::Downlink => {
-            push_unique_string(
-                &mut client.network_intel.local_ipv4_addresses,
-                frame
-                    .dhcp_your_ip
-                    .clone()
-                    .or_else(|| frame.arp_dst_ipv4.clone())
-                    .or_else(|| frame.ip_dst.clone()),
-                16,
-            );
-            push_unique_string(
-                &mut client.network_intel.local_ipv6_addresses,
-                frame.ipv6_dst.clone(),
-                16,
-            );
-        }
-        ClientTrafficDirection::Unknown => {}
-    }
-
-    push_unique_string(
-        &mut client.network_intel.local_ipv4_addresses,
-        frame.dhcp_client_ip.clone(),
-        16,
-    );
-    push_unique_string(
-        &mut client.network_intel.local_ipv4_addresses,
-        frame.dhcp_your_ip.clone(),
-        16,
-    );
-    push_unique_string(
-        &mut client.network_intel.dhcp_hostnames,
-        frame.dhcp_hostname.clone(),
-        16,
-    );
-    push_unique_string(
-        &mut client.network_intel.dhcp_fqdns,
-        frame.dhcp_fqdn.clone(),
-        16,
-    );
-    push_unique_string(
-        &mut client.network_intel.dhcp_vendor_classes,
-        frame.dhcp_vendor_class_id.clone(),
-        16,
-    );
-    push_unique_string(
-        &mut client.network_intel.dns_names,
-        frame.dns_qry_name.clone(),
-        32,
-    );
-    push_unique_string(
-        &mut client.network_intel.dns_names,
-        frame.dns_resp_name.clone(),
-        32,
-    );
-
-    let (remote_ip, remote_port, protocol) = match direction {
-        ClientTrafficDirection::Uplink => (
-            frame
-                .ip_dst
-                .clone()
-                .or_else(|| frame.ipv6_dst.clone())
-                .or_else(|| frame.arp_dst_ipv4.clone()),
-            frame.tcp_dstport.or(frame.udp_dstport),
-            if frame.tcp_dstport.is_some() {
-                "TCP"
-            } else if frame.udp_dstport.is_some() {
-                "UDP"
-            } else if frame.arp_dst_ipv4.is_some() {
-                "ARP"
-            } else {
-                "IP"
-            },
-        ),
-        ClientTrafficDirection::Downlink => (
-            frame
-                .ip_src
-                .clone()
-                .or_else(|| frame.ipv6_src.clone())
-                .or_else(|| frame.arp_src_ipv4.clone()),
-            frame.tcp_srcport.or(frame.udp_srcport),
-            if frame.tcp_srcport.is_some() {
-                "TCP"
-            } else if frame.udp_srcport.is_some() {
-                "UDP"
-            } else if frame.arp_src_ipv4.is_some() {
-                "ARP"
-            } else {
-                "IP"
-            },
-        ),
-        ClientTrafficDirection::Unknown => (None, None, "IP"),
-    };
-
-    if let Some(remote_ip) = remote_ip {
-        let domain = dns_ip_map.get(&remote_ip).cloned();
-        let geo_city = geo_lookup.lookup_city_label(&remote_ip);
-        upsert_client_endpoint(
-            client,
-            remote_ip,
-            protocol,
-            remote_port,
-            domain,
-            geo_city,
-            now,
-        );
-    }
-
-    backfill_endpoint_domains(
-        &mut client.network_intel.remote_endpoints,
-        dns_ip_map,
-        geo_lookup,
-    );
 }
 
 fn run_channel_control_loop(
@@ -2398,26 +2103,6 @@ struct ParsedFrame {
     reason_code: Option<u16>,
     listen_interval: Option<u16>,
     pmkid_count: Option<u16>,
-    ip_src: Option<String>,
-    ip_dst: Option<String>,
-    ipv6_src: Option<String>,
-    ipv6_dst: Option<String>,
-    tcp_srcport: Option<u16>,
-    tcp_dstport: Option<u16>,
-    udp_srcport: Option<u16>,
-    udp_dstport: Option<u16>,
-    arp_src_ipv4: Option<String>,
-    arp_dst_ipv4: Option<String>,
-    dns_qry_name: Option<String>,
-    dns_resp_name: Option<String>,
-    dns_a: Option<String>,
-    dns_aaaa: Option<String>,
-    dhcp_hostname: Option<String>,
-    dhcp_fqdn: Option<String>,
-    dhcp_vendor_class_id: Option<String>,
-    dhcp_requested_ip: Option<String>,
-    dhcp_client_ip: Option<String>,
-    dhcp_your_ip: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2442,26 +2127,6 @@ struct TSharkParseLayout {
     has_reason_code_field: bool,
     has_listen_interval_field: bool,
     has_pmkid_count_field: bool,
-    has_ip_src_field: bool,
-    has_ip_dst_field: bool,
-    has_ipv6_src_field: bool,
-    has_ipv6_dst_field: bool,
-    has_tcp_srcport_field: bool,
-    has_tcp_dstport_field: bool,
-    has_udp_srcport_field: bool,
-    has_udp_dstport_field: bool,
-    has_arp_src_ipv4_field: bool,
-    has_arp_dst_ipv4_field: bool,
-    has_dns_qry_name_field: bool,
-    has_dns_resp_name_field: bool,
-    has_dns_a_field: bool,
-    has_dns_aaaa_field: bool,
-    has_dhcp_hostname_field: bool,
-    has_dhcp_fqdn_field: bool,
-    has_dhcp_vendor_class_field: bool,
-    has_dhcp_requested_ip_field: bool,
-    has_dhcp_client_ip_field: bool,
-    has_dhcp_your_ip_field: bool,
 }
 
 fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFrame> {
@@ -2487,27 +2152,7 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
         + usize::from(layout.has_status_code_field)
         + usize::from(layout.has_reason_code_field)
         + usize::from(layout.has_listen_interval_field)
-        + usize::from(layout.has_pmkid_count_field)
-        + usize::from(layout.has_ip_src_field)
-        + usize::from(layout.has_ip_dst_field)
-        + usize::from(layout.has_ipv6_src_field)
-        + usize::from(layout.has_ipv6_dst_field)
-        + usize::from(layout.has_tcp_srcport_field)
-        + usize::from(layout.has_tcp_dstport_field)
-        + usize::from(layout.has_udp_srcport_field)
-        + usize::from(layout.has_udp_dstport_field)
-        + usize::from(layout.has_arp_src_ipv4_field)
-        + usize::from(layout.has_arp_dst_ipv4_field)
-        + usize::from(layout.has_dns_qry_name_field)
-        + usize::from(layout.has_dns_resp_name_field)
-        + usize::from(layout.has_dns_a_field)
-        + usize::from(layout.has_dns_aaaa_field)
-        + usize::from(layout.has_dhcp_hostname_field)
-        + usize::from(layout.has_dhcp_fqdn_field)
-        + usize::from(layout.has_dhcp_vendor_class_field)
-        + usize::from(layout.has_dhcp_requested_ip_field)
-        + usize::from(layout.has_dhcp_client_ip_field)
-        + usize::from(layout.has_dhcp_your_ip_field);
+        + usize::from(layout.has_pmkid_count_field);
     if fields.len() < required {
         return None;
     }
@@ -2676,147 +2321,7 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
         None
     };
     let pmkid_count = if layout.has_pmkid_count_field {
-        let v = parse_opt_u16(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let ip_src = if layout.has_ip_src_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let ip_dst = if layout.has_ip_dst_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let ipv6_src = if layout.has_ipv6_src_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let ipv6_dst = if layout.has_ipv6_dst_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let tcp_srcport = if layout.has_tcp_srcport_field {
-        let v = parse_opt_u16(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let tcp_dstport = if layout.has_tcp_dstport_field {
-        let v = parse_opt_u16(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let udp_srcport = if layout.has_udp_srcport_field {
-        let v = parse_opt_u16(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let udp_dstport = if layout.has_udp_dstport_field {
-        let v = parse_opt_u16(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let arp_src_ipv4 = if layout.has_arp_src_ipv4_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let arp_dst_ipv4 = if layout.has_arp_dst_ipv4_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let dns_qry_name = if layout.has_dns_qry_name_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let dns_resp_name = if layout.has_dns_resp_name_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let dns_a = if layout.has_dns_a_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let dns_aaaa = if layout.has_dns_aaaa_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let dhcp_hostname = if layout.has_dhcp_hostname_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let dhcp_fqdn = if layout.has_dhcp_fqdn_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let dhcp_vendor_class_id = if layout.has_dhcp_vendor_class_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let dhcp_requested_ip = if layout.has_dhcp_requested_ip_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let dhcp_client_ip = if layout.has_dhcp_client_ip_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
-        i += 1;
-        v
-    } else {
-        None
-    };
-    let dhcp_your_ip = if layout.has_dhcp_your_ip_field {
-        parse_opt_string(fields.get(i).copied().unwrap_or(""))
+        parse_opt_u16(fields.get(i).copied().unwrap_or(""))
     } else {
         None
     };
@@ -2853,26 +2358,6 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
         reason_code,
         listen_interval,
         pmkid_count,
-        ip_src,
-        ip_dst,
-        ipv6_src,
-        ipv6_dst,
-        tcp_srcport,
-        tcp_dstport,
-        udp_srcport,
-        udp_dstport,
-        arp_src_ipv4,
-        arp_dst_ipv4,
-        dns_qry_name,
-        dns_resp_name,
-        dns_a,
-        dns_aaaa,
-        dhcp_hostname,
-        dhcp_fqdn,
-        dhcp_vendor_class_id,
-        dhcp_requested_ip,
-        dhcp_client_ip,
-        dhcp_your_ip,
     })
 }
 
@@ -3094,98 +2579,4 @@ pub fn rssi_to_tone_hz(rssi_dbm: i32) -> u32 {
     let normalized = (clamped + 100) as f32 / 70.0;
     let hz = 120.0 + normalized * (2300.0 - 120.0);
     hz.round() as u32
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn open_network_activity_updates_client_network_intel() {
-        let now = Utc::now();
-        let mut client = ClientRecord::new("AA:BB:CC:DD:EE:FF", now);
-        let mut dns_ip_map = HashMap::new();
-        dns_ip_map.insert("93.184.216.34".to_string(), "example.com".to_string());
-        let mut geo_lookup = GeoIpLookup::new();
-        let frame = ParsedFrame {
-            epoch: None,
-            frame_len: Some(128),
-            bssid: Some("11:22:33:44:55:66".to_string()),
-            sa: Some(client.mac.clone()),
-            da: Some("11:22:33:44:55:66".to_string()),
-            ssid: None,
-            rssi: Some(-42),
-            channel: Some(6),
-            frequency: Some(2437),
-            fc_type: Some(2),
-            subtype: Some(0),
-            eapol_msg: None,
-            rsn_version: None,
-            protected: false,
-            country_code: None,
-            beacon_tsf_us: None,
-            capability_privacy: None,
-            rsn_akm_type: None,
-            rsn_cipher_type: None,
-            rsn_mfpc: None,
-            rsn_mfpr: None,
-            wpa_version: None,
-            wpa_akm_type: None,
-            wpa_cipher_type: None,
-            retry: Some(true),
-            power_save: Some(true),
-            qos_priority: Some(5),
-            status_code: None,
-            reason_code: None,
-            listen_interval: Some(10),
-            pmkid_count: Some(1),
-            ip_src: Some("192.168.1.25".to_string()),
-            ip_dst: Some("93.184.216.34".to_string()),
-            ipv6_src: None,
-            ipv6_dst: None,
-            tcp_srcport: Some(49152),
-            tcp_dstport: Some(443),
-            udp_srcport: None,
-            udp_dstport: None,
-            arp_src_ipv4: None,
-            arp_dst_ipv4: None,
-            dns_qry_name: Some("example.com".to_string()),
-            dns_resp_name: None,
-            dns_a: None,
-            dns_aaaa: None,
-            dhcp_hostname: Some("phone".to_string()),
-            dhcp_fqdn: Some("phone.lan".to_string()),
-            dhcp_vendor_class_id: Some("android-dhcp-13".to_string()),
-            dhcp_requested_ip: Some("192.168.1.25".to_string()),
-            dhcp_client_ip: None,
-            dhcp_your_ip: None,
-        };
-
-        observe_open_network_activity(
-            &mut client,
-            ClientTrafficDirection::Uplink,
-            &frame,
-            &dns_ip_map,
-            &mut geo_lookup,
-            now,
-        );
-
-        assert!(client
-            .network_intel
-            .local_ipv4_addresses
-            .contains(&"192.168.1.25".to_string()));
-        assert!(client
-            .network_intel
-            .dhcp_hostnames
-            .contains(&"phone".to_string()));
-        assert!(client
-            .network_intel
-            .dns_names
-            .contains(&"example.com".to_string()));
-        assert_eq!(client.network_intel.remote_endpoints.len(), 1);
-        let endpoint = &client.network_intel.remote_endpoints[0];
-        assert_eq!(endpoint.ip_address, "93.184.216.34");
-        assert_eq!(endpoint.port, Some(443));
-        assert_eq!(endpoint.domain.as_deref(), Some("example.com"));
-    }
 }

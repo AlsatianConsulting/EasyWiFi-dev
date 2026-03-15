@@ -60,27 +60,9 @@ pub struct WpsInfo {
     pub serial_number: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientEndpointRecord {
-    pub ip_address: String,
-    pub protocol: String,
-    pub port: Option<u16>,
-    pub domain: Option<String>,
-    pub geo_city: Option<String>,
-    pub first_seen: DateTime<Utc>,
-    pub last_seen: DateTime<Utc>,
-    pub packet_count: u64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct ClientNetworkIntel {
-    pub local_ipv4_addresses: Vec<String>,
-    pub local_ipv6_addresses: Vec<String>,
-    pub dhcp_hostnames: Vec<String>,
-    pub dhcp_fqdns: Vec<String>,
-    pub dhcp_vendor_classes: Vec<String>,
-    pub dns_names: Vec<String>,
-    pub remote_endpoints: Vec<ClientEndpointRecord>,
     pub packet_mix: PacketTypeBreakdown,
     pub uplink_bytes: u64,
     pub downlink_bytes: u64,
@@ -122,6 +104,8 @@ pub struct AccessPointRecord {
     pub bssid: String,
     pub ssid: Option<String>,
     pub oui_manufacturer: Option<String>,
+    #[serde(default)]
+    pub source_adapters: Vec<String>,
     pub country_code_80211d: Option<String>,
     pub channel: Option<u16>,
     pub frequency_mhz: Option<u32>,
@@ -146,6 +130,7 @@ impl AccessPointRecord {
             bssid: bssid.into(),
             ssid: None,
             oui_manufacturer: None,
+            source_adapters: Vec::new(),
             country_code_80211d: None,
             channel: None,
             frequency_mhz: None,
@@ -170,6 +155,8 @@ impl AccessPointRecord {
 pub struct ClientRecord {
     pub mac: String,
     pub oui_manufacturer: Option<String>,
+    #[serde(default)]
+    pub source_adapters: Vec<String>,
     pub associated_ap: Option<String>,
     pub data_transferred_bytes: u64,
     pub rssi_dbm: Option<i32>,
@@ -188,6 +175,7 @@ impl ClientRecord {
         Self {
             mac: mac.into(),
             oui_manufacturer: None,
+            source_adapters: Vec::new(),
             associated_ap: None,
             data_transferred_bytes: 0,
             rssi_dbm: None,
@@ -226,6 +214,8 @@ pub struct BluetoothDeviceRecord {
     pub address_type: Option<String>,
     pub transport: String,
     pub oui_manufacturer: Option<String>,
+    #[serde(default)]
+    pub source_adapters: Vec<String>,
     pub advertised_name: Option<String>,
     pub alias: Option<String>,
     pub device_type: Option<String>,
@@ -248,6 +238,7 @@ impl BluetoothDeviceRecord {
             address_type: None,
             transport: "Unknown".to_string(),
             oui_manufacturer: None,
+            source_adapters: Vec::new(),
             advertised_name: None,
             alias: None,
             device_type: None,

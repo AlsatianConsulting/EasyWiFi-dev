@@ -3,26 +3,32 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-pub fn default_geoip_city_db_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("GeoLite2-City.mmdb")
-}
-
 pub fn default_oui_source_path() -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for candidate in [
+    let mut candidates = Vec::new();
+    if let Some(base) = app_data_root() {
+        candidates.push(base.join("manuf"));
+        candidates.push(base.join("oui.csv"));
+    }
+    candidates.extend([
+        PathBuf::from("/usr/share/wirelessexplorer/manuf"),
+        PathBuf::from("/usr/share/wirelessexplorer/oui.csv"),
+        PathBuf::from("/usr/share/wirelessexplorer/assets/oui.csv"),
+        PathBuf::from("/usr/share/WirelessExplorer/manuf"),
+        PathBuf::from("/usr/share/WirelessExplorer/oui.csv"),
+        PathBuf::from("/usr/share/WirelessExplorer/assets/oui.csv"),
+        PathBuf::from("/usr/share/wireshark/manuf"),
         root.join("manuf"),
         root.join("oui.csv"),
         root.join("assets").join("oui.csv"),
-    ] {
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    root.join("manuf")
+    ]);
+    first_existing_or(candidates, app_data_root().unwrap_or(root).join("manuf"))
 }
 
 pub fn default_output_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("output")
+    app_data_root()
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .join("output")
 }
 
 pub fn default_show_status_bar() -> bool {
@@ -53,6 +59,10 @@ pub fn default_bluetooth_scan_pause_ms() -> u64 {
     500
 }
 
+pub fn default_bluetooth_scan_source() -> BluetoothScanSource {
+    BluetoothScanSource::Bluez
+}
+
 pub fn default_enable_handshake_alerts() -> bool {
     true
 }
@@ -75,6 +85,10 @@ pub fn default_auto_create_exports_on_startup() -> bool {
 
 pub fn default_auto_check_oui_updates() -> bool {
     true
+}
+
+pub fn default_wifi_packet_header_mode() -> WifiPacketHeaderMode {
+    WifiPacketHeaderMode::Radiotap
 }
 
 pub fn default_bluetooth_identity_expanded() -> bool {
@@ -106,7 +120,30 @@ pub fn default_bluetooth_descriptors_expanded() -> bool {
 }
 
 pub fn settings_file_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("simplestg-settings.json")
+    app_config_root()
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .join("wirelessexplorer-settings.json")
+}
+
+pub fn legacy_settings_file_path() -> PathBuf {
+    app_config_root()
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .join("simplestg-settings.json")
+}
+
+fn app_data_root() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|path| path.join("WirelessExplorer"))
+}
+
+fn app_config_root() -> Option<PathBuf> {
+    dirs::config_dir().map(|path| path.join("WirelessExplorer"))
+}
+
+fn first_existing_or(candidates: Vec<PathBuf>, fallback: PathBuf) -> PathBuf {
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.exists())
+        .unwrap_or(fallback)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -137,6 +174,15 @@ pub enum WatchlistDeviceType {
     #[default]
     Wifi,
     Bluetooth,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BluetoothScanSource {
+    #[default]
+    Bluez,
+    Ubertooth,
+    Both,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -372,31 +418,6 @@ pub fn default_ap_table_layout() -> TableLayout {
                 id: "pmkid_count".to_string(),
                 visible: false,
                 width_chars: 12,
-            },
-            TableColumnLayout {
-                id: "ipv4_addresses".to_string(),
-                visible: false,
-                width_chars: 24,
-            },
-            TableColumnLayout {
-                id: "ipv6_addresses".to_string(),
-                visible: false,
-                width_chars: 24,
-            },
-            TableColumnLayout {
-                id: "dhcp_hostnames".to_string(),
-                visible: false,
-                width_chars: 24,
-            },
-            TableColumnLayout {
-                id: "dns_names".to_string(),
-                visible: false,
-                width_chars: 24,
-            },
-            TableColumnLayout {
-                id: "remote_endpoints".to_string(),
-                visible: false,
-                width_chars: 28,
             },
         ],
     }
@@ -717,6 +738,14 @@ pub struct InterfaceSettings {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WifiPacketHeaderMode {
+    #[default]
+    Radiotap,
+    Ppi,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StreamProtocol {
     Tcp,
@@ -762,10 +791,10 @@ pub struct AppSettings {
     pub show_device_pane: bool,
     #[serde(default = "default_default_rows_per_page")]
     pub default_rows_per_page: usize,
-    #[serde(default = "default_geoip_city_db_path")]
-    pub geoip_city_db_path: PathBuf,
     #[serde(default = "default_oui_source_path")]
     pub oui_source_path: PathBuf,
+    #[serde(default = "default_wifi_packet_header_mode")]
+    pub wifi_packet_header_mode: WifiPacketHeaderMode,
     #[serde(default)]
     pub output_to_files: bool,
     #[serde(default = "default_output_root")]
@@ -774,8 +803,12 @@ pub struct AppSettings {
     pub interfaces: Vec<InterfaceSettings>,
     #[serde(default = "default_bluetooth_enabled")]
     pub bluetooth_enabled: bool,
+    #[serde(default = "default_bluetooth_scan_source")]
+    pub bluetooth_scan_source: BluetoothScanSource,
     #[serde(default)]
     pub bluetooth_controller: Option<String>,
+    #[serde(default)]
+    pub ubertooth_device: Option<String>,
     #[serde(default = "default_bluetooth_scan_timeout_secs")]
     pub bluetooth_scan_timeout_secs: u64,
     #[serde(default = "default_bluetooth_scan_pause_ms")]
@@ -813,13 +846,15 @@ impl Default for AppSettings {
             show_detail_pane: default_show_detail_pane(),
             show_device_pane: default_show_device_pane(),
             default_rows_per_page: default_default_rows_per_page(),
-            geoip_city_db_path: default_geoip_city_db_path(),
             oui_source_path: default_oui_source_path(),
+            wifi_packet_header_mode: default_wifi_packet_header_mode(),
             output_to_files: false,
             output_root: default_output_root(),
             interfaces: Vec::new(),
             bluetooth_enabled: default_bluetooth_enabled(),
+            bluetooth_scan_source: default_bluetooth_scan_source(),
             bluetooth_controller: None,
+            ubertooth_device: None,
             bluetooth_scan_timeout_secs: default_bluetooth_scan_timeout_secs(),
             bluetooth_scan_pause_ms: default_bluetooth_scan_pause_ms(),
             gps: GpsSettings::Disabled,
@@ -840,16 +875,29 @@ impl Default for AppSettings {
 
 impl AppSettings {
     pub fn load_from_disk() -> Result<Self> {
-        let path = settings_file_path();
-        let raw = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read settings file {}", path.display()))?;
+        let primary_path = settings_file_path();
+        let legacy_path = legacy_settings_file_path();
+        let read_path = if primary_path.exists() {
+            primary_path
+        } else if legacy_path.exists() {
+            legacy_path
+        } else {
+            primary_path
+        };
+        let raw = fs::read_to_string(&read_path)
+            .with_context(|| format!("failed to read settings file {}", read_path.display()))?;
         let settings = serde_json::from_str::<Self>(&raw)
-            .with_context(|| format!("failed to parse settings file {}", path.display()))?;
+            .with_context(|| format!("failed to parse settings file {}", read_path.display()))?;
         Ok(settings)
     }
 
     pub fn save_to_disk(&self) -> Result<()> {
         let path = settings_file_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create settings directory {}", parent.display())
+            })?;
+        }
         let mut sanitized = self.clone();
         for iface in &mut sanitized.interfaces {
             iface.monitor_interface_name = None;
@@ -871,11 +919,20 @@ mod tests {
         let path = settings_file_path();
         let backup_path = path.with_extension("json.test-backup");
         let original = fs::read(&path).ok();
+        let legacy_path = legacy_settings_file_path();
+        let legacy_backup_path = legacy_path.with_extension("json.test-backup");
+        let legacy_original = fs::read(&legacy_path).ok();
         if backup_path.exists() {
             let _ = fs::remove_file(&backup_path);
         }
+        if legacy_backup_path.exists() {
+            let _ = fs::remove_file(&legacy_backup_path);
+        }
         if original.is_some() {
             fs::rename(&path, &backup_path).expect("backup current settings file");
+        }
+        if legacy_original.is_some() {
+            fs::rename(&legacy_path, &legacy_backup_path).expect("backup legacy settings file");
         }
 
         let mut settings = AppSettings::default();
@@ -896,6 +953,11 @@ mod tests {
         let _ = fs::remove_file(&path);
         if backup_path.exists() {
             fs::rename(&backup_path, &path).expect("restore original settings file");
+        }
+        let _ = fs::remove_file(&legacy_path);
+        if legacy_backup_path.exists() {
+            fs::rename(&legacy_backup_path, &legacy_path)
+                .expect("restore original legacy settings file");
         }
     }
 }

@@ -7,3 +7,17 @@ Cargo.lock
 *.pcapng
 output/
 .DS_Store
+/.cache/
+/.local-link-libs/
+/.pkgconfig-stub/
+/Processed/
+/session_*/
+/*.png
+/*.bt
+/*.log
+/simplestg-settings.json
+/simplestg-settings.json.bak-*
+/continuity/transfer/*.bundle
+/continuity/transfer/*.tar.gz
+/continuity/transfer/SHA256SUMS
+/dist/

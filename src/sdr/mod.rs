@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
+#[cfg(target_family = "unix")]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -389,6 +391,21 @@ struct RunningDecoder {
 impl RunningDecoder {
     fn stop(mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        #[cfg(target_family = "unix")]
+        {
+            let pid = self.child.id() as i32;
+            if pid > 0 {
+                unsafe {
+                    libc::kill(-pid, libc::SIGTERM);
+                }
+                thread::sleep(Duration::from_millis(150));
+                if self.child.try_wait().ok().flatten().is_none() {
+                    unsafe {
+                        libc::kill(-pid, libc::SIGKILL);
+                    }
+                }
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         if let Some(handle) = self.stdout_handle.take() {
@@ -540,7 +557,9 @@ fn run_sdr_loop(
     )));
     let _ = sender.send(SdrEvent::FrequencyChanged(center_freq_hz));
     let _ = sender.send(SdrEvent::SquelchChanged(squelch_dbm));
-    let _ = sender.send(SdrEvent::DependencyStatus(check_dependencies()));
+    let _ = sender.send(SdrEvent::DependencyStatus(check_dependencies_for_plugins(
+        &plugin_defs,
+    )));
     let _ = try_set_bias_tee(hardware, bias_tee_enabled, &sender);
 
     let mut last_frame_at = Instant::now() - Duration::from_millis(refresh_ms);
@@ -734,10 +753,12 @@ fn run_sdr_loop(
                     sweep_paused = false;
                 }
                 SdrCommand::RefreshDependencies => {
-                    let _ = sender.send(SdrEvent::DependencyStatus(check_dependencies()));
+                    let _ = sender.send(SdrEvent::DependencyStatus(
+                        check_dependencies_for_plugins(&plugin_defs),
+                    ));
                 }
                 SdrCommand::InstallMissingDependencies => {
-                    let status_before = check_dependencies();
+                    let status_before = check_dependencies_for_plugins(&plugin_defs);
                     let missing = status_before
                         .iter()
                         .filter(|entry| !entry.installed)
@@ -772,7 +793,9 @@ fn run_sdr_loop(
                             }
                         }
                     }
-                    let _ = sender.send(SdrEvent::DependencyStatus(check_dependencies()));
+                    let _ = sender.send(SdrEvent::DependencyStatus(
+                        check_dependencies_for_plugins(&plugin_defs),
+                    ));
                 }
                 SdrCommand::Shutdown => {
                     stop_flag.store(true, Ordering::Relaxed);
@@ -941,7 +964,7 @@ fn resolve_decoder_command_line(
         }
         SdrDecoderKind::Acars => {
             if command_exists("acarsdec") {
-                Some("acarsdec -A -N -f {freq_hz}".to_string())
+                resolve_acarsdec_command_line(freq_hz, hardware)
             } else if command_exists("acars_parser") {
                 Some("acars_parser".to_string())
             } else {
@@ -1015,6 +1038,14 @@ fn resolve_decoder_command_line(
     })
 }
 
+fn resolve_acarsdec_command_line(freq_hz: u64, hardware: SdrHardware) -> Option<String> {
+    let freq_mhz = (freq_hz as f64) / 1_000_000.0;
+    match hardware {
+        SdrHardware::RtlSdr => Some(format!("acarsdec -A -o 4 -r 0 {freq_mhz:.3}")),
+        _ => None,
+    }
+}
+
 fn spawn_decoder(
     decoder: SdrDecoderKind,
     freq_hz: u64,
@@ -1030,6 +1061,8 @@ fn spawn_decoder(
         .arg(command_line.clone())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(target_family = "unix")]
+    command.process_group(0);
 
     let mut child = command
         .spawn()
@@ -1749,6 +1782,12 @@ fn command_exists_any_owned(commands: &[String]) -> bool {
     commands.iter().any(|command| command_exists(command))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DependencyDescriptor {
+    tool: String,
+    package_hint: String,
+}
+
 #[derive(Debug, Clone)]
 struct DependencyInstallPlan {
     apt_candidates: Vec<String>,
@@ -1942,6 +1981,69 @@ fn dependency_install_plan(package_hint: &str) -> DependencyInstallPlan {
             ],
             source_install_command: None,
         },
+        "freedv" => DependencyInstallPlan {
+            apt_candidates: vec!["freedv".to_string()],
+            pip_candidates: Vec::new(),
+            verify_commands: vec!["freedv_rx".to_string(), "freedv_tx".to_string()],
+            source_install_command: None,
+        },
+        "leandvb" => DependencyInstallPlan {
+            apt_candidates: vec!["leandvb".to_string(), "leansdr".to_string()],
+            pip_candidates: Vec::new(),
+            verify_commands: vec!["leandvb".to_string()],
+            source_install_command: Some("sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y git build-essential libfftw3-dev libusb-1.0-0-dev && tmp=\"$(mktemp -d)\" && git clone --depth 1 https://github.com/pabr/leansdr.git \"$tmp/leansdr\" && make -C \"$tmp/leansdr/src\" && sudo -n install -m 0755 \"$tmp/leansdr/src/leandvb\" /usr/local/bin/leandvb".to_string()),
+        },
+        "tvheadend" => DependencyInstallPlan {
+            apt_candidates: vec!["tvheadend".to_string()],
+            pip_candidates: Vec::new(),
+            verify_commands: vec!["tvheadend".to_string()],
+            source_install_command: None,
+        },
+        "gr-lora" => DependencyInstallPlan {
+            apt_candidates: vec!["gr-lora".to_string()],
+            pip_candidates: Vec::new(),
+            verify_commands: vec!["lora_receive_file".to_string()],
+            source_install_command: Some("sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y git cmake g++ swig python3-numpy libgmp-dev libmpfr-dev libboost-all-dev gnuradio-dev && tmp=\"$(mktemp -d)\" && git clone --depth 1 https://github.com/rpp0/gr-lora.git \"$tmp/gr-lora\" && cmake -S \"$tmp/gr-lora\" -B \"$tmp/gr-lora/build\" && cmake --build \"$tmp/gr-lora/build\" -j\"$(nproc)\" && sudo -n cmake --install \"$tmp/gr-lora/build\" && sudo -n ldconfig".to_string()),
+        },
+        "m17-tools" => DependencyInstallPlan {
+            apt_candidates: vec!["m17-tools".to_string(), "m17-demod".to_string()],
+            pip_candidates: Vec::new(),
+            verify_commands: vec!["m17-demod".to_string()],
+            source_install_command: None,
+        },
+        "jaero" => DependencyInstallPlan {
+            apt_candidates: vec!["jaero".to_string()],
+            pip_candidates: Vec::new(),
+            verify_commands: vec!["jaero".to_string()],
+            source_install_command: None,
+        },
+        "osmo-tetra" => DependencyInstallPlan {
+            apt_candidates: vec!["osmo-tetra".to_string(), "tetra-rx".to_string()],
+            pip_candidates: Vec::new(),
+            verify_commands: vec!["tetra-rx".to_string(), "osmo-tetra".to_string()],
+            source_install_command: None,
+        },
+        "dump978" => DependencyInstallPlan {
+            apt_candidates: vec!["dump978-fa".to_string(), "dump978".to_string()],
+            pip_candidates: Vec::new(),
+            verify_commands: vec!["dump978-fa".to_string(), "dump978".to_string()],
+            source_install_command: None,
+        },
+        "srsran" => DependencyInstallPlan {
+            apt_candidates: vec![
+                "srsran".to_string(),
+                "srsran-4g".to_string(),
+                "srsran-5g".to_string(),
+                "lte-cell-scanner".to_string(),
+            ],
+            pip_candidates: Vec::new(),
+            verify_commands: vec![
+                "srsue".to_string(),
+                "srsenb".to_string(),
+                "lte-cell-scanner".to_string(),
+            ],
+            source_install_command: None,
+        },
         other => DependencyInstallPlan {
             apt_candidates: vec![other.to_string()],
             pip_candidates: Vec::new(),
@@ -1951,44 +2053,180 @@ fn dependency_install_plan(package_hint: &str) -> DependencyInstallPlan {
     }
 }
 
-fn sdr_dependency_definitions() -> Vec<(&'static str, &'static str)> {
+fn base_sdr_dependency_definitions() -> Vec<DependencyDescriptor> {
     vec![
-        ("rtl_433", "rtl-433"),
-        ("dump1090/readsb", "dump1090-mutability"),
-        ("acarsdec/acars_parser", "acarsdec"),
-        ("rtl_ais/aisdecoder", "ais-tools"),
-        ("multimon-ng", "multimon-ng"),
-        ("rtl_fm", "rtl-sdr"),
-        ("iridium-extractor", "iridium-toolkit"),
-        ("grgsm_livemon_headless/cell_search", "gr-gsm"),
-        ("hackrf_info", "hackrf"),
-        ("bladeRF-cli", "bladerf"),
-        ("uhd_find_devices", "uhd-host"),
-        ("gqrx", "gqrx-sdr"),
-        ("direwolf", "direwolf"),
-        ("dsd", "dsd"),
-        ("welle-cli", "welle.io"),
-        ("sox", "sox"),
-        ("csdr", "csdr"),
-        ("satdump", "satdump"),
-        ("radiosonde_auto_rx", "radiosonde-auto-rx"),
-        ("op25", "op25"),
-        ("dsd-fme", "dsd-fme"),
-        ("multipsk/fldigi", "fldigi"),
-        ("DJI DroneID decoder", "gr-droneid"),
-        ("OpenDroneID decoder", "opendroneid"),
-        ("Inmarsat STD-C decoder", "stdc-decoder"),
+        DependencyDescriptor {
+            tool: "rtl_433".to_string(),
+            package_hint: "rtl-433".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "dump1090/readsb".to_string(),
+            package_hint: "dump1090-mutability".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "acarsdec/acars_parser".to_string(),
+            package_hint: "acarsdec".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "rtl_ais/aisdecoder".to_string(),
+            package_hint: "ais-tools".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "multimon-ng".to_string(),
+            package_hint: "multimon-ng".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "rtl_fm".to_string(),
+            package_hint: "rtl-sdr".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "iridium-extractor".to_string(),
+            package_hint: "iridium-toolkit".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "grgsm_livemon_headless/cell_search".to_string(),
+            package_hint: "gr-gsm".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "hackrf_info".to_string(),
+            package_hint: "hackrf".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "bladeRF-cli".to_string(),
+            package_hint: "bladerf".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "uhd_find_devices".to_string(),
+            package_hint: "uhd-host".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "gqrx".to_string(),
+            package_hint: "gqrx-sdr".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "direwolf".to_string(),
+            package_hint: "direwolf".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "dsd".to_string(),
+            package_hint: "dsd".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "welle-cli".to_string(),
+            package_hint: "welle.io".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "sox".to_string(),
+            package_hint: "sox".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "csdr".to_string(),
+            package_hint: "csdr".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "satdump".to_string(),
+            package_hint: "satdump".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "radiosonde_auto_rx".to_string(),
+            package_hint: "radiosonde-auto-rx".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "op25".to_string(),
+            package_hint: "op25".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "dsd-fme".to_string(),
+            package_hint: "dsd-fme".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "multipsk/fldigi".to_string(),
+            package_hint: "fldigi".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "DJI DroneID decoder".to_string(),
+            package_hint: "gr-droneid".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "OpenDroneID decoder".to_string(),
+            package_hint: "opendroneid".to_string(),
+        },
+        DependencyDescriptor {
+            tool: "Inmarsat STD-C decoder".to_string(),
+            package_hint: "stdc-decoder".to_string(),
+        },
     ]
 }
 
-fn check_dependencies() -> Vec<SdrDependencyStatus> {
-    sdr_dependency_definitions()
+fn plugin_dependency_descriptors(plugin_defs: &[SdrPluginDefinition]) -> Vec<DependencyDescriptor> {
+    plugin_defs
+        .iter()
+        .flat_map(|plugin| match plugin.id.as_str() {
+            "freedv" => vec![DependencyDescriptor {
+                tool: "FreeDV decoder".to_string(),
+                package_hint: "freedv".to_string(),
+            }],
+            "dvb_s" | "dvb_s2" => vec![DependencyDescriptor {
+                tool: "DVB-S/DVB-S2 decoder".to_string(),
+                package_hint: "leandvb".to_string(),
+            }],
+            "ntsc" | "pal" => vec![DependencyDescriptor {
+                tool: "Analog video monitor".to_string(),
+                package_hint: "tvheadend".to_string(),
+            }],
+            "lora" => vec![DependencyDescriptor {
+                tool: "LoRa decoder".to_string(),
+                package_hint: "gr-lora".to_string(),
+            }],
+            "m17" => vec![DependencyDescriptor {
+                tool: "M17 decoder".to_string(),
+                package_hint: "m17-tools".to_string(),
+            }],
+            "inmarsat_aero" => vec![DependencyDescriptor {
+                tool: "JAERO".to_string(),
+                package_hint: "jaero".to_string(),
+            }],
+            "tetra" => vec![DependencyDescriptor {
+                tool: "TETRA metadata decoder".to_string(),
+                package_hint: "osmo-tetra".to_string(),
+            }],
+            "adsb_uat978" => vec![DependencyDescriptor {
+                tool: "dump978".to_string(),
+                package_hint: "dump978".to_string(),
+            }],
+            "lte_meta" => vec![DependencyDescriptor {
+                tool: "LTE metadata scanner".to_string(),
+                package_hint: "srsran".to_string(),
+            }],
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn dependency_descriptors_with_plugins(
+    plugin_defs: &[SdrPluginDefinition],
+) -> Vec<DependencyDescriptor> {
+    let mut descriptors = base_sdr_dependency_definitions();
+    descriptors.extend(plugin_dependency_descriptors(plugin_defs));
+    let mut unique = Vec::with_capacity(descriptors.len());
+    for descriptor in descriptors {
+        if !unique.iter().any(|existing: &DependencyDescriptor| {
+            existing.tool == descriptor.tool && existing.package_hint == descriptor.package_hint
+        }) {
+            unique.push(descriptor);
+        }
+    }
+    unique
+}
+
+fn check_dependencies_for_plugins(plugin_defs: &[SdrPluginDefinition]) -> Vec<SdrDependencyStatus> {
+    dependency_descriptors_with_plugins(plugin_defs)
         .into_iter()
-        .map(|(tool, package_hint)| {
-            let plan = dependency_install_plan(package_hint);
+        .map(|descriptor| {
+            let plan = dependency_install_plan(&descriptor.package_hint);
             SdrDependencyStatus {
-                tool: tool.to_string(),
-                package_hint: package_hint.to_string(),
+                tool: descriptor.tool,
+                package_hint: descriptor.package_hint,
                 installed: command_exists_any_owned(&plan.verify_commands),
             }
         })
@@ -2267,5 +2505,89 @@ mod tests {
         assert_eq!(plan.apt_candidates, vec!["example-tool".to_string()]);
         assert_eq!(plan.verify_commands, vec!["example-tool".to_string()]);
         assert!(plan.pip_candidates.is_empty());
+    }
+
+    #[test]
+    fn acarsdec_command_line_uses_rtl_mode_with_mhz_frequency() {
+        let command = resolve_acarsdec_command_line(131_550_000, SdrHardware::RtlSdr)
+            .expect("rtl acars command");
+        assert_eq!(command, "acarsdec -A -o 4 -r 0 131.550");
+    }
+
+    #[test]
+    fn acarsdec_command_line_is_not_assumed_for_non_rtl_hardware() {
+        assert!(resolve_acarsdec_command_line(131_550_000, SdrHardware::HackRf).is_none());
+    }
+
+    #[test]
+    fn dependency_plan_leandvb_has_expected_verify_command() {
+        let plan = dependency_install_plan("leandvb");
+        assert!(plan
+            .verify_commands
+            .iter()
+            .any(|command| command == "leandvb"));
+        assert!(plan
+            .source_install_command
+            .as_deref()
+            .unwrap_or_default()
+            .contains("github.com/pabr/leansdr"));
+    }
+
+    #[test]
+    fn plugin_dependency_descriptors_add_plugin_specific_tools() {
+        let plugin_defs = vec![
+            SdrPluginDefinition {
+                id: "freedv".to_string(),
+                label: "FreeDV".to_string(),
+                command_template: "freedv_rx".to_string(),
+                protocol: Some("freedv".to_string()),
+            },
+            SdrPluginDefinition {
+                id: "dvb_s".to_string(),
+                label: "DVB-S".to_string(),
+                command_template: "leandvb".to_string(),
+                protocol: Some("dvb_s".to_string()),
+            },
+            SdrPluginDefinition {
+                id: "lte_meta".to_string(),
+                label: "LTE".to_string(),
+                command_template: "srsue".to_string(),
+                protocol: Some("lte".to_string()),
+            },
+        ];
+        let descriptors = dependency_descriptors_with_plugins(&plugin_defs);
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.tool == "FreeDV decoder" && descriptor.package_hint == "freedv"
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.tool == "DVB-S/DVB-S2 decoder" && descriptor.package_hint == "leandvb"
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.tool == "LTE metadata scanner" && descriptor.package_hint == "srsran"
+        }));
+    }
+
+    #[test]
+    fn duplicate_plugin_dependency_descriptors_are_deduplicated() {
+        let plugin_defs = vec![
+            SdrPluginDefinition {
+                id: "dvb_s".to_string(),
+                label: "DVB-S".to_string(),
+                command_template: "leandvb".to_string(),
+                protocol: Some("dvb_s".to_string()),
+            },
+            SdrPluginDefinition {
+                id: "dvb_s2".to_string(),
+                label: "DVB-S2".to_string(),
+                command_template: "leandvb".to_string(),
+                protocol: Some("dvb_s2".to_string()),
+            },
+        ];
+        let descriptors = dependency_descriptors_with_plugins(&plugin_defs);
+        let count = descriptors
+            .iter()
+            .filter(|descriptor| descriptor.package_hint == "leandvb")
+            .count();
+        assert_eq!(count, 1);
     }
 }
