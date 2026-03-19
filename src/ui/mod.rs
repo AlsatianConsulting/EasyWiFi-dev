@@ -4266,6 +4266,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ("freq".to_string(), "Freq".to_string(), 13),
             ("band".to_string(), "Band".to_string(), 14),
             ("posture".to_string(), "Encryption".to_string(), 12),
+            ("payload_parse".to_string(), "Payload Parse".to_string(), 14),
             ("coords".to_string(), "Coords".to_string(), 8),
             ("identifiers".to_string(), "Identifiers".to_string(), 20),
             ("summary".to_string(), "Summary".to_string(), 40),
@@ -8553,6 +8554,7 @@ fn sdr_satcom_table_header() -> Grid {
         ("Freq", 13),
         ("Band", 14),
         ("Encryption", 12),
+        ("Payload Parse", 14),
         ("Coords", 8),
         ("Identifiers", 20),
         ("Summary", 40),
@@ -8603,6 +8605,7 @@ fn sdr_satcom_row_column_value(row: &SdrSatcomObservation, column_id: &str) -> O
         "freq" => Some(row.freq_hz.to_string()),
         "band" => Some(row.band.clone()),
         "posture" => Some(row.encryption_posture.clone()),
+        "payload_parse" => Some(row.payload_parse_state.clone()),
         "coords" => Some(if row.has_coordinates {
             "Yes".to_string()
         } else {
@@ -8699,6 +8702,7 @@ fn refresh_sdr_satcom_list(
         line.append(&label_cell(row.freq_hz.to_string(), 13));
         line.append(&label_cell(row.band, 14));
         line.append(&label_cell(row.encryption_posture, 12));
+        line.append(&label_cell(row.payload_parse_state, 14));
         line.append(&label_cell(
             if row.has_coordinates {
                 "Yes".to_string()

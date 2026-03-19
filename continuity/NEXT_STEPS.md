@@ -43,12 +43,13 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 2. Validate center-frequency geiger + auto-squelch behavior with live RF input.
 3. Validate preset save/rename/delete/reorder/import/export workflow end-to-end on a fresh machine profile.
 4. Validate satcom no-payload redaction in live decoder runs (decode/map/satcom logs).
-5. Add map plotting for coordinate-bearing decoders.
-6. Validate map/satcom `message` + `raw` side-by-side logging in live decoder runs.
-7. Validate corrected ACARS runtime integration live.
-8. Validate ADS-B live and correlate with ACARS by aircraft identifier when possible.
-9. Expand non-RTL command pipelines for RTL-bound demodulators (AIS/POCSAG/DECT classes) so right-click demod selection has broader cross-hardware execution parity.
-10. Validate newly added non-RTL POCSAG/DECT fallback chain quality and tune audio/FM pipeline parameters per hardware.
+5. Validate live `inmarsat_stdc` built-in decoder path and parsed satcom payload-field extraction quality on-air.
+6. Add map plotting for coordinate-bearing decoders.
+7. Validate map/satcom `message` + `raw` side-by-side logging in live decoder runs.
+8. Validate corrected ACARS runtime integration live.
+9. Validate ADS-B live and correlate with ACARS by aircraft identifier when possible.
+10. Expand non-RTL command pipelines for RTL-bound demodulators (AIS/POCSAG/DECT classes) so right-click demod selection has broader cross-hardware execution parity.
+11. Validate newly added non-RTL POCSAG/DECT fallback chain quality and tune audio/FM pipeline parameters per hardware.
 
 ## Priority 4: requested SDR decoder backlog
 

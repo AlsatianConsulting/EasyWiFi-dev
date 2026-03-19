@@ -42,6 +42,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 22. Non-RTL fallback decode pipelines for POCSAG/DECT are now wired through capture-tool + csdr/sox/multimon chains when dependencies are present.
 23. Built-in SDR decoders now support hardware-specific plugin command overrides (`<decoder_id>_<hardware_id>` / `<decoder_id>__<hardware_id>`) for cross-device demod customization.
 24. Wi-Fi frame parsing is now an explicit opt-in setting (default off) with capture-only fallback and UI warnings about higher resource usage when enabled.
+25. Satcom observation pipeline now includes unencrypted payload field parsing metadata (`payload_parse_state`, normalized parsed fields) and a built-in Inmarsat STD-C decoder path (`inmarsat_stdc`) when compatible tools are installed.
 
 ### Bluetooth
 

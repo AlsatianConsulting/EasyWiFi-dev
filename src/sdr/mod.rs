@@ -147,6 +147,8 @@ pub struct SdrSatcomObservation {
     pub encryption_posture: String,
     pub has_coordinates: bool,
     pub identifier_hints: Vec<String>,
+    pub payload_parse_state: String,
+    pub payload_fields: HashMap<String, String>,
     pub summary: String,
     pub message: String,
     pub raw: String,
@@ -183,6 +185,7 @@ pub enum SdrDecoderKind {
     Ais,
     Pocsag,
     Iridium,
+    InmarsatStdc,
     Dect,
     GsmLte,
     Plugin {
@@ -202,6 +205,7 @@ impl SdrDecoderKind {
             Self::Ais => "ais".to_string(),
             Self::Pocsag => "pocsag".to_string(),
             Self::Iridium => "iridium".to_string(),
+            Self::InmarsatStdc => "inmarsat_stdc".to_string(),
             Self::Dect => "dect".to_string(),
             Self::GsmLte => "gsm_lte".to_string(),
             Self::Plugin { id, .. } => id.clone(),
@@ -216,6 +220,7 @@ impl SdrDecoderKind {
             Self::Ais => "AIS".to_string(),
             Self::Pocsag => "POCSAG".to_string(),
             Self::Iridium => "Iridium".to_string(),
+            Self::InmarsatStdc => "Inmarsat STD-C".to_string(),
             Self::Dect => "DECT".to_string(),
             Self::GsmLte => "GSM/LTE Metadata".to_string(),
             Self::Plugin { label, .. } => label.clone(),
@@ -230,6 +235,7 @@ impl SdrDecoderKind {
             Self::Ais => "ais",
             Self::Pocsag => "pocsag",
             Self::Iridium => "iridium",
+            Self::InmarsatStdc => "inmarsat_c",
             Self::Dect => "dect",
             Self::GsmLte => "gsm_lte",
             Self::Plugin { .. } => "plugin",
@@ -489,6 +495,7 @@ pub fn builtin_decoders_in_priority_order() -> Vec<SdrDecoderKind> {
         SdrDecoderKind::Ais,
         SdrDecoderKind::Pocsag,
         SdrDecoderKind::Iridium,
+        SdrDecoderKind::InmarsatStdc,
         SdrDecoderKind::Dect,
         SdrDecoderKind::GsmLte,
     ]
@@ -1294,6 +1301,17 @@ fn resolve_decoder_command_line(
                 None
             }
         }
+        SdrDecoderKind::InmarsatStdc => {
+            if command_exists("stdc_decoder") {
+                Some("stdc_decoder --freq {freq_hz}".to_string())
+            } else if command_exists("stdc-decoder") {
+                Some("stdc-decoder --freq {freq_hz}".to_string())
+            } else if command_exists("inmarsatc-decoder") {
+                Some("inmarsatc-decoder --freq {freq_hz}".to_string())
+            } else {
+                None
+            }
+        }
         SdrDecoderKind::Dect => {
             if hardware == SdrHardware::RtlSdr
                 && command_exists("multimon-ng")
@@ -1828,9 +1846,10 @@ fn derive_satcom_observation(
     })?;
     let posture = satcom_encryption_posture(&row.message);
     let identifier_hints = satcom_identifier_hints(&row.message);
+    let (payload_parse_state, payload_fields) = satcom_unencrypted_payload_parse(row, &posture);
     let has_coordinates = map_point.is_some();
     let summary = format!(
-        "band={} posture={} coords={} identifiers={}",
+        "band={} posture={} coords={} identifiers={} payload_parse={} fields={}",
         band,
         posture,
         if has_coordinates { "yes" } else { "no" },
@@ -1838,7 +1857,9 @@ fn derive_satcom_observation(
             "none".to_string()
         } else {
             identifier_hints.join(",")
-        }
+        },
+        payload_parse_state,
+        payload_fields.len()
     );
 
     Some(SdrSatcomObservation {
@@ -1850,10 +1871,121 @@ fn derive_satcom_observation(
         encryption_posture: posture,
         has_coordinates,
         identifier_hints,
+        payload_parse_state,
+        payload_fields,
         summary,
         message: row.message.clone(),
         raw: row.raw.clone(),
     })
+}
+
+fn satcom_unencrypted_payload_parse(
+    row: &SdrDecodeRow,
+    posture: &str,
+) -> (String, HashMap<String, String>) {
+    if row.message == "[redacted: satcom payload disabled]" {
+        return ("redacted".to_string(), HashMap::new());
+    }
+    if posture != "unencrypted" {
+        return ("not_unencrypted".to_string(), HashMap::new());
+    }
+
+    let parsed = parse_satcom_payload_fields(&row.message);
+    if parsed.is_empty() {
+        ("no_fields".to_string(), parsed)
+    } else {
+        ("parsed".to_string(), parsed)
+    }
+}
+
+fn parse_satcom_payload_fields(message: &str) -> HashMap<String, String> {
+    let mut fields = HashMap::new();
+    let lower = message.to_ascii_lowercase();
+
+    if let Ok(re) = Regex::new(r"(?i)\bmmsi\s*[:=]?\s*(\d{9})\b") {
+        if let Some(caps) = re.captures(message) {
+            if let Some(value) = caps.get(1) {
+                fields.insert("mmsi".to_string(), value.as_str().to_string());
+            }
+        }
+    }
+    if let Ok(re) = Regex::new(r"(?i)\bimo\s*[:=]?\s*(\d{7})\b") {
+        if let Some(caps) = re.captures(message) {
+            if let Some(value) = caps.get(1) {
+                fields.insert("imo".to_string(), value.as_str().to_string());
+            }
+        }
+    }
+    if let Ok(re) = Regex::new(r"(?i)\bicao(?:24)?\s*[:=]?\s*([0-9a-f]{6})\b") {
+        if let Some(caps) = re.captures(message) {
+            if let Some(value) = caps.get(1) {
+                fields.insert("icao_hex".to_string(), value.as_str().to_ascii_uppercase());
+            }
+        }
+    }
+    if let Ok(re) = Regex::new(r"(?i)\b(?:callsign|flight)\s*[:=]?\s*([a-z0-9\-]{2,12})\b") {
+        if let Some(caps) = re.captures(message) {
+            if let Some(value) = caps.get(1) {
+                fields.insert("callsign".to_string(), value.as_str().to_ascii_uppercase());
+            }
+        }
+    }
+    if let Ok(re) = Regex::new(r"(?i)\b(?:lat|latitude)\s*[:=]?\s*(-?\d{1,2}(?:\.\d+)?)\b") {
+        if let Some(caps) = re.captures(message) {
+            if let Some(value) = caps.get(1) {
+                fields.insert("latitude".to_string(), value.as_str().to_string());
+            }
+        }
+    }
+    if let Ok(re) =
+        Regex::new(r"(?i)\b(?:lon|long|lng|longitude)\s*[:=]?\s*(-?\d{1,3}(?:\.\d+)?)\b")
+    {
+        if let Some(caps) = re.captures(message) {
+            if let Some(value) = caps.get(1) {
+                fields.insert("longitude".to_string(), value.as_str().to_string());
+            }
+        }
+    }
+    if let Ok(re) = Regex::new(r"(?i)\b(?:alt|altitude)\s*[:=]?\s*(-?\d+(?:\.\d+)?)\s*(m|ft)?\b") {
+        if let Some(caps) = re.captures(message) {
+            let value = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+            let unit = caps.get(2).map(|m| m.as_str()).unwrap_or("m");
+            fields.insert("altitude".to_string(), format!("{value}{unit}"));
+        }
+    }
+    if let Ok(re) = Regex::new(r"(?i)\bsnr\s*[:=]?\s*(-?\d+(?:\.\d+)?)\s*d?b\b") {
+        if let Some(caps) = re.captures(message) {
+            if let Some(value) = caps.get(1) {
+                fields.insert("snr_db".to_string(), value.as_str().to_string());
+            }
+        }
+    }
+
+    if fields.get("latitude").is_none() || fields.get("longitude").is_none() {
+        if let Ok(re) = Regex::new(r"(-?\d{1,2}\.\d+)\s*[,/ ]\s*(-?\d{1,3}\.\d+)") {
+            if let Some(caps) = re.captures(message) {
+                if let Some(lat) = caps.get(1) {
+                    fields
+                        .entry("latitude".to_string())
+                        .or_insert_with(|| lat.as_str().to_string());
+                }
+                if let Some(lon) = caps.get(2) {
+                    fields
+                        .entry("longitude".to_string())
+                        .or_insert_with(|| lon.as_str().to_string());
+                }
+            }
+        }
+    }
+
+    if lower.contains("distress") {
+        fields.insert("distress".to_string(), "true".to_string());
+    }
+    if lower.contains("safety") {
+        fields.insert("safety".to_string(), "true".to_string());
+    }
+
+    fields
 }
 
 fn satcom_band_from_freq(freq_hz: u64) -> Option<&'static str> {
@@ -1953,6 +2085,7 @@ fn decoder_autotune_frequency_hz(kind: &SdrDecoderKind) -> Option<u64> {
         SdrDecoderKind::Ais => Some(162_025_000),
         SdrDecoderKind::Pocsag => Some(929_612_500),
         SdrDecoderKind::Iridium => Some(1_626_000_000),
+        SdrDecoderKind::InmarsatStdc => Some(1_541_450_000),
         SdrDecoderKind::Dect => Some(1_886_400_000),
         SdrDecoderKind::GsmLte => Some(947_200_000),
         SdrDecoderKind::Plugin { id, .. } => decoder_autotune_for_plugin_id(id),
@@ -2886,6 +3019,7 @@ mod tests {
         let observation = derive_satcom_observation(&row, None).expect("satcom observation");
         assert_eq!(observation.band, "Unknown Satcom Band");
         assert_eq!(observation.encryption_posture, "unknown");
+        assert_eq!(observation.payload_parse_state, "not_unencrypted");
         assert!(observation.identifier_hints.contains(&"mmsi".to_string()));
         assert_eq!(observation.message, "message mmsi=123456789");
         assert_eq!(observation.raw, "message mmsi=123456789");
@@ -2986,17 +3120,63 @@ mod tests {
         );
         redact_satcom_decode_row(&mut row);
         let observation = derive_satcom_observation(&row, None).expect("satcom observation");
+        assert_eq!(observation.payload_parse_state, "redacted");
         assert_eq!(observation.message, "[redacted: satcom payload disabled]");
         assert_eq!(observation.raw, "[redacted: satcom payload disabled]");
     }
 
     #[test]
     fn satcom_observation_serialization_includes_message_and_raw_fields() {
-        let row = sample_row(1_626_000_000, "iridium", "mmsi=123456789");
+        let row = sample_row(
+            1_626_000_000,
+            "iridium",
+            "clear mmsi=123456789 lat=35.0 lon=-79.0",
+        );
         let observation = derive_satcom_observation(&row, None).expect("satcom observation");
         let payload = serde_json::to_value(&observation).expect("serialize satcom observation");
-        assert_eq!(payload["message"], "mmsi=123456789");
-        assert_eq!(payload["raw"], "mmsi=123456789");
+        assert_eq!(
+            payload["message"],
+            "clear mmsi=123456789 lat=35.0 lon=-79.0"
+        );
+        assert_eq!(payload["raw"], "clear mmsi=123456789 lat=35.0 lon=-79.0");
+        assert_eq!(payload["payload_parse_state"], "parsed");
+        assert_eq!(payload["payload_fields"]["mmsi"], "123456789");
+        assert_eq!(payload["payload_fields"]["latitude"], "35.0");
+        assert_eq!(payload["payload_fields"]["longitude"], "-79.0");
+    }
+
+    #[test]
+    fn satcom_unencrypted_parser_extracts_known_fields() {
+        let row = sample_row(
+            1_541_000_000,
+            "inmarsat_c",
+            "clear distress mmsi=123456789 imo=1234567 callsign=abc123 lat=35.145 lon=-79.474 snr=12.5dB",
+        );
+        let observation = derive_satcom_observation(&row, None).expect("satcom observation");
+        assert_eq!(observation.encryption_posture, "unencrypted");
+        assert_eq!(observation.payload_parse_state, "parsed");
+        assert_eq!(
+            observation.payload_fields.get("mmsi").map(String::as_str),
+            Some("123456789")
+        );
+        assert_eq!(
+            observation.payload_fields.get("imo").map(String::as_str),
+            Some("1234567")
+        );
+        assert_eq!(
+            observation
+                .payload_fields
+                .get("callsign")
+                .map(String::as_str),
+            Some("ABC123")
+        );
+        assert_eq!(
+            observation
+                .payload_fields
+                .get("distress")
+                .map(String::as_str),
+            Some("true")
+        );
     }
 
     #[test]
@@ -3054,6 +3234,8 @@ mod tests {
             encryption_posture: "unknown".to_string(),
             has_coordinates: false,
             identifier_hints: vec!["mmsi".to_string()],
+            payload_parse_state: "not_unencrypted".to_string(),
+            payload_fields: HashMap::new(),
             summary: "band=L-Band posture=unknown coords=no identifiers=mmsi".to_string(),
             message: "decoded message".to_string(),
             raw: "raw payload".to_string(),

@@ -243,7 +243,7 @@ pub fn print_sdr_test_usage() {
     println!("  --center-freq-hz <n>    Center frequency in Hz");
     println!("  --sample-rate-hz <n>    Sample rate in Hz");
     println!("  --duration-secs <n>     Runtime duration, default: 12");
-    println!("  --decode <name>         rtl_433|adsb|acars|ais|pocsag|iridium|dect|gsm_lte");
+    println!("  --decode <name>         rtl_433|adsb|acars|ais|pocsag|iridium|inmarsat_stdc|dect|gsm_lte");
     println!("                          or plugin ID/label from sdr-plugins.json");
     println!("  --scan-start-hz <n>     Optional scan range start in Hz");
     println!("  --scan-end-hz <n>       Optional scan range end in Hz");
@@ -578,6 +578,7 @@ fn parse_sdr_decoder_with_plugins(
         "ais" => Some(SdrDecoderKind::Ais),
         "pocsag" => Some(SdrDecoderKind::Pocsag),
         "iridium" => Some(SdrDecoderKind::Iridium),
+        "inmarsatstdc" | "inmarsatc" | "inmarsat" | "stdc" => Some(SdrDecoderKind::InmarsatStdc),
         "dect" => Some(SdrDecoderKind::Dect),
         "gsmlte" | "gsm" => Some(SdrDecoderKind::GsmLte),
         _ => None,
@@ -599,7 +600,7 @@ fn parse_sdr_decoder_with_plugins(
     }
 
     bail!(
-        "invalid --decode `{}` (expected rtl_433|adsb|acars|ais|pocsag|iridium|dect|gsm_lte or a plugin ID from sdr-plugins.json)",
+        "invalid --decode `{}` (expected rtl_433|adsb|acars|ais|pocsag|iridium|inmarsat_stdc|dect|gsm_lte or a plugin ID from sdr-plugins.json)",
         value
     );
 }
@@ -1497,6 +1498,8 @@ mod tests {
         assert!(matches!(parsed, SdrDecoderKind::Adsb));
         let parsed = parse_sdr_decoder_with_plugins("GSM_LTE", &[]).unwrap();
         assert!(matches!(parsed, SdrDecoderKind::GsmLte));
+        let parsed = parse_sdr_decoder_with_plugins("inmarsat_stdc", &[]).unwrap();
+        assert!(matches!(parsed, SdrDecoderKind::InmarsatStdc));
     }
 
     #[test]
