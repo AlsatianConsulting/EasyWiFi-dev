@@ -21,3 +21,6 @@ output/
 /continuity/transfer/*.tar.gz
 /continuity/transfer/SHA256SUMS
 /dist/
+/GeoLite2-City.mmdb
+/GeoLite2-City-CSV_20260227/
+/manuf
