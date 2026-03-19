@@ -34,6 +34,8 @@ KML/KMZ regression coverage now also verifies:
 - per-hit ExtendedData includes encryption classification and key identifiers
 - per-hit ExtendedData includes `source_adapters` provenance fields
 - client per-hit ExtendedData includes association state (`associated` / `unassociated`)
+- bluetooth per-hit ExtendedData includes transport class normalization variants (including `btle`)
+- bluetooth per-hit ExtendedData includes optional active-enumeration state fields when available
 
 Wi-Fi capture regression coverage now also verifies:
 

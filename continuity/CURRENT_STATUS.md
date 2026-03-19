@@ -36,6 +36,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 16. Interactive Wi-Fi decode parsing now reads both radiotap and PPI RSSI fields (radiotap preferred, PPI fallback) to match packet-header mode behavior.
 17. Wi-Fi geiger capture now parses both radiotap and PPI RSSI fields with fallback behavior.
 18. Interactive Wi-Fi decoder startup now follows packet-header mode selection with fallback (`PPI` then `Radiotap`), aligned with PCAP saver behavior.
+19. Bluetooth KML/KMZ ExtendedData now includes richer transport metadata and active-enumeration context fields for external GIS use.
 
 ### Bluetooth
 
