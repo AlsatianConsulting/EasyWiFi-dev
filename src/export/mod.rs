@@ -166,6 +166,7 @@ impl ExportManager {
                 "MAC",
                 "OUI",
                 "BT/BLE",
+                "Transport Class",
                 "Device Type",
                 "RSSI",
                 "Latitude",
@@ -604,6 +605,7 @@ impl ExportManager {
             "MAC",
             "OUI",
             "BT/BLE",
+            "Transport Class",
             "Device Type",
             "RSSI",
             "Latitude",
@@ -617,6 +619,7 @@ impl ExportManager {
                     dev.mac.clone(),
                     dev.oui_manufacturer.clone().unwrap_or_default(),
                     dev.transport.clone(),
+                    bluetooth_transport_class(&dev.transport).to_string(),
                     dev.device_type.clone().unwrap_or_default(),
                     obs.rssi_dbm
                         .or(dev.rssi_dbm)
@@ -2033,5 +2036,27 @@ mod tests {
             rssi_dbm: None,
         };
         assert!(nearest_fix(&[invalid], base).is_none());
+    }
+
+    #[test]
+    fn bluetooth_location_csv_includes_transport_class_column() {
+        let now = Utc::now();
+        let manager = test_export_manager();
+        let mut bluetooth = BluetoothDeviceRecord::new("22:33:44:55:66:77", now);
+        bluetooth.transport = "BLE".to_string();
+        bluetooth.oui_manufacturer = Some("Acme".to_string());
+        bluetooth.device_type = Some("tag".to_string());
+        bluetooth.observations.push(sample_observation(now));
+
+        let outputs = manager
+            .export_location_logs_csv(&[], &[], &[bluetooth])
+            .expect("export location csv logs");
+        let bt_path = outputs
+            .iter()
+            .find(|p| p.ends_with("bluetooth_locations.csv"))
+            .expect("bluetooth locations output path");
+        let content = fs::read_to_string(bt_path).expect("read bluetooth csv");
+        assert!(content.contains("Transport Class"));
+        assert!(content.contains(",BLE,ble,tag,"));
     }
 }
