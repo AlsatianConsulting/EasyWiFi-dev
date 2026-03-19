@@ -1473,6 +1473,7 @@ fn bluetooth_transport_class(transport: &str) -> &'static str {
     let normalized = transport.trim().to_ascii_lowercase();
     if normalized == "ble"
         || normalized == "le"
+        || normalized == "btle"
         || normalized.contains("bluetooth le")
         || normalized.contains("low energy")
     {
@@ -1974,6 +1975,7 @@ mod tests {
     fn bluetooth_transport_class_normalizes_common_variants() {
         assert_eq!(bluetooth_transport_class("BLE"), "ble");
         assert_eq!(bluetooth_transport_class("le"), "ble");
+        assert_eq!(bluetooth_transport_class("btle"), "ble");
         assert_eq!(bluetooth_transport_class("Bluetooth LE"), "ble");
         assert_eq!(bluetooth_transport_class("Low Energy"), "ble");
         assert_eq!(bluetooth_transport_class("BT"), "classic");
