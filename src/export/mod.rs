@@ -1373,7 +1373,12 @@ fn build_bluetooth_kml_placemarks(bluetooth: &[BluetoothDeviceRecord]) -> String
             let fields = vec![
                 ("device_type".to_string(), "bluetooth".to_string()),
                 ("name".to_string(), device_name.clone()),
+                ("alias".to_string(), dev.alias.clone().unwrap_or_default()),
                 ("mac".to_string(), dev.mac.clone()),
+                (
+                    "address_type".to_string(),
+                    dev.address_type.clone().unwrap_or_default(),
+                ),
                 ("transport".to_string(), dev.transport.clone()),
                 (
                     "transport_class".to_string(),
@@ -1388,9 +1393,15 @@ fn build_bluetooth_kml_placemarks(bluetooth: &[BluetoothDeviceRecord]) -> String
                     "bluetooth_type".to_string(),
                     dev.device_type.clone().unwrap_or_default(),
                 ),
+                (
+                    "class_of_device".to_string(),
+                    dev.class_of_device.clone().unwrap_or_default(),
+                ),
                 ("rssi_dbm".to_string(), rssi.to_string()),
                 ("mfgr_ids".to_string(), dev.mfgr_ids.join(";")),
+                ("mfgr_names".to_string(), dev.mfgr_names.join(";")),
                 ("uuids".to_string(), dev.uuids.join(";")),
+                ("uuid_names".to_string(), dev.uuid_names.join(";")),
                 ("first_seen".to_string(), dev.first_seen.to_rfc3339()),
                 ("last_seen".to_string(), dev.last_seen.to_rfc3339()),
                 ("observation_time".to_string(), obs.timestamp.to_rfc3339()),
@@ -1795,6 +1806,11 @@ mod tests {
         bluetooth_ble.transport = "BLE".to_string();
         bluetooth_ble.device_type = Some("tag".to_string());
         bluetooth_ble.advertised_name = Some("BeaconTag".to_string());
+        bluetooth_ble.alias = Some("TagAlias".to_string());
+        bluetooth_ble.address_type = Some("random".to_string());
+        bluetooth_ble.class_of_device = Some("0x000000".to_string());
+        bluetooth_ble.mfgr_names = vec!["Acme".to_string()];
+        bluetooth_ble.uuid_names = vec!["Battery Service".to_string()];
         bluetooth_ble.source_adapters = vec!["bluez:hci0".to_string()];
         bluetooth_ble.observations.push(sample_observation(now));
         let mut bluetooth_classic = BluetoothDeviceRecord::new("22:33:44:55:66:88", now);
@@ -1848,6 +1864,11 @@ mod tests {
             "<Data name=\"source_adapters\"><value>bluez:hci0</value></Data>",
             "<Data name=\"source_adapters\"><value>wlan1mon</value></Data>",
             "<Data name=\"source_adapters\"><value>bluez:hci1</value></Data>",
+            "<Data name=\"alias\"><value>TagAlias</value></Data>",
+            "<Data name=\"address_type\"><value>random</value></Data>",
+            "<Data name=\"class_of_device\"><value>0x000000</value></Data>",
+            "<Data name=\"mfgr_names\"><value>Acme</value></Data>",
+            "<Data name=\"uuid_names\"><value>Battery Service</value></Data>",
             "<Data name=\"device_type\"><value>wifi_ap</value></Data>",
             "<Data name=\"device_type\"><value>wifi_client</value></Data>",
             "<Data name=\"device_type\"><value>bluetooth</value></Data>",
