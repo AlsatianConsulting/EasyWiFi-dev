@@ -33,6 +33,9 @@ This repository contains an MVP implementation with:
   - Rename/Delete/Move controls for saved user presets
   - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)
   - Map and satcom audit entries now carry both parsed `message` and `raw` decoder text (redacted when no-payload mode is enabled)
+  - Satcom audit includes parsed unencrypted payload metadata (`payload_parse_state`, normalized `payload_fields`)
+  - Built-in `Inmarsat STD-C` decoder (`inmarsat_stdc`) is available when `stdc_decoder`/`stdc-decoder`/`inmarsatc-decoder` is installed
+  - Optional satcom parser denylist via env var `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST` (comma-separated protocol/decoder tokens)
   - FFT right-click supports direct per-signal decoder launch
   - Decoder launch availability checks now gate right-click/start actions with explicit hardware/toolchain status
   - Built-in decoder command path supports optional hardware-specific plugin overrides via `sdr-plugins.json` IDs:

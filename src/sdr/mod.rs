@@ -548,6 +548,7 @@ fn run_sdr_loop(
     let mut auto_tune_decoders = config.auto_tune_decoders;
     let mut bias_tee_enabled = config.bias_tee_enabled;
     let mut no_payload_satcom = config.no_payload_satcom;
+    let satcom_parse_denylist = satcom_parse_denylist_from_env();
     let plugin_defs = load_plugin_definitions(config.plugin_config_path.as_deref());
 
     let _ = sender.send(SdrEvent::Log(format!(
@@ -575,6 +576,12 @@ fn run_sdr_loop(
             "enabled"
         }
     )));
+    if !satcom_parse_denylist.is_empty() {
+        let _ = sender.send(SdrEvent::Log(format!(
+            "satcom parse denylist active: {}",
+            satcom_parse_denylist.join(", ")
+        )));
+    }
     let _ = sender.send(SdrEvent::FrequencyChanged(center_freq_hz));
     let _ = sender.send(SdrEvent::SquelchChanged(squelch_dbm));
     let _ = sender.send(SdrEvent::DependencyStatus(check_dependencies_for_plugins(
@@ -770,6 +777,7 @@ fn run_sdr_loop(
                         log_output_enabled,
                         log_output_dir.clone(),
                         no_payload_satcom,
+                        satcom_parse_denylist.clone(),
                     ) {
                         Ok(decoder) => {
                             running_decoder = Some(decoder);
@@ -1525,6 +1533,7 @@ fn spawn_decoder(
     log_output_enabled: bool,
     log_output_dir: PathBuf,
     no_payload_satcom: bool,
+    satcom_parse_denylist: Vec<String>,
 ) -> Result<RunningDecoder> {
     let mut command = Command::new("bash");
     command
@@ -1655,7 +1664,9 @@ fn spawn_decoder(
                 raw: message,
             };
             let mut map_point = parse_map_point(&row);
-            let satcom_detected = derive_satcom_observation(&row, map_point.as_ref()).is_some();
+            let satcom_detected =
+                derive_satcom_observation(&row, map_point.as_ref(), &satcom_parse_denylist)
+                    .is_some();
 
             if no_payload_satcom_stdout && satcom_detected {
                 redact_satcom_decode_row(&mut row);
@@ -1663,7 +1674,8 @@ fn spawn_decoder(
                     sync_map_point_payload_from_row(point, &row);
                 }
             }
-            let satcom_observation = derive_satcom_observation(&row, map_point.as_ref());
+            let satcom_observation =
+                derive_satcom_observation(&row, map_point.as_ref(), &satcom_parse_denylist);
 
             let _ = sender_stdout.send(SdrEvent::DecodeRow(row.clone()));
             if let Some(log_file) = &log_stdout {
@@ -1840,13 +1852,15 @@ fn sync_map_point_payload_from_row(point: &mut SdrMapPoint, row: &SdrDecodeRow) 
 fn derive_satcom_observation(
     row: &SdrDecodeRow,
     map_point: Option<&SdrMapPoint>,
+    satcom_parse_denylist: &[String],
 ) -> Option<SdrSatcomObservation> {
     let band = satcom_band_from_freq(row.freq_hz).or_else(|| {
         protocol_or_decoder_is_satcom(&row.protocol, &row.decoder).then_some("Unknown Satcom Band")
     })?;
     let posture = satcom_encryption_posture(&row.message);
     let identifier_hints = satcom_identifier_hints(&row.message);
-    let (payload_parse_state, payload_fields) = satcom_unencrypted_payload_parse(row, &posture);
+    let (payload_parse_state, payload_fields) =
+        satcom_unencrypted_payload_parse(row, &posture, satcom_parse_denylist);
     let has_coordinates = map_point.is_some();
     let summary = format!(
         "band={} posture={} coords={} identifiers={} payload_parse={} fields={}",
@@ -1882,9 +1896,13 @@ fn derive_satcom_observation(
 fn satcom_unencrypted_payload_parse(
     row: &SdrDecodeRow,
     posture: &str,
+    satcom_parse_denylist: &[String],
 ) -> (String, HashMap<String, String>) {
     if row.message == "[redacted: satcom payload disabled]" {
         return ("redacted".to_string(), HashMap::new());
+    }
+    if satcom_parse_blocked_by_denylist(row, satcom_parse_denylist) {
+        return ("denied_by_policy".to_string(), HashMap::new());
     }
     if posture != "unencrypted" {
         return ("not_unencrypted".to_string(), HashMap::new());
@@ -1896,6 +1914,39 @@ fn satcom_unencrypted_payload_parse(
     } else {
         ("parsed".to_string(), parsed)
     }
+}
+
+fn satcom_parse_blocked_by_denylist(row: &SdrDecodeRow, denylist: &[String]) -> bool {
+    if denylist.is_empty() {
+        return false;
+    }
+    let protocol = normalize_decoder_token(&row.protocol);
+    let decoder = normalize_decoder_token(&row.decoder);
+    denylist.iter().any(|entry| {
+        let needle = normalize_decoder_token(entry);
+        !needle.is_empty() && (protocol.contains(&needle) || decoder.contains(&needle))
+    })
+}
+
+fn satcom_parse_denylist_from_env() -> Vec<String> {
+    std::env::var("WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_decoder_token(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect::<String>()
 }
 
 fn parse_satcom_payload_fields(message: &str) -> HashMap<String, String> {
@@ -3016,7 +3067,7 @@ mod tests {
     #[test]
     fn satcom_observation_is_emitted_for_sat_protocol_keyword() {
         let row = sample_row(137_100_000, "inmarsat_c", "message mmsi=123456789");
-        let observation = derive_satcom_observation(&row, None).expect("satcom observation");
+        let observation = derive_satcom_observation(&row, None, &[]).expect("satcom observation");
         assert_eq!(observation.band, "Unknown Satcom Band");
         assert_eq!(observation.encryption_posture, "unknown");
         assert_eq!(observation.payload_parse_state, "not_unencrypted");
@@ -3053,7 +3104,7 @@ mod tests {
             raw: "raw".to_string(),
         };
         let observation =
-            derive_satcom_observation(&row, Some(&map_point)).expect("satcom observation");
+            derive_satcom_observation(&row, Some(&map_point), &[]).expect("satcom observation");
         assert_eq!(observation.band, "L-Band");
         assert!(observation.has_coordinates);
         assert!(observation
@@ -3119,7 +3170,7 @@ mod tests {
             "clear payload sample mmsi=123456789",
         );
         redact_satcom_decode_row(&mut row);
-        let observation = derive_satcom_observation(&row, None).expect("satcom observation");
+        let observation = derive_satcom_observation(&row, None, &[]).expect("satcom observation");
         assert_eq!(observation.payload_parse_state, "redacted");
         assert_eq!(observation.message, "[redacted: satcom payload disabled]");
         assert_eq!(observation.raw, "[redacted: satcom payload disabled]");
@@ -3132,7 +3183,7 @@ mod tests {
             "iridium",
             "clear mmsi=123456789 lat=35.0 lon=-79.0",
         );
-        let observation = derive_satcom_observation(&row, None).expect("satcom observation");
+        let observation = derive_satcom_observation(&row, None, &[]).expect("satcom observation");
         let payload = serde_json::to_value(&observation).expect("serialize satcom observation");
         assert_eq!(
             payload["message"],
@@ -3152,7 +3203,7 @@ mod tests {
             "inmarsat_c",
             "clear distress mmsi=123456789 imo=1234567 callsign=abc123 lat=35.145 lon=-79.474 snr=12.5dB",
         );
-        let observation = derive_satcom_observation(&row, None).expect("satcom observation");
+        let observation = derive_satcom_observation(&row, None, &[]).expect("satcom observation");
         assert_eq!(observation.encryption_posture, "unencrypted");
         assert_eq!(observation.payload_parse_state, "parsed");
         assert_eq!(
@@ -3177,6 +3228,20 @@ mod tests {
                 .map(String::as_str),
             Some("true")
         );
+    }
+
+    #[test]
+    fn satcom_unencrypted_parser_respects_protocol_denylist() {
+        let row = sample_row(
+            1_541_000_000,
+            "inmarsat_c",
+            "clear mmsi=123456789 lat=35.145 lon=-79.474",
+        );
+        let denylist = vec!["inmarsat".to_string()];
+        let observation =
+            derive_satcom_observation(&row, None, &denylist).expect("satcom observation");
+        assert_eq!(observation.payload_parse_state, "denied_by_policy");
+        assert!(observation.payload_fields.is_empty());
     }
 
     #[test]

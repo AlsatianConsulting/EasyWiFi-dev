@@ -256,6 +256,10 @@ pub fn print_sdr_test_usage() {
     println!(
         "  --install-missing-deps  Attempt noninteractive install of missing decoder dependencies"
     );
+    println!();
+    println!("Environment:");
+    println!("  WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST=token1,token2");
+    println!("      Optional satcom payload-parser denylist by protocol/decoder token");
 }
 
 fn parse_bluetooth_test_args(args: &[String]) -> Result<BluetoothTestOptions> {
