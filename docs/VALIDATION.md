@@ -175,6 +175,7 @@ Validated behavior:
 5. SDR spectrum frames now use live IQ-backed FFT path for available capture tools (`rtl_sdr`, `hackrf_transfer`, `bladeRF-cli`, `uhd_rx_cfile`) with synthetic fallback if live capture fails or tooling is missing
 6. SDR right-click decode actions now enforce hardware-constraint checks and provide explicit unavailable-decoder status feedback
 7. POCSAG/DECT built-ins now attempt non-RTL fallback chains (HackRF/bladeRF/B210) when `csdr`, `sox`, `multimon-ng`, and capture tools are present
+8. Built-in decoder launch path now honors hardware-specific plugin overrides for command templates, enabling per-device demod command customization from `sdr-plugins.json`
 
 Blocked by hardware/runtime state:
 

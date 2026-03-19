@@ -40,6 +40,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 20. SDR spectrum frame generation now uses live IQ capture + in-process FFT for RTL-SDR/HackRF/bladeRF/B210 tool paths when available, with synthetic fallback for unavailable/failed live capture.
 21. SDR right-click frequency workflow supports per-signal decoder launch with hardware-constraint guardrails and clearer unavailable-decoder status messages.
 22. Non-RTL fallback decode pipelines for POCSAG/DECT are now wired through capture-tool + csdr/sox/multimon chains when dependencies are present.
+23. Built-in SDR decoders now support hardware-specific plugin command overrides (`<decoder_id>_<hardware_id>` / `<decoder_id>__<hardware_id>`) for cross-device demod customization.
 
 ### Bluetooth
 
