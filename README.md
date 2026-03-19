@@ -33,6 +33,12 @@ This repository contains an MVP implementation with:
   - Rename/Delete/Move controls for saved user presets
   - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)
   - Map and satcom audit entries now carry both parsed `message` and `raw` decoder text (redacted when no-payload mode is enabled)
+  - FFT right-click supports direct per-signal decoder launch
+  - Decoder launch availability checks now gate right-click/start actions with explicit hardware/toolchain status
+  - Built-in decoder command path supports optional hardware-specific plugin overrides via `sdr-plugins.json` IDs:
+    - `<decoder_id>_<hardware_id>`
+    - `<decoder_id>__<hardware_id>`
+    - `<decoder_id>` (global built-in override)
 - Settings via File menu
   - Interface/channel mode settings (multi-adapter, hop/lock)
   - GPS settings (`Interface`, `GPSD`, `Stream` TCP/UDP NMEA, `Static`)
