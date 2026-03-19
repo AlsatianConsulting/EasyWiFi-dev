@@ -37,6 +37,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 17. Wi-Fi geiger capture now parses both radiotap and PPI RSSI fields with fallback behavior.
 18. Interactive Wi-Fi decoder startup now follows packet-header mode selection with fallback (`PPI` then `Radiotap`), aligned with PCAP saver behavior.
 19. Bluetooth KML/KMZ ExtendedData now includes richer transport metadata and active-enumeration context fields for external GIS use.
+20. SDR spectrum frame generation now uses live IQ capture + in-process FFT for RTL-SDR/HackRF when available, with synthetic fallback for unavailable/failed live capture.
 
 ### Bluetooth
 
@@ -75,7 +76,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 
 ## What is partial
 
-1. SDR FFT/waterfall currently needs real hardware IQ ingestion rather than placeholder/synthetic behavior.
+1. SDR FFT/waterfall now has live IQ ingestion support for RTL-SDR/HackRF, but broader hardware coverage and live RF validation remain partial.
 2. SDR decoder execution exists, but most advanced decoders still depend on missing external tools or deeper integration.
 3. Bluetooth multi-adapter support is implemented in code paths, but live validation on this host is limited.
 4. Geoiger-style Wi-Fi workflows exist, but ongoing live RF validation depends heavily on the RF environment.

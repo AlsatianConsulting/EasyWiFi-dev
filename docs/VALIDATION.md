@@ -172,6 +172,7 @@ Validated behavior:
 2. HackRF runtime starts
 3. bladeRF runtime starts
 4. Ettus B210 runtime path starts, but real UHD access is blocked on this host
+5. SDR spectrum frames now use live IQ-backed FFT path for RTL-SDR/HackRF when capture tools are available, with synthetic fallback if live capture fails or tooling is missing
 
 Blocked by hardware/runtime state:
 
