@@ -1220,7 +1220,7 @@ fn resolve_decoder_command_line(
         ("{soapy_driver}", soapy_driver.to_string()),
     ]);
 
-    let template = match decoder {
+    let template = plugin_override_command_template(decoder, hardware, plugins).or_else(|| match decoder {
         SdrDecoderKind::Rtl433 => command_exists("rtl_433").then(|| {
             if hardware == SdrHardware::RtlSdr {
                 "rtl_433 -f {freq_mhz}M -M level".to_string()
@@ -1319,7 +1319,7 @@ fn resolve_decoder_command_line(
                 Some(command_template.clone())
             }
         }
-    };
+    });
 
     template.map(|template| {
         let mut command = template;
@@ -1328,6 +1328,29 @@ fn resolve_decoder_command_line(
         }
         command
     })
+}
+
+fn plugin_override_command_template(
+    decoder: &SdrDecoderKind,
+    hardware: SdrHardware,
+    plugins: &[SdrPluginDefinition],
+) -> Option<String> {
+    if matches!(decoder, SdrDecoderKind::Plugin { .. }) {
+        return None;
+    }
+    let decoder_id = decoder.id();
+    let hardware_id = hardware.id();
+    let candidates = [
+        format!("{decoder_id}__{hardware_id}"),
+        format!("{decoder_id}_{hardware_id}"),
+        decoder_id,
+    ];
+    for candidate in candidates {
+        if let Some(def) = plugins.iter().find(|entry| entry.id == candidate) {
+            return Some(def.command_template.clone());
+        }
+    }
+    None
 }
 
 fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -> Option<String> {
@@ -1435,15 +1458,15 @@ pub fn decoder_launch_unavailable_reason(
     hardware: SdrHardware,
     plugin_defs: &[SdrPluginDefinition],
 ) -> Option<String> {
+    if resolve_decoder_command_line(decoder, freq_hz, sample_rate_hz, hardware, plugin_defs)
+        .is_some()
+    {
+        return None;
+    }
     if let Some(reason) = decoder_hardware_constraint_reason(decoder, hardware) {
         return Some(reason);
     }
-    if resolve_decoder_command_line(decoder, freq_hz, sample_rate_hz, hardware, plugin_defs)
-        .is_none()
-    {
-        return Some("required decoder toolchain is not installed or not detected".to_string());
-    }
-    None
+    Some("required decoder toolchain is not installed or not detected".to_string())
 }
 
 fn resolve_acarsdec_command_line(freq_hz: u64, hardware: SdrHardware) -> Option<String> {
@@ -3094,6 +3117,28 @@ mod tests {
     }
 
     #[test]
+    fn plugin_hardware_override_can_supply_non_rtl_builtin_command() {
+        let plugin_defs = vec![SdrPluginDefinition {
+            id: "ais_hackrf".to_string(),
+            label: "AIS HackRF Override".to_string(),
+            command_template: "custom_ais_demod --freq {freq_hz} --driver {soapy_driver}"
+                .to_string(),
+            protocol: Some("ais".to_string()),
+        }];
+        let command = resolve_decoder_command_line(
+            &SdrDecoderKind::Ais,
+            162_025_000,
+            2_400_000,
+            SdrHardware::HackRf,
+            &plugin_defs,
+        )
+        .expect("override command");
+        assert!(command.contains("custom_ais_demod"));
+        assert!(command.contains("--freq 162025000"));
+        assert!(command.contains("--driver hackrf"));
+    }
+
+    #[test]
     fn dependency_plan_leandvb_has_expected_verify_command() {
         let plan = dependency_install_plan("leandvb");
         assert!(plan
@@ -3292,6 +3337,24 @@ mod tests {
             &[],
         );
         assert!(reason.is_some());
+    }
+
+    #[test]
+    fn decoder_launch_unavailable_reason_allows_plugin_override() {
+        let plugin_defs = vec![SdrPluginDefinition {
+            id: "ais_hackrf".to_string(),
+            label: "AIS HackRF Override".to_string(),
+            command_template: "custom_ais_demod --freq {freq_hz}".to_string(),
+            protocol: Some("ais".to_string()),
+        }];
+        let reason = decoder_launch_unavailable_reason(
+            &SdrDecoderKind::Ais,
+            162_000_000,
+            2_400_000,
+            SdrHardware::HackRf,
+            &plugin_defs,
+        );
+        assert!(reason.is_none());
     }
 
     #[test]
