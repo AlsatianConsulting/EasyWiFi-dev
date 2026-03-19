@@ -47,6 +47,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 7. Validate corrected ACARS runtime integration live.
 8. Validate ADS-B live and correlate with ACARS by aircraft identifier when possible.
 9. Expand non-RTL command pipelines for RTL-bound demodulators (AIS/POCSAG/DECT classes) so right-click demod selection has broader cross-hardware execution parity.
+10. Validate newly added non-RTL POCSAG/DECT fallback chain quality and tune audio/FM pipeline parameters per hardware.
 
 ## Priority 4: requested SDR decoder backlog
 
