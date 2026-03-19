@@ -59,6 +59,10 @@ Static GPS regression coverage now verifies:
 - invalid static coordinates fall back to defaults
 - nearest-fix selection uses closest timestamp, rejects stale fixes (>20s), and rejects invalid coordinates
 
+CSV regression coverage now also verifies:
+
+- `bluetooth_locations.csv` includes normalized `Transport Class` (`ble` / `classic` / `unknown`)
+
 ## Multi-Adapter Status
 
 ### Implemented
