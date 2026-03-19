@@ -3963,8 +3963,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let sdr_decoder_combo = ComboBoxText::new();
     let sdr_builtin_decoders = sdr::builtin_decoders_in_priority_order();
     let plugin_path = sdr::default_plugin_config_path();
-    let plugin_decoders = sdr::load_plugin_definitions(plugin_path.as_deref())
-        .into_iter()
+    let sdr_plugin_defs = Rc::new(sdr::load_plugin_definitions(plugin_path.as_deref()));
+    let plugin_decoders = sdr_plugin_defs
+        .iter()
+        .cloned()
         .map(|plugin| SdrDecoderKind::Plugin {
             id: plugin.id,
             label: plugin.label,
@@ -5723,6 +5725,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
         let sdr_decoder_combo = sdr_decoder_combo.clone();
         let sdr_decoder_lookup = sdr_decoder_lookup.clone();
+        let sdr_plugin_defs = sdr_plugin_defs.clone();
         sdr_decode_start_btn.connect_clicked(move |_| {
             let config = sdr_config_from_inputs(
                 &sdr_hardware_combo,
@@ -5755,8 +5758,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             if s.sdr_runtime.is_none() {
                 s.start_sdr_runtime(config.clone());
             }
-            if let Some(reason) = sdr::decoder_hardware_constraint_reason(&decoder, config.hardware)
-            {
+            if let Some(reason) = sdr::decoder_launch_unavailable_reason(
+                &decoder,
+                config.center_freq_hz,
+                config.sample_rate_hz,
+                config.hardware,
+                &sdr_plugin_defs,
+            ) {
                 s.push_status(format!(
                     "decoder {} unavailable on {}: {}",
                     decoder.label(),
@@ -5803,6 +5811,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check = sdr_autotune_check.clone();
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_plugin_defs = sdr_plugin_defs.clone();
         let right_click = GestureClick::new();
         right_click.set_button(3);
         right_click.connect_pressed(move |_, _, x, y| {
@@ -5825,11 +5834,39 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             let title = Label::new(Some(&format!("Decode {} Hz", clicked_freq_hz)));
             title.set_xalign(0.0);
             popover_box.append(&title);
+            let menu_config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+            );
             for decoder_id in sdr_decoder_order.iter() {
                 let Some(decoder) = sdr_decoder_lookup.borrow().get(decoder_id).cloned() else {
                     continue;
                 };
-                let button = Button::with_label(&format!("Decode -> {}", decoder.label()));
+                let unavailable_reason = sdr::decoder_launch_unavailable_reason(
+                    &decoder,
+                    clicked_freq_hz,
+                    menu_config.sample_rate_hz,
+                    menu_config.hardware,
+                    &sdr_plugin_defs,
+                );
+                let button = if unavailable_reason.is_some() {
+                    Button::with_label(&format!("Decode -> {} (unavailable)", decoder.label()))
+                } else {
+                    Button::with_label(&format!("Decode -> {}", decoder.label()))
+                };
+                button.set_sensitive(unavailable_reason.is_none());
                 let state = state.clone();
                 let decoder = decoder.clone();
                 let sdr_hardware_combo = sdr_hardware_combo.clone();
@@ -5847,6 +5884,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 let sdr_bias_tee_check = sdr_bias_tee_check.clone();
                 let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
                 let popover = popover.clone();
+                let sdr_plugin_defs = sdr_plugin_defs.clone();
                 button.connect_clicked(move |_| {
                     let config = sdr_config_from_inputs(
                         &sdr_hardware_combo,
@@ -5868,9 +5906,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     if s.sdr_runtime.is_none() {
                         s.start_sdr_runtime(config.clone());
                     }
-                    if let Some(reason) =
-                        sdr::decoder_hardware_constraint_reason(&decoder, config.hardware)
-                    {
+                    if let Some(reason) = sdr::decoder_launch_unavailable_reason(
+                        &decoder,
+                        clicked_freq_hz,
+                        config.sample_rate_hz,
+                        config.hardware,
+                        &sdr_plugin_defs,
+                    ) {
                         s.push_status(format!(
                             "decoder {} unavailable on {}: {}",
                             decoder.label(),

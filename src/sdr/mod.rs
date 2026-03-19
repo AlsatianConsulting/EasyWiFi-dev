@@ -1372,6 +1372,24 @@ pub fn decoder_hardware_constraint_reason(
     }
 }
 
+pub fn decoder_launch_unavailable_reason(
+    decoder: &SdrDecoderKind,
+    freq_hz: u64,
+    sample_rate_hz: u32,
+    hardware: SdrHardware,
+    plugin_defs: &[SdrPluginDefinition],
+) -> Option<String> {
+    if let Some(reason) = decoder_hardware_constraint_reason(decoder, hardware) {
+        return Some(reason);
+    }
+    if resolve_decoder_command_line(decoder, freq_hz, sample_rate_hz, hardware, plugin_defs)
+        .is_none()
+    {
+        return Some("required decoder toolchain is not installed or not detected".to_string());
+    }
+    None
+}
+
 fn resolve_acarsdec_command_line(freq_hz: u64, hardware: SdrHardware) -> Option<String> {
     let freq_mhz = (freq_hz as f64) / 1_000_000.0;
     match hardware {
@@ -3016,9 +3034,7 @@ mod tests {
 
     #[test]
     fn decoder_unavailability_reason_flags_known_non_rtl_constraints() {
-        assert!(
-            decoder_unavailability_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf).is_some()
-        );
+        assert!(decoder_unavailability_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf).is_some());
     }
 
     #[test]
@@ -3201,5 +3217,17 @@ mod tests {
             decoder_hardware_constraint_reason(&SdrDecoderKind::Rtl433, SdrHardware::HackRf)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn decoder_launch_unavailable_reason_respects_hardware_constraints() {
+        let reason = decoder_launch_unavailable_reason(
+            &SdrDecoderKind::Ais,
+            162_000_000,
+            2_400_000,
+            SdrHardware::HackRf,
+            &[],
+        );
+        assert!(reason.is_some());
     }
 }
