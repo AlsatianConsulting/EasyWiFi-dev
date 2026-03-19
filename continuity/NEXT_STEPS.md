@@ -38,7 +38,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 
 ## Priority 3: advance SDR from scaffolding to real operator workflow
 
-1. Expand live IQ-backed FFT/waterfall beyond RTL-SDR/HackRF to remaining hardware and validate on-air behavior.
+1. Validate live IQ-backed FFT/waterfall on-air across each hardware path and harden any host-specific capture-format/tooling mismatches.
 2. Validate center-frequency geiger + auto-squelch behavior with live RF input.
 3. Validate preset save/rename/delete/reorder/import/export workflow end-to-end on a fresh machine profile.
 4. Validate satcom no-payload redaction in live decoder runs (decode/map/satcom logs).
