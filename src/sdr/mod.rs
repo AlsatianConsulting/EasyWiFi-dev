@@ -1206,6 +1206,7 @@ fn resolve_decoder_command_line(
     plugins: &[SdrPluginDefinition],
 ) -> Option<String> {
     let freq_mhz = (freq_hz as f64) / 1_000_000.0;
+    let soapy_driver = soapy_driver_name(hardware);
     let replacements = HashMap::from([
         ("{freq_hz}", freq_hz.to_string()),
         ("{freq_khz}", format!("{:.3}", (freq_hz as f64) / 1_000.0)),
@@ -1216,19 +1217,31 @@ fn resolve_decoder_command_line(
             format!("{:.3}", (sample_rate_hz as f64) / 1_000.0),
         ),
         ("{hardware}", hardware.id().to_string()),
+        ("{soapy_driver}", soapy_driver.to_string()),
     ]);
 
     let template = match decoder {
-        SdrDecoderKind::Rtl433 => command_exists("rtl_433")
-            .then_some("rtl_433 -f {freq_mhz}M -M level")
-            .map(str::to_string),
+        SdrDecoderKind::Rtl433 => command_exists("rtl_433").then(|| {
+            if hardware == SdrHardware::RtlSdr {
+                "rtl_433 -f {freq_mhz}M -M level".to_string()
+            } else {
+                "rtl_433 -d driver={soapy_driver} -f {freq_mhz}M -M level".to_string()
+            }
+        }),
         SdrDecoderKind::Adsb => {
-            if command_exists("dump1090") {
+            if hardware == SdrHardware::RtlSdr && command_exists("dump1090") {
                 Some("dump1090 --net --quiet".to_string())
-            } else if command_exists("dump1090-mutability") {
+            } else if hardware == SdrHardware::RtlSdr && command_exists("dump1090-mutability") {
                 Some("dump1090-mutability --net --quiet".to_string())
             } else if command_exists("readsb") {
-                Some("readsb --quiet --net".to_string())
+                if hardware == SdrHardware::RtlSdr {
+                    Some("readsb --quiet --net --device-type rtlsdr".to_string())
+                } else {
+                    Some(
+                        "readsb --quiet --net --device-type soapysdr --device driver={soapy_driver}"
+                            .to_string(),
+                    )
+                }
             } else {
                 None
             }
@@ -1241,16 +1254,19 @@ fn resolve_decoder_command_line(
             }
         }
         SdrDecoderKind::Ais => {
-            if command_exists("rtl_ais") {
+            if hardware == SdrHardware::RtlSdr && command_exists("rtl_ais") {
                 Some("rtl_ais".to_string())
-            } else if command_exists("aisdecoder") {
+            } else if hardware == SdrHardware::RtlSdr && command_exists("aisdecoder") {
                 Some("aisdecoder".to_string())
             } else {
                 None
             }
         }
         SdrDecoderKind::Pocsag => {
-            if command_exists("rtl_fm") && command_exists("multimon-ng") {
+            if hardware == SdrHardware::RtlSdr
+                && command_exists("rtl_fm")
+                && command_exists("multimon-ng")
+            {
                 Some(
                     "rtl_fm -f {freq_hz} -M fm -s 22050 -g 35 - | multimon-ng -t raw -a POCSAG1200 -a POCSAG2400 -"
                         .to_string(),
@@ -1267,7 +1283,10 @@ fn resolve_decoder_command_line(
             }
         }
         SdrDecoderKind::Dect => {
-            if command_exists("multimon-ng") && command_exists("rtl_fm") {
+            if hardware == SdrHardware::RtlSdr
+                && command_exists("multimon-ng")
+                && command_exists("rtl_fm")
+            {
                 Some(
                     "rtl_fm -f {freq_hz} -M fm -s 48000 -g 35 - | multimon-ng -t raw -a DECT -"
                         .to_string(),
@@ -1321,7 +1340,35 @@ fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -
                 None
             }
         }
+        SdrDecoderKind::Ais if hardware != SdrHardware::RtlSdr => Some(
+            "AIS built-in decoder currently requires RTL-SDR tools in this runtime".to_string(),
+        ),
+        SdrDecoderKind::Pocsag if hardware != SdrHardware::RtlSdr => Some(
+            "POCSAG built-in decoder currently requires RTL-SDR tools in this runtime".to_string(),
+        ),
+        SdrDecoderKind::Dect if hardware != SdrHardware::RtlSdr => Some(
+            "DECT built-in decoder currently requires RTL-SDR tools in this runtime".to_string(),
+        ),
         _ => None,
+    }
+}
+
+fn soapy_driver_name(hardware: SdrHardware) -> &'static str {
+    match hardware {
+        SdrHardware::RtlSdr => "rtlsdr",
+        SdrHardware::HackRf => "hackrf",
+        SdrHardware::BladeRf => "bladerf",
+        SdrHardware::EttusB210 => "uhd",
+    }
+}
+
+pub fn decoder_hardware_constraint_reason(
+    decoder: &SdrDecoderKind,
+    hardware: SdrHardware,
+) -> Option<String> {
+    match decoder {
+        SdrDecoderKind::Plugin { .. } => None,
+        _ => decoder_unavailability_reason(decoder, hardware),
     }
 }
 
@@ -2968,8 +3015,10 @@ mod tests {
     }
 
     #[test]
-    fn decoder_unavailability_reason_is_none_for_non_acars() {
-        assert!(decoder_unavailability_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf).is_none());
+    fn decoder_unavailability_reason_flags_known_non_rtl_constraints() {
+        assert!(
+            decoder_unavailability_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf).is_some()
+        );
     }
 
     #[test]
@@ -3125,5 +3174,32 @@ mod tests {
         } else {
             assert!(b210.is_none());
         }
+    }
+
+    #[test]
+    fn soapy_driver_name_matches_hardware_ids() {
+        assert_eq!(soapy_driver_name(SdrHardware::RtlSdr), "rtlsdr");
+        assert_eq!(soapy_driver_name(SdrHardware::HackRf), "hackrf");
+        assert_eq!(soapy_driver_name(SdrHardware::BladeRf), "bladerf");
+        assert_eq!(soapy_driver_name(SdrHardware::EttusB210), "uhd");
+    }
+
+    #[test]
+    fn hardware_constraint_reason_flags_known_rtl_only_decoders() {
+        assert!(
+            decoder_hardware_constraint_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf).is_some()
+        );
+        assert!(
+            decoder_hardware_constraint_reason(&SdrDecoderKind::Pocsag, SdrHardware::BladeRf)
+                .is_some()
+        );
+        assert!(
+            decoder_hardware_constraint_reason(&SdrDecoderKind::Dect, SdrHardware::EttusB210)
+                .is_some()
+        );
+        assert!(
+            decoder_hardware_constraint_reason(&SdrDecoderKind::Rtl433, SdrHardware::HackRf)
+                .is_none()
+        );
     }
 }

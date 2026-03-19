@@ -5755,6 +5755,16 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             if s.sdr_runtime.is_none() {
                 s.start_sdr_runtime(config.clone());
             }
+            if let Some(reason) = sdr::decoder_hardware_constraint_reason(&decoder, config.hardware)
+            {
+                s.push_status(format!(
+                    "decoder {} unavailable on {}: {}",
+                    decoder.label(),
+                    config.hardware.label(),
+                    reason
+                ));
+                return;
+            }
             if let Some(runtime) = s.sdr_runtime.as_ref() {
                 runtime.set_center_freq(config.center_freq_hz);
                 apply_sdr_runtime_controls(runtime, &config);
@@ -5857,6 +5867,18 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     let mut s = state.borrow_mut();
                     if s.sdr_runtime.is_none() {
                         s.start_sdr_runtime(config.clone());
+                    }
+                    if let Some(reason) =
+                        sdr::decoder_hardware_constraint_reason(&decoder, config.hardware)
+                    {
+                        s.push_status(format!(
+                            "decoder {} unavailable on {}: {}",
+                            decoder.label(),
+                            config.hardware.label(),
+                            reason
+                        ));
+                        popover.popdown();
+                        return;
                     }
                     if let Some(runtime) = s.sdr_runtime.as_ref() {
                         runtime.set_center_freq(clicked_freq_hz);
