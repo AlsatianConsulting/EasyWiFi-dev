@@ -22,6 +22,8 @@ const MAX_DECODE_MESSAGE_LEN: usize = 2048;
 const DEFAULT_SCAN_STEP_HZ: u64 = 25_000;
 const DEFAULT_SCAN_STEPS_PER_SEC: f64 = 4.0;
 const DEFAULT_SQUELCH_DBM: f32 = -78.0;
+const LIVE_SPECTRUM_SAMPLE_COUNT_MIN: u64 = 4096;
+const LIVE_SPECTRUM_ERROR_LOG_INTERVAL_SECS: u64 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -292,6 +294,12 @@ enum SdrCommand {
     RefreshDependencies,
     InstallMissingDependencies,
     Shutdown,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LiveSpectrumSource {
+    RtlSdr,
+    HackRf,
 }
 
 pub struct SdrRuntime {
@@ -567,6 +575,23 @@ fn run_sdr_loop(
 
     let mut last_frame_at = Instant::now() - Duration::from_millis(refresh_ms);
     let mut last_scan_step_at = Instant::now();
+    let live_spectrum_source = detect_live_spectrum_source(hardware);
+    let mut last_live_spectrum_error_at = Instant::now()
+        .checked_sub(Duration::from_secs(LIVE_SPECTRUM_ERROR_LOG_INTERVAL_SECS))
+        .unwrap_or_else(Instant::now);
+    match live_spectrum_source {
+        Some(source) => {
+            let _ = sender.send(SdrEvent::Log(format!(
+                "live IQ-backed spectrum enabled via {}",
+                live_spectrum_source_label(source)
+            )));
+        }
+        None => {
+            let _ = sender.send(SdrEvent::Log(
+                "live IQ-backed spectrum unavailable for selected hardware/tooling; using synthetic spectrum fallback".to_string(),
+            ));
+        }
+    }
 
     while !stop_flag.load(Ordering::Relaxed) {
         while let Ok(command) = command_rx.try_recv() {
@@ -871,13 +896,44 @@ fn run_sdr_loop(
         if !sweep_paused
             && now.saturating_duration_since(last_frame_at) >= Duration::from_millis(refresh_ms)
         {
-            let frame = generate_synthetic_spectrum_frame(
-                center_freq_hz,
-                sample_rate_hz,
-                fft_bins,
-                hardware,
-                squelch_dbm,
-            );
+            let frame = if let Some(source) = live_spectrum_source {
+                match generate_live_spectrum_frame(
+                    source,
+                    center_freq_hz,
+                    sample_rate_hz,
+                    fft_bins,
+                    hardware,
+                    squelch_dbm,
+                ) {
+                    Ok(frame) => frame,
+                    Err(err) => {
+                        if now.saturating_duration_since(last_live_spectrum_error_at)
+                            >= Duration::from_secs(LIVE_SPECTRUM_ERROR_LOG_INTERVAL_SECS)
+                        {
+                            let _ = sender.send(SdrEvent::Log(format!(
+                                "live spectrum capture failed (fallback to synthetic): {}",
+                                err
+                            )));
+                            last_live_spectrum_error_at = now;
+                        }
+                        generate_synthetic_spectrum_frame(
+                            center_freq_hz,
+                            sample_rate_hz,
+                            fft_bins,
+                            hardware,
+                            squelch_dbm,
+                        )
+                    }
+                }
+            } else {
+                generate_synthetic_spectrum_frame(
+                    center_freq_hz,
+                    sample_rate_hz,
+                    fft_bins,
+                    hardware,
+                    squelch_dbm,
+                )
+            };
             let _ = sender.send(SdrEvent::SpectrumFrame(frame));
             last_frame_at = now;
         }
@@ -931,6 +987,179 @@ fn generate_synthetic_spectrum_frame(
         sample_rate_hz,
         bins_db: bins,
     }
+}
+
+fn detect_live_spectrum_source(hardware: SdrHardware) -> Option<LiveSpectrumSource> {
+    match hardware {
+        SdrHardware::RtlSdr if command_exists("rtl_sdr") => Some(LiveSpectrumSource::RtlSdr),
+        SdrHardware::HackRf if command_exists("hackrf_transfer") => {
+            Some(LiveSpectrumSource::HackRf)
+        }
+        _ => None,
+    }
+}
+
+fn live_spectrum_source_label(source: LiveSpectrumSource) -> &'static str {
+    match source {
+        LiveSpectrumSource::RtlSdr => "rtl_sdr",
+        LiveSpectrumSource::HackRf => "hackrf_transfer",
+    }
+}
+
+fn generate_live_spectrum_frame(
+    source: LiveSpectrumSource,
+    center_freq_hz: u64,
+    sample_rate_hz: u32,
+    fft_bins: usize,
+    hardware: SdrHardware,
+    squelch_dbm: f32,
+) -> Result<SdrSpectrumFrame> {
+    let output_path = std::env::temp_dir().join(format!(
+        "wirelessexplorer_spectrum_{}_{}_{}.iq",
+        std::process::id(),
+        center_freq_hz,
+        Utc::now().timestamp_millis()
+    ));
+
+    let sample_count = (fft_bins as u64 * 8).max(LIVE_SPECTRUM_SAMPLE_COUNT_MIN);
+    let command_line = match source {
+        LiveSpectrumSource::RtlSdr => format!(
+            "rtl_sdr -f {} -s {} -n {} {} >/dev/null 2>&1",
+            center_freq_hz,
+            sample_rate_hz,
+            sample_count,
+            shell_escape_path(&output_path)
+        ),
+        LiveSpectrumSource::HackRf => format!(
+            "hackrf_transfer -f {} -s {} -n {} -r {} >/dev/null 2>&1",
+            center_freq_hz,
+            sample_rate_hz,
+            sample_count,
+            shell_escape_path(&output_path)
+        ),
+    };
+
+    let capture_output = Command::new("bash").arg("-lc").arg(command_line).output()?;
+    if !capture_output.status.success() {
+        let stderr = String::from_utf8_lossy(&capture_output.stderr);
+        let _ = fs::remove_file(&output_path);
+        anyhow::bail!("capture command failed: {}", stderr.trim());
+    }
+
+    let raw = fs::read(&output_path).with_context(|| {
+        format!(
+            "failed to read live spectrum IQ sample {}",
+            output_path.display()
+        )
+    })?;
+    let _ = fs::remove_file(&output_path);
+
+    let iq = match source {
+        LiveSpectrumSource::RtlSdr => iq_pairs_from_u8_interleaved(&raw, fft_bins),
+        LiveSpectrumSource::HackRf => iq_pairs_from_i8_interleaved(&raw, fft_bins),
+    };
+    if iq.len() < fft_bins {
+        anyhow::bail!(
+            "insufficient IQ samples for FFT (got {}, need {})",
+            iq.len(),
+            fft_bins
+        );
+    }
+
+    let bins = power_spectrum_dbm_from_iq(&iq, fft_bins, hardware, squelch_dbm);
+    Ok(SdrSpectrumFrame {
+        timestamp: Utc::now(),
+        center_freq_hz,
+        sample_rate_hz,
+        bins_db: bins,
+    })
+}
+
+fn iq_pairs_from_u8_interleaved(raw: &[u8], fft_bins: usize) -> Vec<(f32, f32)> {
+    let max_pairs = (fft_bins * 2).max(fft_bins);
+    let mut iq = Vec::with_capacity(max_pairs);
+    for chunk in raw.chunks_exact(2).take(max_pairs) {
+        let i = (chunk[0] as f32 - 127.5) / 128.0;
+        let q = (chunk[1] as f32 - 127.5) / 128.0;
+        iq.push((i, q));
+    }
+    iq
+}
+
+fn iq_pairs_from_i8_interleaved(raw: &[u8], fft_bins: usize) -> Vec<(f32, f32)> {
+    let max_pairs = (fft_bins * 2).max(fft_bins);
+    let mut iq = Vec::with_capacity(max_pairs);
+    for chunk in raw.chunks_exact(2).take(max_pairs) {
+        let i = (chunk[0] as i8) as f32 / 128.0;
+        let q = (chunk[1] as i8) as f32 / 128.0;
+        iq.push((i, q));
+    }
+    iq
+}
+
+fn power_spectrum_dbm_from_iq(
+    iq: &[(f32, f32)],
+    fft_bins: usize,
+    hardware: SdrHardware,
+    squelch_dbm: f32,
+) -> Vec<f32> {
+    let n = fft_bins.min(iq.len());
+    if n < 8 {
+        return vec![squelch_dbm; fft_bins];
+    }
+
+    let two_pi = std::f32::consts::TAU;
+    let n_f = n as f32;
+    let mut power = vec![0.0f32; fft_bins];
+    for (k, slot) in power.iter_mut().enumerate() {
+        let mut re = 0.0f32;
+        let mut im = 0.0f32;
+        let k_f = k as f32;
+        for (idx, (i, q)) in iq.iter().take(n).enumerate() {
+            let idx_f = idx as f32;
+            let window = 0.5 - 0.5 * ((two_pi * idx_f) / (n_f - 1.0)).cos();
+            let xr = i * window;
+            let xi = q * window;
+            let angle = -two_pi * k_f * idx_f / (fft_bins as f32);
+            let c = angle.cos();
+            let s = angle.sin();
+            re += xr * c - xi * s;
+            im += xr * s + xi * c;
+        }
+        *slot = (re * re + im * im).max(1e-12);
+    }
+
+    let dbfs = power
+        .into_iter()
+        .map(|p| 10.0 * p.log10())
+        .collect::<Vec<_>>();
+    let min_dbfs = dbfs
+        .iter()
+        .copied()
+        .fold(f32::INFINITY, |acc, value| acc.min(value));
+    let max_dbfs = dbfs
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, |acc, value| acc.max(value));
+
+    let noise_floor = match hardware {
+        SdrHardware::RtlSdr => -94.0,
+        SdrHardware::HackRf => -91.0,
+        SdrHardware::BladeRf => -89.0,
+        SdrHardware::EttusB210 => -87.0,
+    };
+    let dynamic_db = (max_dbfs - min_dbfs).max(8.0);
+    dbfs.into_iter()
+        .map(|value| {
+            let normalized = ((value - min_dbfs) / dynamic_db).clamp(0.0, 1.0);
+            let mapped = noise_floor + normalized * 52.0;
+            if mapped < squelch_dbm {
+                squelch_dbm - 3.0
+            } else {
+                mapped
+            }
+        })
+        .collect()
 }
 
 fn resolve_decoder_command_line(
@@ -2777,5 +3006,61 @@ mod tests {
             .filter(|descriptor| descriptor.package_hint == "leandvb")
             .count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn iq_pairs_from_u8_interleaved_converts_unsigned_centered_values() {
+        let raw = vec![0u8, 255u8, 128u8, 127u8];
+        let pairs = iq_pairs_from_u8_interleaved(&raw, 2);
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs[0].0 < 0.0);
+        assert!(pairs[0].1 > 0.0);
+    }
+
+    #[test]
+    fn iq_pairs_from_i8_interleaved_converts_signed_values() {
+        let raw = vec![128u8, 127u8, 0u8, 1u8];
+        let pairs = iq_pairs_from_i8_interleaved(&raw, 2);
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs[0].0 < 0.0);
+        assert!(pairs[0].1 > 0.0);
+    }
+
+    #[test]
+    fn power_spectrum_dbm_from_iq_returns_expected_bin_count() {
+        let fft_bins = 64usize;
+        let mut iq = Vec::with_capacity(fft_bins * 2);
+        for idx in 0..(fft_bins * 2) {
+            let angle = std::f32::consts::TAU * 6.0 * (idx as f32) / (fft_bins as f32);
+            iq.push((angle.cos(), angle.sin()));
+        }
+        let bins = power_spectrum_dbm_from_iq(&iq, fft_bins, SdrHardware::RtlSdr, -78.0);
+        assert_eq!(bins.len(), fft_bins);
+        let max_value = bins
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, |acc, value| acc.max(value));
+        let min_value = bins
+            .iter()
+            .copied()
+            .fold(f32::INFINITY, |acc, value| acc.min(value));
+        assert!(max_value > min_value);
+    }
+
+    #[test]
+    fn detect_live_spectrum_source_matches_expected_tool_for_hardware() {
+        let rtl = detect_live_spectrum_source(SdrHardware::RtlSdr);
+        if command_exists("rtl_sdr") {
+            assert!(matches!(rtl, Some(LiveSpectrumSource::RtlSdr)));
+        } else {
+            assert!(rtl.is_none());
+        }
+
+        let hackrf = detect_live_spectrum_source(SdrHardware::HackRf);
+        if command_exists("hackrf_transfer") {
+            assert!(matches!(hackrf, Some(LiveSpectrumSource::HackRf)));
+        } else {
+            assert!(hackrf.is_none());
+        }
     }
 }
