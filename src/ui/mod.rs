@@ -4267,6 +4267,11 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ("band".to_string(), "Band".to_string(), 14),
             ("posture".to_string(), "Encryption".to_string(), 12),
             ("payload_parse".to_string(), "Payload Parse".to_string(), 14),
+            (
+                "payload_fields".to_string(),
+                "Payload Fields".to_string(),
+                36,
+            ),
             ("coords".to_string(), "Coords".to_string(), 8),
             ("identifiers".to_string(), "Identifiers".to_string(), 20),
             ("summary".to_string(), "Summary".to_string(), 40),
@@ -8555,6 +8560,7 @@ fn sdr_satcom_table_header() -> Grid {
         ("Band", 14),
         ("Encryption", 12),
         ("Payload Parse", 14),
+        ("Payload Fields", 36),
         ("Coords", 8),
         ("Identifiers", 20),
         ("Summary", 40),
@@ -8606,6 +8612,7 @@ fn sdr_satcom_row_column_value(row: &SdrSatcomObservation, column_id: &str) -> O
         "band" => Some(row.band.clone()),
         "posture" => Some(row.encryption_posture.clone()),
         "payload_parse" => Some(row.payload_parse_state.clone()),
+        "payload_fields" => Some(satcom_payload_fields_text(&row.payload_fields)),
         "coords" => Some(if row.has_coordinates {
             "Yes".to_string()
         } else {
@@ -8704,6 +8711,10 @@ fn refresh_sdr_satcom_list(
         line.append(&label_cell(row.encryption_posture, 12));
         line.append(&label_cell(row.payload_parse_state, 14));
         line.append(&label_cell(
+            satcom_payload_fields_text(&row.payload_fields),
+            36,
+        ));
+        line.append(&label_cell(
             if row.has_coordinates {
                 "Yes".to_string()
             } else {
@@ -8786,6 +8797,18 @@ fn sdr_satcom_signature(
         page_size,
         pagination_filter_signature(filters)
     )
+}
+
+fn satcom_payload_fields_text(fields: &HashMap<String, String>) -> String {
+    if fields.is_empty() {
+        return String::new();
+    }
+    let mut entries = fields
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries.join(", ")
 }
 
 fn format_sdr_dependency_status(statuses: &[SdrDependencyStatus]) -> String {
