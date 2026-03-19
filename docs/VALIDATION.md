@@ -176,6 +176,7 @@ Validated behavior:
 6. SDR right-click decode actions now enforce hardware-constraint checks and provide explicit unavailable-decoder status feedback
 7. POCSAG/DECT built-ins now attempt non-RTL fallback chains (HackRF/bladeRF/B210) when `csdr`, `sox`, `multimon-ng`, and capture tools are present
 8. Built-in decoder launch path now honors hardware-specific plugin overrides for command templates, enabling per-device demod command customization from `sdr-plugins.json`
+9. Runtime logs now identify the specific built-in override ID used when a hardware-specific override is active
 
 Blocked by hardware/runtime state:
 
