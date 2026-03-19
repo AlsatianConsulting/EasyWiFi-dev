@@ -4045,6 +4045,17 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_bias_tee_check.set_active(SdrConfig::default().bias_tee_enabled);
     let sdr_no_payload_satcom_check = CheckButton::with_label("No payload for satcom decoders");
     sdr_no_payload_satcom_check.set_active(SdrConfig::default().no_payload_satcom);
+    let satcom_parse_denylist_value = std::env::var("WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "(none)".to_string());
+    let sdr_satcom_denylist_label = Label::new(Some(&format!(
+        "Satcom Parse Denylist (env): {}",
+        satcom_parse_denylist_value
+    )));
+    sdr_satcom_denylist_label.set_xalign(0.0);
+    sdr_satcom_denylist_label.set_wrap(true);
     let sdr_sample_duration_spin = SpinButton::with_range(1.0, 600.0, 1.0);
     sdr_sample_duration_spin.set_value(10.0);
     let sdr_sample_dir_entry = Entry::new();
@@ -4157,6 +4168,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&sdr_autotune_check, 0, 5, 2, 1);
     sdr_controls.attach(&sdr_bias_tee_check, 2, 5, 3, 1);
     sdr_controls.attach(&sdr_no_payload_satcom_check, 5, 5, 3, 1);
+    sdr_controls.attach(&sdr_satcom_denylist_label, 8, 5, 3, 1);
     sdr_controls.attach(&Label::new(Some("Bookmarks")), 0, 6, 1, 1);
     sdr_controls.attach(&sdr_bookmark_combo, 1, 6, 2, 1);
     sdr_controls.attach(&sdr_bookmark_jump_btn, 3, 6, 1, 1);
