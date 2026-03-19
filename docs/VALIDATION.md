@@ -23,9 +23,39 @@ When file output is enabled, a session directory is created under the configured
 Current SDR logging can also emit:
 
 - per-decoder rolling text logs
-- per-decoder map logs
-- per-decoder satcom audit logs
+- per-decoder map logs (including `message` + `raw` fields)
+- per-decoder satcom audit logs (including `message` + `raw` fields; redacted in no-payload mode)
 - IQ sample files captured on demand
+- user SDR preset exchange file at config path: `wirelessexplorer-sdr-presets.json` (via SDR preset import/export controls)
+
+KML/KMZ regression coverage now also verifies:
+
+- AP/client/bluetooth folders are present in KMZ `doc.kml`
+- per-hit ExtendedData includes encryption classification and key identifiers
+- per-hit ExtendedData includes `source_adapters` provenance fields
+- client per-hit ExtendedData includes association state (`associated` / `unassociated`)
+
+Wi-Fi capture regression coverage now also verifies:
+
+- interactive decoder startup now attempts configured packet-header mode with fallback (`PPI` -> `Radiotap`)
+- interactive parse path accepts both `radiotap.dbm_antsignal` and `ppi.dbm_antsignal`
+- RSSI selection prefers radiotap and falls back to PPI when radiotap is empty
+- geiger-mode RSSI parsing also supports radiotap/PPI fallback
+
+Summary JSON regression coverage now also verifies:
+
+- client `associated_state` (`associated` / `unassociated`) in addition to associated BSSID/SSID
+- AP `band` and `wps` serialization
+- client `wps` serialization
+- bluetooth `transport_class` normalization (`ble` / `classic` / `unknown`)
+- bluetooth `active_enumeration` serialization
+
+Static GPS regression coverage now verifies:
+
+- default output coordinates remain `35.1453957, -79.4747181`
+- valid `GpsSettings::Static` coordinates are used for output GPS
+- invalid static coordinates fall back to defaults
+- nearest-fix selection uses closest timestamp, rejects stale fixes (>20s), and rejects invalid coordinates
 
 ## Multi-Adapter Status
 
@@ -75,6 +105,7 @@ Validated behavior:
 1. `wlx1cbfcef8e928` can be put into monitor mode successfully.
 2. App-style `tshark` capture on `wlx1cbfcef8e928` works without `-I`.
 3. Testing with `tshark -I` against an interface already in monitor mode produces a false-negative "device doesn't support monitor mode" error and should not be used as the validation method here.
+4. Noninteractive Wi-Fi test mode accepts `--packet-headers radiotap` and `--packet-headers ppi` (with fallback to radiotap when local PPI capture cannot start).
 
 Collected during live tests:
 
@@ -163,7 +194,7 @@ Observed but not collected in the sampled windows:
 
 Blocked by implementation or dependency:
 
-1. `acars`: current local invocation still exits with usage text and needs correction or a different local decoder tool
+1. `acars`: resolver is tightened to avoid known broken fallback invocation, but live decode validation is still pending on this host
 2. `gsm_lte`: blocked because `gr-gsm`/`cell_search` is not installed
 3. `iridium`: blocked because `iridium-toolkit` is not installed
 4. `dect`: tooling not yet installed/validated
@@ -197,5 +228,5 @@ Missing local SDR dependencies reported by the app:
 1. Bluetooth multi-controller support across more than one BlueZ controller at once
 2. Multi-SDR simultaneous operation in the SDR tab
 3. Live SDR FFT/waterfall backed by hardware IQ instead of synthetic frames
-4. ACARS decoder command path correction
+4. ACARS runtime still needs live on-air validation after decoder command updates
 5. Broader decoder dependency installation and validation

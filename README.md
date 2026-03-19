@@ -22,14 +22,27 @@ This repository contains an MVP implementation with:
   - Embedded geiger tracker panel for selected Bluetooth device (RSSI + audible tone mapping)
 - Channel Usage tab
   - Channel utilization chart with spectrum dropdown filter
+  - Optional inline Channel Usage panel in Access Points tab (toggleable)
+- SDR tab
+  - FFT + spectrogram + decode tables
+  - Center-frequency geiger indicators (RSSI/tone estimate/activity bar from center FFT bins)
+  - Optional auto-squelch from center geiger with configurable dB margin
+  - Bookmark add/jump workflow with persistence in app settings
+  - One-click operator preset profiles for common bands/workflows
+  - Save Current as Preset stores user-defined SDR presets in app settings
+  - Rename/Delete/Move controls for saved user presets
+  - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)
+  - Map and satcom audit entries now carry both parsed `message` and `raw` decoder text (redacted when no-payload mode is enabled)
 - Settings via File menu
   - Interface/channel mode settings (multi-adapter, hop/lock)
   - GPS settings (`Interface`, `GPSD`, `Stream` TCP/UDP NMEA, `Static`)
+  - View toggles include status/details/device panes, table column filters, and AP inline Channel Usage
 - Layout via File menu
   - Per-table column chooser (show/hide), reordering (up/down), and width controls for AP/client/associated-client tables
   - Alert/watchlist controls (handshake alerts, watchlist alerts, network+device watchlists)
 - Live GPS status indicator (mode, connected/disconnected, last fix timestamp, endpoint/detail)
   - GPSD mode uses `WATCH` JSON with TPV fix parsing
+  - Output GPS coordinates honor configured `GpsSettings::Static` when valid, with safe default fallback
 - Exports
   - CSV exports (global + per-device detail CSV)
   - Location-only CSV logs:
@@ -40,6 +53,10 @@ This repository contains an MVP implementation with:
     - `kml/access_points`
     - `kml/clients`
     - `kml/bluetooth`
+  - KML/KMZ style policy includes:
+    - AP styles by encryption class
+    - client styles by associated vs unassociated state
+    - bluetooth styles by BLE vs classic transport
   - Consolidated session PCAPNG (`pcap/consolidated_capture.pcapng`)
   - Consolidated GPS-annotated PCAPNG (`pcap/consolidated_capture_with_gps.pcapng`)
   - Dedicated handshake capture folder (`pcap/handshakes`)
@@ -61,6 +78,14 @@ Or manually:
 
 ```bash
 cargo run
+```
+
+Non-interactive validation examples:
+
+```bash
+# Wi-Fi test mode with explicit packet header choice
+cargo run -- --test-wifi --interface <iface> --packet-headers radiotap
+cargo run -- --test-wifi --interface <iface> --packet-headers ppi
 ```
 
 ## Runtime requirements

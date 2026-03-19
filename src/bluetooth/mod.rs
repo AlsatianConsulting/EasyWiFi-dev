@@ -583,11 +583,10 @@ fn run_scan_loop(
     };
 
     while !stop_flag.load(Ordering::Relaxed) {
-        let mut process_hits =
-            |hits: Vec<ScanHit>,
-             is_ble_only: bool,
-             source_label: &str,
-             info_controller: Option<&str>| {
+        let mut process_hits = |hits: Vec<ScanHit>,
+                                is_ble_only: bool,
+                                source_label: &str,
+                                info_controller: Option<&str>| {
             for hit in hits {
                 if stop_flag.load(Ordering::Relaxed) {
                     break;

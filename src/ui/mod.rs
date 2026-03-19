@@ -15,8 +15,9 @@ use crate::sdr::{
 use crate::settings::{
     default_ap_table_layout, default_assoc_client_table_layout, default_bluetooth_table_layout,
     default_client_table_layout, settings_file_path, AppSettings, BluetoothScanSource,
-    ChannelSelectionMode, GpsSettings, InterfaceSettings, StreamProtocol, TableColumnLayout,
-    TableLayout, WatchlistDeviceType, WatchlistEntry, WatchlistSettings, WifiPacketHeaderMode,
+    ChannelSelectionMode, GpsSettings, InterfaceSettings, SdrBookmarkSetting,
+    SdrOperatorPresetSetting, StreamProtocol, TableColumnLayout, TableLayout, WatchlistDeviceType,
+    WatchlistEntry, WatchlistSettings, WifiPacketHeaderMode,
 };
 use crate::storage::StorageEngine;
 use anyhow::{Context, Result};
@@ -78,6 +79,8 @@ const MAX_CAPTURE_EVENTS_PER_TICK: usize = 1200;
 const MAX_BLUETOOTH_EVENTS_PER_TICK: usize = 200;
 const MAX_SDR_EVENTS_PER_TICK: usize = 200;
 const MAX_WIFI_GEIGER_UPDATES_PER_TICK: usize = 8;
+const SDR_AUTO_SQUELCH_MIN_INTERVAL_MS: u64 = 400;
+const SDR_AUTO_SQUELCH_MIN_DELTA_DB: f32 = 1.0;
 const MIN_LIST_REFRESH_INTERVAL_MS: u64 = 140;
 const TABLE_CHAR_WIDTH_PX: i32 = 10;
 const DEFAULT_TABLE_PAGE_SIZE: usize = 50;
@@ -96,6 +99,23 @@ const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 430;
 const DEFAULT_SDR_ROOT_POSITION: i32 = 420;
 const FAKE_GPS_LATITUDE: f64 = 35.145_395_7;
 const FAKE_GPS_LONGITUDE: f64 = -79.474_718_1;
+
+fn static_output_gps_coordinates() -> (f64, f64) {
+    (FAKE_GPS_LATITUDE, FAKE_GPS_LONGITUDE)
+}
+
+fn output_gps_coordinates_for_settings(settings: &AppSettings) -> (f64, f64) {
+    match &settings.gps {
+        GpsSettings::Static {
+            latitude,
+            longitude,
+            ..
+        } if (-90.0..=90.0).contains(latitude) && (-180.0..=180.0).contains(longitude) => {
+            (*latitude, *longitude)
+        }
+        _ => static_output_gps_coordinates(),
+    }
+}
 
 #[derive(Clone)]
 enum PersistenceCommand {
@@ -181,10 +201,11 @@ struct AppState {
 
 impl AppState {
     fn fixed_gps_observation(&self, rssi_dbm: Option<i32>) -> GeoObservation {
+        let (latitude, longitude) = output_gps_coordinates_for_settings(&self.settings);
         GeoObservation {
             timestamp: Utc::now(),
-            latitude: FAKE_GPS_LATITUDE,
-            longitude: FAKE_GPS_LONGITUDE,
+            latitude,
+            longitude,
             altitude_m: None,
             rssi_dbm,
         }
@@ -262,6 +283,8 @@ impl AppState {
 
     fn gps_status_text(&self) -> String {
         let status = self.gps_provider.status();
+        let (output_latitude, output_longitude) =
+            output_gps_coordinates_for_settings(&self.settings);
         let state = if status.connected {
             "Connected"
         } else {
@@ -274,7 +297,7 @@ impl AppState {
 
         format!(
             "GPS {} | {} | Last Fix: {} | {} | Output GPS: {}, {}",
-            status.mode, state, last_fix, status.detail, FAKE_GPS_LATITUDE, FAKE_GPS_LONGITUDE
+            status.mode, state, last_fix, status.detail, output_latitude, output_longitude
         )
     }
 
@@ -640,10 +663,11 @@ impl AppState {
             }
         }
 
+        let (latitude, longitude) = output_gps_coordinates_for_settings(&self.settings);
         let point = GeoObservation {
             timestamp: now,
-            latitude: FAKE_GPS_LATITUDE,
-            longitude: FAKE_GPS_LONGITUDE,
+            latitude,
+            longitude,
             altitude_m: None,
             rssi_dbm: None,
         };
@@ -796,7 +820,8 @@ impl AppState {
         target_label: impl Into<String>,
         preferred_interface: Option<&str>,
     ) -> bool {
-        let Some(index) = self.enabled_wifi_interface_index_for_preferred(preferred_interface) else {
+        let Some(index) = self.enabled_wifi_interface_index_for_preferred(preferred_interface)
+        else {
             self.push_status("no Wi-Fi interface configured for AP lock".to_string());
             return false;
         };
@@ -902,7 +927,10 @@ impl AppState {
             }
         }
 
-        self.settings.interfaces.iter().position(|iface| iface.enabled)
+        self.settings
+            .interfaces
+            .iter()
+            .position(|iface| iface.enabled)
     }
 
     fn locked_wifi_interface_name(&self, preferred_interface: Option<&str>) -> Option<String> {
@@ -1114,6 +1142,197 @@ fn normalize_rssi_fraction(rssi_dbm: i32) -> f64 {
     ((rssi_dbm + 100) as f64 / 70.0).clamp(0.0, 1.0)
 }
 
+fn sdr_center_geiger_reading(spectrum_bins: &[f32]) -> Option<(f32, u32, f64)> {
+    if spectrum_bins.is_empty() {
+        return None;
+    }
+    let center = spectrum_bins.len() / 2;
+    let radius = (spectrum_bins.len() / 40).clamp(1, 8);
+    let start = center.saturating_sub(radius);
+    let end = (center + radius + 1).min(spectrum_bins.len());
+    let window = &spectrum_bins[start..end];
+    if window.is_empty() {
+        return None;
+    }
+
+    let avg_dbm = window.iter().copied().sum::<f32>() / window.len() as f32;
+    let fraction = ((avg_dbm as f64 + 120.0) / 90.0).clamp(0.0, 1.0);
+    let tone_hz = (250.0 + fraction * 1650.0).round() as u32;
+    Some((avg_dbm, tone_hz, fraction))
+}
+
+fn sdr_center_geiger_squelch_target(center_dbm: f32, margin_db: f32) -> f32 {
+    let margin = margin_db.clamp(2.0, 30.0);
+    (center_dbm - margin).clamp(-130.0, -10.0)
+}
+
+fn should_apply_sdr_auto_squelch(previous_target: Option<f32>, new_target: f32) -> bool {
+    previous_target
+        .map(|prior| (new_target - prior).abs() >= SDR_AUTO_SQUELCH_MIN_DELTA_DB)
+        .unwrap_or(true)
+}
+
+#[derive(Clone)]
+struct SdrOperatorPreset {
+    id: String,
+    label: String,
+    center_freq_hz: u64,
+    sample_rate_hz: u32,
+    scan_enabled: bool,
+    scan_start_hz: u64,
+    scan_end_hz: u64,
+    scan_step_hz: u64,
+    scan_steps_per_sec: f64,
+    squelch_dbm: f32,
+}
+
+fn sdr_operator_presets() -> Vec<SdrOperatorPreset> {
+    vec![
+        SdrOperatorPreset {
+            id: "wide_433".to_string(),
+            label: "General ISM (433 MHz)".to_string(),
+            center_freq_hz: 433_920_000,
+            sample_rate_hz: 2_400_000,
+            scan_enabled: false,
+            scan_start_hz: 433_050_000,
+            scan_end_hz: 434_790_000,
+            scan_step_hz: 25_000,
+            scan_steps_per_sec: 5.0,
+            squelch_dbm: -78.0,
+        },
+        SdrOperatorPreset {
+            id: "airband_scan".to_string(),
+            label: "Airband Scan (118-137 MHz)".to_string(),
+            center_freq_hz: 127_500_000,
+            sample_rate_hz: 2_400_000,
+            scan_enabled: true,
+            scan_start_hz: 118_000_000,
+            scan_end_hz: 137_000_000,
+            scan_step_hz: 25_000,
+            scan_steps_per_sec: 8.0,
+            squelch_dbm: -72.0,
+        },
+        SdrOperatorPreset {
+            id: "ais_dual".to_string(),
+            label: "AIS Channels (161.975/162.025)".to_string(),
+            center_freq_hz: 162_000_000,
+            sample_rate_hz: 2_400_000,
+            scan_enabled: true,
+            scan_start_hz: 161_950_000,
+            scan_end_hz: 162_050_000,
+            scan_step_hz: 25_000,
+            scan_steps_per_sec: 6.0,
+            squelch_dbm: -76.0,
+        },
+    ]
+}
+
+fn user_sdr_preset_id(index: usize) -> String {
+    format!("user_{index}")
+}
+
+fn parse_user_sdr_preset_id(id: &str) -> Option<usize> {
+    id.strip_prefix("user_")?.parse::<usize>().ok()
+}
+
+fn normalized_sdr_preset_label(label: &str, center_freq_hz: u64) -> String {
+    if label.trim().is_empty() {
+        format!("{:.3} MHz", center_freq_hz as f64 / 1_000_000.0)
+    } else {
+        label.trim().to_string()
+    }
+}
+
+fn sdr_presets_from_settings(settings: &AppSettings) -> Vec<SdrOperatorPreset> {
+    let mut presets = sdr_operator_presets();
+    let user_presets = settings
+        .sdr_operator_presets
+        .iter()
+        .enumerate()
+        .filter(|(_, preset)| preset.center_freq_hz >= 100_000 && preset.sample_rate_hz >= 200_000)
+        .map(|(idx, preset)| SdrOperatorPreset {
+            id: user_sdr_preset_id(idx),
+            label: normalized_sdr_preset_label(&preset.label, preset.center_freq_hz),
+            center_freq_hz: preset.center_freq_hz,
+            sample_rate_hz: preset.sample_rate_hz,
+            scan_enabled: preset.scan_enabled,
+            scan_start_hz: preset.scan_start_hz,
+            scan_end_hz: preset.scan_end_hz,
+            scan_step_hz: preset.scan_step_hz,
+            scan_steps_per_sec: preset.scan_steps_per_sec,
+            squelch_dbm: preset.squelch_dbm,
+        })
+        .collect::<Vec<_>>();
+    presets.extend(user_presets);
+    presets
+}
+
+fn rebuild_sdr_preset_combo(
+    combo: &ComboBoxText,
+    presets: &[SdrOperatorPreset],
+    preferred_active_id: Option<&str>,
+) {
+    combo.remove_all();
+    for preset in presets {
+        combo.append(Some(&preset.id), &preset.label);
+    }
+    if let Some(id) = preferred_active_id {
+        if combo.set_active_id(Some(id)) {
+            return;
+        }
+    }
+    if !presets.is_empty() {
+        combo.set_active(Some(0));
+    }
+}
+
+fn sdr_preset_exchange_path() -> PathBuf {
+    settings_file_path()
+        .parent()
+        .map(|p| p.join("wirelessexplorer-sdr-presets.json"))
+        .unwrap_or_else(|| PathBuf::from("wirelessexplorer-sdr-presets.json"))
+}
+
+fn valid_sdr_operator_preset(preset: &SdrOperatorPresetSetting) -> bool {
+    preset.center_freq_hz >= 100_000 && preset.sample_rate_hz >= 200_000
+}
+
+fn sdr_operator_preset_semantic_eq(
+    left: &SdrOperatorPresetSetting,
+    right: &SdrOperatorPresetSetting,
+) -> bool {
+    left.label.trim().eq_ignore_ascii_case(right.label.trim())
+        && left.center_freq_hz == right.center_freq_hz
+        && left.sample_rate_hz == right.sample_rate_hz
+        && left.scan_enabled == right.scan_enabled
+        && left.scan_start_hz == right.scan_start_hz
+        && left.scan_end_hz == right.scan_end_hz
+        && left.scan_step_hz == right.scan_step_hz
+        && (left.scan_steps_per_sec - right.scan_steps_per_sec).abs() < f64::EPSILON
+        && (left.squelch_dbm - right.squelch_dbm).abs() < f32::EPSILON
+}
+
+fn merge_sdr_operator_presets(
+    existing: &mut Vec<SdrOperatorPresetSetting>,
+    imported: Vec<SdrOperatorPresetSetting>,
+) -> usize {
+    let mut added = 0usize;
+    for preset in imported {
+        if !valid_sdr_operator_preset(&preset) {
+            continue;
+        }
+        if existing
+            .iter()
+            .any(|current| sdr_operator_preset_semantic_eq(current, &preset))
+        {
+            continue;
+        }
+        existing.push(preset);
+        added += 1;
+    }
+    added
+}
+
 struct StopCompletion {
     status_lines: Vec<String>,
     cleared_interfaces: Option<Vec<InterfaceSettings>>,
@@ -1212,6 +1431,7 @@ struct UiWidgets {
     ap_bottom: Paned,
     ap_detail_notebook: Notebook,
     ap_assoc_box: GtkBox,
+    ap_inline_channel_box: GtkBox,
     ap_header_holder: GtkBox,
     ap_list: ListBox,
     ap_pagination: TablePaginationUi,
@@ -1263,9 +1483,16 @@ struct UiWidgets {
     bluetooth_geiger_progress: ProgressBar,
     bluetooth_geiger_state: Rc<RefCell<BluetoothGeigerUiState>>,
     channel_draw: DrawingArea,
+    ap_inline_channel_draw: DrawingArea,
     sdr_frequency_label: Label,
     sdr_decoder_label: Label,
     sdr_dependency_label: Label,
+    sdr_center_geiger_rssi_label: Label,
+    sdr_center_geiger_tone_label: Label,
+    sdr_center_geiger_progress: ProgressBar,
+    sdr_center_geiger_auto_squelch_check: CheckButton,
+    sdr_center_geiger_margin_spin: SpinButton,
+    sdr_squelch_scale: gtk::Scale,
     sdr_fft_draw: DrawingArea,
     sdr_spectrogram_draw: DrawingArea,
     sdr_map_draw: DrawingArea,
@@ -1292,8 +1519,92 @@ struct TablePaginationUi {
     page_go_button: Button,
     filter_bar: Grid,
     filter_entries: Rc<RefCell<HashMap<String, Entry>>>,
-    filter_order: Rc<Vec<String>>,
+    filter_order: Rc<RefCell<Vec<String>>>,
+    filter_columns: Rc<RefCell<Vec<(String, String, i32)>>>,
+    filter_summary_label: Label,
     summary_label: Label,
+}
+
+fn pagination_filter_label_columns(
+    filter_columns: &[(String, String, i32)],
+) -> Vec<(String, String)> {
+    filter_columns
+        .iter()
+        .map(|(id, label, _)| (id.clone(), label.clone()))
+        .collect::<Vec<_>>()
+}
+
+fn rebuild_pagination_filter_bar(pagination: &TablePaginationUi) {
+    let existing_values = {
+        let entries = pagination.filter_entries.borrow();
+        entries
+            .iter()
+            .map(|(column_id, entry)| (column_id.clone(), entry.text().to_string()))
+            .collect::<HashMap<_, _>>()
+    };
+
+    while let Some(child) = pagination.filter_bar.first_child() {
+        pagination.filter_bar.remove(&child);
+    }
+
+    let columns = pagination.filter_columns.borrow().clone();
+    {
+        let mut entries = pagination.filter_entries.borrow_mut();
+        entries.clear();
+    }
+    {
+        let mut order = pagination.filter_order.borrow_mut();
+        order.clear();
+        order.extend(columns.iter().map(|(column_id, _, _)| column_id.clone()));
+    }
+
+    for (column_index, (column_id, column_label, width_chars)) in columns.iter().enumerate() {
+        let entry = Entry::new();
+        let entry_width = (*width_chars).max(6);
+        entry.add_css_class("table-cell");
+        entry.add_css_class("column-filter");
+        gtk::prelude::EntryExt::set_alignment(&entry, 0.0);
+        entry.set_has_frame(false);
+        entry.set_width_chars(entry_width);
+        entry.set_max_width_chars(entry_width);
+        entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, 22);
+        entry.set_margin_end(6);
+        entry.set_tooltip_text(Some(&format!("Filter {}", column_label)));
+        if let Some(previous) = existing_values.get(column_id) {
+            entry.set_text(previous);
+        }
+        pagination
+            .filter_bar
+            .attach(&entry, column_index as i32, 0, 1, 1);
+        pagination
+            .filter_entries
+            .borrow_mut()
+            .insert(column_id.clone(), entry.clone());
+
+        let current_page = pagination.current_page.clone();
+        let generation = pagination.generation.clone();
+        let filter_entries_for_change = pagination.filter_entries.clone();
+        let filter_summary_label_for_change = pagination.filter_summary_label.clone();
+        let filter_columns_for_change = pagination.filter_columns.clone();
+        entry.connect_changed(move |_| {
+            current_page.set(0);
+            generation.set(generation.get().saturating_add(1));
+            let labels =
+                pagination_filter_label_columns(&filter_columns_for_change.borrow().clone());
+            update_filter_summary_label(
+                &filter_summary_label_for_change,
+                &labels,
+                &filter_entries_for_change.borrow(),
+            );
+        });
+    }
+
+    let labels = pagination_filter_label_columns(&columns);
+    update_filter_summary_label(
+        &pagination.filter_summary_label,
+        &labels,
+        &pagination.filter_entries.borrow(),
+    );
 }
 
 fn build_table_pagination_controls(
@@ -1304,12 +1615,8 @@ fn build_table_pagination_controls(
     let page_size = Rc::new(Cell::new(default_page_size.max(1)));
     let generation = Rc::new(Cell::new(0_u64));
     let filter_entries: Rc<RefCell<HashMap<String, Entry>>> = Rc::new(RefCell::new(HashMap::new()));
-    let filter_order = Rc::new(
-        filter_columns
-            .iter()
-            .map(|(id, _, _)| id.clone())
-            .collect::<Vec<_>>(),
-    );
+    let filter_order = Rc::new(RefCell::new(Vec::new()));
+    let filter_columns_state = Rc::new(RefCell::new(filter_columns));
 
     let container = GtkBox::new(Orientation::Horizontal, 8);
     container.set_margin_top(4);
@@ -1357,41 +1664,6 @@ fn build_table_pagination_controls(
     controls_row.append(&clear_filters_button);
     controls_row.append(&summary_label);
 
-    for (column_index, (column_id, column_label, width_chars)) in filter_columns.iter().enumerate()
-    {
-        let entry = Entry::new();
-        let entry_width = (*width_chars).max(6);
-        entry.add_css_class("table-cell");
-        entry.add_css_class("column-filter");
-        gtk::prelude::EntryExt::set_alignment(&entry, 0.0);
-        entry.set_has_frame(false);
-        entry.set_width_chars(entry_width);
-        entry.set_max_width_chars(entry_width);
-        entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, 22);
-        entry.set_margin_end(6);
-        entry.set_tooltip_text(Some(&format!("Filter {}", column_label)));
-        filter_bar.attach(&entry, column_index as i32, 0, 1, 1);
-        filter_entries
-            .borrow_mut()
-            .insert(column_id.clone(), entry.clone());
-        let current_page = current_page.clone();
-        let generation = generation.clone();
-        let filter_entries_for_change = filter_entries.clone();
-        let filter_summary_label_for_change = filter_summary_label.clone();
-        let filter_columns_for_change = filter_columns.clone();
-        entry.connect_changed(move |_| {
-            current_page.set(0);
-            generation.set(generation.get().saturating_add(1));
-            update_filter_summary_label(
-                &filter_summary_label_for_change,
-                &filter_columns_for_change
-                    .iter()
-                    .map(|(id, label, _)| (id.clone(), label.clone()))
-                    .collect::<Vec<_>>(),
-                &filter_entries_for_change.borrow(),
-            );
-        });
-    }
     controls_row.append(&filter_summary_label);
 
     container.append(&controls_row);
@@ -1472,7 +1744,7 @@ fn build_table_pagination_controls(
         let generation = generation.clone();
         let filter_entries_for_clear = filter_entries.clone();
         let filter_summary_label_for_clear = filter_summary_label.clone();
-        let filter_columns_for_clear = filter_columns.clone();
+        let filter_columns_for_clear = filter_columns_state.clone();
         clear_filters_button.connect_clicked(move |_| {
             let entries = filter_entries_for_clear.borrow();
             let had_filters = entries
@@ -1484,12 +1756,11 @@ fn build_table_pagination_controls(
                 }
             }
             drop(entries);
+            let labels =
+                pagination_filter_label_columns(&filter_columns_for_clear.borrow().clone());
             update_filter_summary_label(
                 &filter_summary_label_for_clear,
-                &filter_columns_for_clear
-                    .iter()
-                    .map(|(id, label, _)| (id.clone(), label.clone()))
-                    .collect::<Vec<_>>(),
+                &labels,
                 &filter_entries_for_clear.borrow(),
             );
             if had_filters {
@@ -1499,32 +1770,24 @@ fn build_table_pagination_controls(
         });
     }
 
-    update_filter_summary_label(
-        &filter_summary_label,
-        &filter_columns
-            .iter()
-            .map(|(id, label, _)| (id.clone(), label.clone()))
-            .collect::<Vec<_>>(),
-        &filter_entries.borrow(),
-    );
-
-    (
-        container,
-        TablePaginationUi {
-            current_page,
-            page_size,
-            generation,
-            page_size_combo,
-            prev_button,
-            next_button,
-            page_entry,
-            page_go_button,
-            filter_bar,
-            filter_entries,
-            filter_order,
-            summary_label,
-        },
-    )
+    let pagination = TablePaginationUi {
+        current_page,
+        page_size,
+        generation,
+        page_size_combo,
+        prev_button,
+        next_button,
+        page_entry,
+        page_go_button,
+        filter_bar,
+        filter_entries,
+        filter_order,
+        filter_columns: filter_columns_state,
+        filter_summary_label,
+        summary_label,
+    };
+    rebuild_pagination_filter_bar(&pagination);
+    (container, pagination)
 }
 
 fn update_filter_summary_label(
@@ -1604,7 +1867,7 @@ fn build_ui(app: &Application) -> Result<()> {
                 settings_path.display()
             )),
         ),
-        Err(err) if !settings_path.exists() => (AppSettings::default(), None),
+        Err(_err) if !settings_path.exists() => (AppSettings::default(), None),
         Err(err) => (
             AppSettings::default(),
             Some(format!(
@@ -1722,6 +1985,8 @@ fn build_ui(app: &Application) -> Result<()> {
         .ubertooth_device
         .clone()
         .unwrap_or_else(|| "<default>".to_string());
+    let (output_gps_latitude, output_gps_longitude) =
+        output_gps_coordinates_for_settings(&settings);
 
     let state = Rc::new(RefCell::new(AppState {
         settings,
@@ -1769,7 +2034,7 @@ fn build_ui(app: &Application) -> Result<()> {
             ));
             lines.push(format!(
                 "GPS output coordinates fixed to {}, {}",
-                FAKE_GPS_LATITUDE, FAKE_GPS_LONGITUDE
+                output_gps_latitude, output_gps_longitude
             ));
             lines
         },
@@ -2152,6 +2417,8 @@ fn build_menubar(
                 Some(next),
                 None,
                 None,
+                None,
+                None,
             );
         });
     }
@@ -2182,6 +2449,8 @@ fn build_menubar(
                 &widgets,
                 None,
                 Some(next),
+                None,
+                None,
                 None,
             );
         });
@@ -2214,10 +2483,78 @@ fn build_menubar(
                 None,
                 None,
                 Some(next),
+                None,
+                None,
             );
         });
     }
     app.add_action(&settings_show_device_pane_action);
+
+    let show_column_filters_initial = state.borrow().settings.show_column_filters;
+    let settings_show_column_filters_action = gio::SimpleAction::new_stateful(
+        "settings_show_column_filters",
+        None,
+        &glib::Variant::from(show_column_filters_initial),
+    );
+    {
+        let state = state.clone();
+        let content_paned = content_paned.clone();
+        let global_status_box = global_status_box.clone();
+        let widgets = widgets.clone();
+        settings_show_column_filters_action.connect_activate(move |action, _| {
+            let current = action
+                .state()
+                .and_then(|variant| variant.get::<bool>())
+                .unwrap_or(true);
+            let next = !current;
+            action.set_state(&glib::Variant::from(next));
+            apply_view_preferences(
+                &state,
+                &content_paned,
+                &global_status_box,
+                &widgets,
+                None,
+                None,
+                None,
+                Some(next),
+                None,
+            );
+        });
+    }
+    app.add_action(&settings_show_column_filters_action);
+
+    let show_ap_inline_channel_usage_initial = state.borrow().settings.show_ap_inline_channel_usage;
+    let settings_show_ap_inline_channel_usage_action = gio::SimpleAction::new_stateful(
+        "settings_show_ap_inline_channel_usage",
+        None,
+        &glib::Variant::from(show_ap_inline_channel_usage_initial),
+    );
+    {
+        let state = state.clone();
+        let content_paned = content_paned.clone();
+        let global_status_box = global_status_box.clone();
+        let widgets = widgets.clone();
+        settings_show_ap_inline_channel_usage_action.connect_activate(move |action, _| {
+            let current = action
+                .state()
+                .and_then(|variant| variant.get::<bool>())
+                .unwrap_or(false);
+            let next = !current;
+            action.set_state(&glib::Variant::from(next));
+            apply_view_preferences(
+                &state,
+                &content_paned,
+                &global_status_box,
+                &widgets,
+                None,
+                None,
+                None,
+                None,
+                Some(next),
+            );
+        });
+    }
+    app.add_action(&settings_show_ap_inline_channel_usage_action);
 
     let set_default_rows_per_page =
         |rows: usize, state: &Rc<RefCell<AppState>>, pagination_defaults: &PaginationDefaultsUi| {
@@ -2336,6 +2673,14 @@ fn build_menubar(
     view_menu.append(Some("Device Pane"), Some("app.settings_show_device_pane"));
     view_menu.append(Some("Details Pane"), Some("app.settings_show_detail_pane"));
     view_menu.append(Some("Status Pane"), Some("app.settings_show_status_bar"));
+    view_menu.append(
+        Some("Column Filters"),
+        Some("app.settings_show_column_filters"),
+    );
+    view_menu.append(
+        Some("AP Inline Channel Usage"),
+        Some("app.settings_show_ap_inline_channel_usage"),
+    );
 
     let settings_menu = gio::Menu::new();
     settings_menu.append_submenu(Some("View"), &view_menu);
@@ -2408,6 +2753,9 @@ fn apply_view_visibility(
         .ap_detail_notebook
         .set_visible(settings.show_detail_pane);
     widgets.ap_assoc_box.set_visible(settings.show_device_pane);
+    widgets
+        .ap_inline_channel_box
+        .set_visible(settings.show_ap_inline_channel_usage);
     widgets.ap_bottom.set_position(DEFAULT_AP_BOTTOM_POSITION);
 
     widgets
@@ -2432,6 +2780,19 @@ fn apply_view_visibility(
     widgets
         .bluetooth_bottom
         .set_position(DEFAULT_BLUETOOTH_BOTTOM_POSITION);
+
+    for pagination in [
+        &widgets.ap_pagination,
+        &widgets.client_pagination,
+        &widgets.ap_assoc_pagination,
+        &widgets.bluetooth_pagination,
+        &widgets.sdr_decode_pagination,
+        &widgets.sdr_satcom_pagination,
+    ] {
+        pagination
+            .filter_bar
+            .set_visible(settings.show_column_filters);
+    }
 }
 
 fn apply_view_preferences(
@@ -2442,6 +2803,8 @@ fn apply_view_preferences(
     show_status_bar: Option<bool>,
     show_detail_pane: Option<bool>,
     show_device_pane: Option<bool>,
+    show_column_filters: Option<bool>,
+    show_ap_inline_channel_usage: Option<bool>,
 ) {
     let mut status_messages = Vec::new();
     {
@@ -2449,6 +2812,8 @@ fn apply_view_preferences(
         let previous_status_bar = s.settings.show_status_bar;
         let previous_detail_pane = s.settings.show_detail_pane;
         let previous_device_pane = s.settings.show_device_pane;
+        let previous_column_filters = s.settings.show_column_filters;
+        let previous_ap_inline_channel_usage = s.settings.show_ap_inline_channel_usage;
         let mut changed = false;
 
         if let Some(value) = show_status_bar {
@@ -2466,6 +2831,18 @@ fn apply_view_preferences(
         if let Some(value) = show_device_pane {
             if s.settings.show_device_pane != value {
                 s.settings.show_device_pane = value;
+                changed = true;
+            }
+        }
+        if let Some(value) = show_column_filters {
+            if s.settings.show_column_filters != value {
+                s.settings.show_column_filters = value;
+                changed = true;
+            }
+        }
+        if let Some(value) = show_ap_inline_channel_usage {
+            if s.settings.show_ap_inline_channel_usage != value {
+                s.settings.show_ap_inline_channel_usage = value;
                 changed = true;
             }
         }
@@ -2501,6 +2878,26 @@ fn apply_view_preferences(
                     "enabled"
                 } else {
                     "disabled"
+                }
+            ));
+        }
+        if s.settings.show_column_filters != previous_column_filters {
+            status_messages.push(format!(
+                "column filters {}",
+                if s.settings.show_column_filters {
+                    "enabled"
+                } else {
+                    "hidden"
+                }
+            ));
+        }
+        if s.settings.show_ap_inline_channel_usage != previous_ap_inline_channel_usage {
+            status_messages.push(format!(
+                "AP inline channel usage {}",
+                if s.settings.show_ap_inline_channel_usage {
+                    "enabled"
+                } else {
+                    "hidden"
                 }
             ));
         }
@@ -2854,6 +3251,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         assoc_sort,
         bluetooth_sort,
         default_rows_per_page,
+        show_ap_inline_channel_usage,
     ) = {
         let s = state.borrow();
         (
@@ -2866,6 +3264,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             s.assoc_sort.clone(),
             s.bluetooth_sort.clone(),
             s.settings.default_rows_per_page.max(1),
+            s.settings.show_ap_inline_channel_usage,
         )
     };
 
@@ -2958,9 +3357,34 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_detail_sections.set_start_child(Some(&ap_summary_row));
     ap_detail_sections.set_end_child(Some(&ap_notes_box));
 
+    let ap_inline_channel_band_combo = ComboBoxText::new();
+    ap_inline_channel_band_combo.append(Some("all"), "All Bands");
+    ap_inline_channel_band_combo.append(Some("2.4"), "2.4 GHz");
+    ap_inline_channel_band_combo.append(Some("5"), "5 GHz");
+    ap_inline_channel_band_combo.append(Some("6"), "6 GHz");
+    ap_inline_channel_band_combo.set_active_id(Some("all"));
+
+    let ap_inline_channel_draw = DrawingArea::new();
+    ap_inline_channel_draw.set_content_width(1100);
+    ap_inline_channel_draw.set_content_height(220);
+    ap_inline_channel_draw.set_hexpand(true);
+    ap_inline_channel_draw.set_vexpand(true);
+
+    let ap_inline_channel_box = GtkBox::new(Orientation::Vertical, 6);
+    ap_inline_channel_box.append(&Label::new(Some("Inline Channel Usage")));
+    ap_inline_channel_box.append(&ap_inline_channel_band_combo);
+    ap_inline_channel_box.append(&ap_inline_channel_draw);
+    ap_inline_channel_box.set_visible(show_ap_inline_channel_usage);
+
+    let ap_inline_channel_toggle =
+        CheckButton::with_label("Show Inline Channel Usage Panel (Access Points Tab)");
+    ap_inline_channel_toggle.set_active(show_ap_inline_channel_usage);
+
     let ap_detail_box = GtkBox::new(Orientation::Vertical, 6);
     ap_detail_box.append(&Label::new(Some("Network Details and Packet Graphs")));
+    ap_detail_box.append(&ap_inline_channel_toggle);
     ap_detail_box.append(&ap_detail_sections);
+    ap_detail_box.append(&ap_inline_channel_box);
 
     let ap_selection_suppressed = Rc::new(RefCell::new(false));
     let ap_selected_key = Rc::new(RefCell::new(None::<String>));
@@ -3502,6 +3926,17 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let sdr_dependency_label = Label::new(Some("Dependencies: not checked"));
     sdr_dependency_label.set_xalign(0.0);
     sdr_dependency_label.set_wrap(true);
+    let sdr_center_geiger_rssi_label = Label::new(Some("Center Geiger RSSI: -- dBm"));
+    sdr_center_geiger_rssi_label.set_xalign(0.0);
+    let sdr_center_geiger_tone_label = Label::new(Some("Center Geiger Tone: -- Hz"));
+    sdr_center_geiger_tone_label.set_xalign(0.0);
+    let sdr_center_geiger_progress = ProgressBar::new();
+    sdr_center_geiger_progress.set_show_text(true);
+    sdr_center_geiger_progress.set_text(Some("No spectrum yet"));
+    let sdr_center_geiger_auto_squelch_check = CheckButton::with_label("Auto Squelch (Center)");
+    sdr_center_geiger_auto_squelch_check.set_active(false);
+    let sdr_center_geiger_margin_spin = SpinButton::with_range(2.0, 30.0, 1.0);
+    sdr_center_geiger_margin_spin.set_value(8.0);
 
     let sdr_hardware_combo = ComboBoxText::new();
     for hardware in [
@@ -3624,6 +4059,24 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         ("DAB Block 11D 222.064".to_string(), 222_064_000),
         ("VOR 113.000".to_string(), 113_000_000),
     ];
+    let persisted_bookmarks = {
+        state
+            .borrow()
+            .settings
+            .sdr_bookmarks
+            .iter()
+            .filter(|bookmark| bookmark.frequency_hz >= 100_000)
+            .map(|bookmark| {
+                let label = if bookmark.label.trim().is_empty() {
+                    format!("{:.6} MHz", bookmark.frequency_hz as f64 / 1_000_000.0)
+                } else {
+                    bookmark.label.clone()
+                };
+                (label, bookmark.frequency_hz)
+            })
+            .collect::<Vec<_>>()
+    };
+    initial_sdr_bookmarks.extend(persisted_bookmarks);
     initial_sdr_bookmarks.extend(load_gqrx_bookmarks());
     initial_sdr_bookmarks.sort_by_key(|(_, freq)| *freq);
     initial_sdr_bookmarks.dedup_by(|left, right| left.1 == right.1);
@@ -3636,6 +4089,22 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_bookmark_combo.set_active(Some(0));
     let sdr_bookmark_add_btn = Button::with_label("Add Bookmark");
     let sdr_bookmark_jump_btn = Button::with_label("Jump");
+    let sdr_preset_defs = Rc::new(RefCell::new(sdr_presets_from_settings(
+        &state.borrow().settings,
+    )));
+    let sdr_preset_combo = ComboBoxText::new();
+    rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), None);
+    let sdr_preset_apply_btn = Button::with_label("Apply Preset");
+    let sdr_preset_label_entry = Entry::new();
+    sdr_preset_label_entry.set_width_chars(24);
+    sdr_preset_label_entry.set_placeholder_text(Some("Preset Label"));
+    let sdr_preset_save_btn = Button::with_label("Save Current as Preset");
+    let sdr_preset_rename_btn = Button::with_label("Rename Selected");
+    let sdr_preset_delete_btn = Button::with_label("Delete Selected");
+    let sdr_preset_export_btn = Button::with_label("Export Presets JSON");
+    let sdr_preset_import_btn = Button::with_label("Import Presets JSON");
+    let sdr_preset_up_btn = Button::with_label("Move Up");
+    let sdr_preset_down_btn = Button::with_label("Move Down");
 
     let sdr_controls = Grid::new();
     sdr_controls.set_column_spacing(10);
@@ -3685,6 +4154,23 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&sdr_capture_sample_btn, 10, 6, 1, 1);
     sdr_controls.attach(&sdr_export_map_btn, 9, 7, 1, 1);
     sdr_controls.attach(&sdr_export_satcom_btn, 10, 7, 1, 1);
+    sdr_controls.attach(&sdr_center_geiger_rssi_label, 0, 8, 3, 1);
+    sdr_controls.attach(&sdr_center_geiger_tone_label, 3, 8, 3, 1);
+    sdr_controls.attach(&sdr_center_geiger_progress, 6, 8, 5, 1);
+    sdr_controls.attach(&sdr_center_geiger_auto_squelch_check, 0, 9, 3, 1);
+    sdr_controls.attach(&Label::new(Some("Center Margin (dB)")), 3, 9, 2, 1);
+    sdr_controls.attach(&sdr_center_geiger_margin_spin, 5, 9, 1, 1);
+    sdr_controls.attach(&Label::new(Some("Preset")), 6, 9, 1, 1);
+    sdr_controls.attach(&sdr_preset_combo, 7, 9, 2, 1);
+    sdr_controls.attach(&sdr_preset_apply_btn, 9, 9, 2, 1);
+    sdr_controls.attach(&sdr_preset_label_entry, 7, 10, 2, 1);
+    sdr_controls.attach(&sdr_preset_save_btn, 9, 10, 2, 1);
+    sdr_controls.attach(&sdr_preset_rename_btn, 7, 11, 2, 1);
+    sdr_controls.attach(&sdr_preset_delete_btn, 9, 11, 2, 1);
+    sdr_controls.attach(&sdr_preset_export_btn, 7, 12, 2, 1);
+    sdr_controls.attach(&sdr_preset_import_btn, 9, 12, 2, 1);
+    sdr_controls.attach(&sdr_preset_up_btn, 7, 13, 2, 1);
+    sdr_controls.attach(&sdr_preset_down_btn, 9, 13, 2, 1);
 
     let sdr_spectrogram_draw = DrawingArea::new();
     sdr_spectrogram_draw.set_content_width(1200);
@@ -3918,14 +4404,12 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 return;
             };
             let label = ap.ssid.clone().unwrap_or_else(|| ap.bssid.clone());
-            let _ = state
-                .borrow_mut()
-                .lock_wifi_to_channel(
-                    channel,
-                    "HT20",
-                    label,
-                    ap.source_adapters.first().map(String::as_str),
-                );
+            let _ = state.borrow_mut().lock_wifi_to_channel(
+                channel,
+                "HT20",
+                label,
+                ap.source_adapters.first().map(String::as_str),
+            );
         });
     }
 
@@ -3933,8 +4417,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let state = state.clone();
         let ap_list = ap_list.clone();
         ap_geiger_unlock_btn.connect_clicked(move |_| {
-            let preferred = selected_ap(&state, &ap_list)
-                .and_then(|ap| ap.source_adapters.first().cloned());
+            let preferred =
+                selected_ap(&state, &ap_list).and_then(|ap| ap.source_adapters.first().cloned());
             let _ = state.borrow_mut().unlock_wifi_card(preferred.as_deref());
         });
     }
@@ -3982,14 +4466,12 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 };
                 (channel, ap.ssid.clone().unwrap_or_else(|| ap.bssid.clone()))
             };
-            let _ = state
-                .borrow_mut()
-                .lock_wifi_to_channel(
-                    channel,
-                    "HT20",
-                    label,
-                    client.source_adapters.first().map(String::as_str),
-                );
+            let _ = state.borrow_mut().lock_wifi_to_channel(
+                channel,
+                "HT20",
+                label,
+                client.source_adapters.first().map(String::as_str),
+            );
         });
     }
 
@@ -4279,6 +4761,57 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
 
     {
         let state = state.clone();
+        let ap_inline_channel_draw = ap_inline_channel_draw.clone();
+        ap_inline_channel_band_combo.connect_changed(move |_| {
+            let _ = state.borrow();
+            ap_inline_channel_draw.queue_draw();
+        });
+    }
+
+    {
+        let state = state.clone();
+        let ap_inline_channel_band_combo = ap_inline_channel_band_combo.clone();
+        ap_inline_channel_draw.set_draw_func(move |_, ctx, width, height| {
+            draw_channel_usage_chart(
+                ctx,
+                width as f64,
+                height as f64,
+                &state.borrow().channel_usage,
+                ap_inline_channel_band_combo.active_id().as_deref(),
+            );
+        });
+    }
+
+    {
+        let state = state.clone();
+        let ap_inline_channel_box = ap_inline_channel_box.clone();
+        let ap_inline_channel_draw = ap_inline_channel_draw.clone();
+        let window = window.clone();
+        ap_inline_channel_toggle.connect_toggled(move |check| {
+            let enabled = check.is_active();
+            ap_inline_channel_box.set_visible(enabled);
+            if enabled {
+                ap_inline_channel_draw.queue_draw();
+            }
+            {
+                let mut s = state.borrow_mut();
+                if s.settings.show_ap_inline_channel_usage != enabled {
+                    s.settings.show_ap_inline_channel_usage = enabled;
+                    s.push_status(format!(
+                        "AP inline channel usage {}",
+                        if enabled { "enabled" } else { "hidden" }
+                    ));
+                    s.save_settings_to_disk();
+                }
+            }
+            if let Some(app) = window.application() {
+                sync_view_menu_action_state(&app, "settings_show_ap_inline_channel_usage", enabled);
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
         let channel_draw = channel_draw.clone();
         channel_band_combo.connect_changed(move |_| {
             let _ = state.borrow();
@@ -4540,6 +5073,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     }
 
     {
+        let state = state.clone();
         let sdr_bookmarks = sdr_bookmarks.clone();
         let sdr_bookmark_combo = sdr_bookmark_combo.clone();
         let sdr_center_freq_entry = sdr_center_freq_entry.clone();
@@ -4559,8 +5093,356 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             {
                 sdr_bookmarks.borrow_mut().push((label.clone(), freq_hz));
                 sdr_bookmark_combo.append(Some(&key), &label);
+                let mut s = state.borrow_mut();
+                if !s
+                    .settings
+                    .sdr_bookmarks
+                    .iter()
+                    .any(|bookmark| bookmark.frequency_hz == freq_hz)
+                {
+                    s.settings.sdr_bookmarks.push(SdrBookmarkSetting {
+                        label: label.clone(),
+                        frequency_hz: freq_hz,
+                    });
+                    s.save_settings_to_disk();
+                }
             }
             sdr_bookmark_combo.set_active_id(Some(&key));
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_preset_defs = sdr_preset_defs.clone();
+        let sdr_preset_combo = sdr_preset_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        sdr_preset_apply_btn.connect_clicked(move |_| {
+            let Some(active_id) = sdr_preset_combo.active_id() else {
+                return;
+            };
+            let Some(preset) = sdr_preset_defs
+                .borrow()
+                .iter()
+                .find(|p| p.id == active_id.as_str())
+                .cloned()
+            else {
+                return;
+            };
+
+            sdr_center_freq_entry.set_text(&preset.center_freq_hz.to_string());
+            sdr_sample_rate_entry.set_text(&preset.sample_rate_hz.to_string());
+            sdr_scan_enable_check.set_active(preset.scan_enabled);
+            sdr_scan_start_entry.set_text(&preset.scan_start_hz.to_string());
+            sdr_scan_end_entry.set_text(&preset.scan_end_hz.to_string());
+            sdr_scan_step_entry.set_text(&preset.scan_step_hz.to_string());
+            sdr_scan_speed_entry.set_text(&format!("{:.2}", preset.scan_steps_per_sec));
+            sdr_squelch_scale.set_value(preset.squelch_dbm as f64);
+
+            let config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+            );
+
+            let mut s = state.borrow_mut();
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                runtime.set_center_freq(config.center_freq_hz);
+                apply_sdr_runtime_controls(runtime, &config);
+            }
+            s.push_status(format!("applied SDR preset {}", preset.label));
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_preset_defs = sdr_preset_defs.clone();
+        let sdr_preset_combo = sdr_preset_combo.clone();
+        let sdr_preset_label_entry = sdr_preset_label_entry.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        sdr_preset_save_btn.connect_clicked(move |_| {
+            let config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+            );
+
+            let mut s = state.borrow_mut();
+            let label =
+                normalized_sdr_preset_label(&sdr_preset_label_entry.text(), config.center_freq_hz);
+            s.settings
+                .sdr_operator_presets
+                .push(SdrOperatorPresetSetting {
+                    label: label.clone(),
+                    center_freq_hz: config.center_freq_hz,
+                    sample_rate_hz: config.sample_rate_hz,
+                    scan_enabled: config.scan_range_enabled,
+                    scan_start_hz: config.scan_start_hz,
+                    scan_end_hz: config.scan_end_hz,
+                    scan_step_hz: config.scan_step_hz,
+                    scan_steps_per_sec: config.scan_steps_per_sec,
+                    squelch_dbm: config.squelch_dbm,
+                });
+            s.save_settings_to_disk();
+            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
+            let id = user_sdr_preset_id(s.settings.sdr_operator_presets.len() - 1);
+            rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), Some(&id));
+            sdr_preset_label_entry.set_text("");
+            s.push_status(format!("saved SDR preset {label}"));
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_preset_defs = sdr_preset_defs.clone();
+        let sdr_preset_combo = sdr_preset_combo.clone();
+        let sdr_preset_label_entry = sdr_preset_label_entry.clone();
+        sdr_preset_rename_btn.connect_clicked(move |_| {
+            let Some(active_id) = sdr_preset_combo.active_id() else {
+                return;
+            };
+            let Some(index) = parse_user_sdr_preset_id(active_id.as_str()) else {
+                state
+                    .borrow_mut()
+                    .push_status("rename skipped: built-in presets cannot be renamed".to_string());
+                return;
+            };
+            let requested = sdr_preset_label_entry.text();
+            if requested.trim().is_empty() {
+                state
+                    .borrow_mut()
+                    .push_status("rename skipped: enter a preset label first".to_string());
+                return;
+            }
+            let mut s = state.borrow_mut();
+            let Some(existing) = s.settings.sdr_operator_presets.get(index) else {
+                s.push_status("rename skipped: selected preset no longer exists".to_string());
+                return;
+            };
+            let label = normalized_sdr_preset_label(&requested, existing.center_freq_hz);
+            if let Some(preset) = s.settings.sdr_operator_presets.get_mut(index) {
+                preset.label = label.clone();
+            }
+            s.save_settings_to_disk();
+            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
+            rebuild_sdr_preset_combo(
+                &sdr_preset_combo,
+                &sdr_preset_defs.borrow(),
+                Some(active_id.as_str()),
+            );
+            sdr_preset_label_entry.set_text("");
+            s.push_status(format!("renamed SDR preset to {label}"));
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_preset_defs = sdr_preset_defs.clone();
+        let sdr_preset_combo = sdr_preset_combo.clone();
+        sdr_preset_delete_btn.connect_clicked(move |_| {
+            let Some(active_id) = sdr_preset_combo.active_id() else {
+                return;
+            };
+            let Some(index) = parse_user_sdr_preset_id(active_id.as_str()) else {
+                state
+                    .borrow_mut()
+                    .push_status("delete skipped: built-in presets cannot be deleted".to_string());
+                return;
+            };
+            let mut s = state.borrow_mut();
+            if index >= s.settings.sdr_operator_presets.len() {
+                s.push_status("delete skipped: selected preset no longer exists".to_string());
+                return;
+            }
+            let removed = s.settings.sdr_operator_presets.remove(index);
+            s.save_settings_to_disk();
+            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
+            rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), None);
+            s.push_status(format!("deleted SDR preset {}", removed.label));
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_preset_defs = sdr_preset_defs.clone();
+        let sdr_preset_combo = sdr_preset_combo.clone();
+        sdr_preset_up_btn.connect_clicked(move |_| {
+            let Some(active_id) = sdr_preset_combo.active_id() else {
+                return;
+            };
+            let Some(index) = parse_user_sdr_preset_id(active_id.as_str()) else {
+                state
+                    .borrow_mut()
+                    .push_status("reorder skipped: built-in presets cannot be moved".to_string());
+                return;
+            };
+            let mut s = state.borrow_mut();
+            if index == 0 || index >= s.settings.sdr_operator_presets.len() {
+                s.push_status("reorder skipped: preset is already at top".to_string());
+                return;
+            }
+            s.settings.sdr_operator_presets.swap(index - 1, index);
+            s.save_settings_to_disk();
+            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
+            let new_id = user_sdr_preset_id(index - 1);
+            rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), Some(&new_id));
+            s.push_status("moved SDR preset up".to_string());
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_preset_defs = sdr_preset_defs.clone();
+        let sdr_preset_combo = sdr_preset_combo.clone();
+        sdr_preset_down_btn.connect_clicked(move |_| {
+            let Some(active_id) = sdr_preset_combo.active_id() else {
+                return;
+            };
+            let Some(index) = parse_user_sdr_preset_id(active_id.as_str()) else {
+                state
+                    .borrow_mut()
+                    .push_status("reorder skipped: built-in presets cannot be moved".to_string());
+                return;
+            };
+            let mut s = state.borrow_mut();
+            if index + 1 >= s.settings.sdr_operator_presets.len() {
+                s.push_status("reorder skipped: preset is already at bottom".to_string());
+                return;
+            }
+            s.settings.sdr_operator_presets.swap(index, index + 1);
+            s.save_settings_to_disk();
+            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
+            let new_id = user_sdr_preset_id(index + 1);
+            rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), Some(&new_id));
+            s.push_status("moved SDR preset down".to_string());
+        });
+    }
+
+    {
+        let state = state.clone();
+        sdr_preset_export_btn.connect_clicked(move |_| {
+            let path = sdr_preset_exchange_path();
+            let parent = path.parent().map(PathBuf::from);
+            if let Some(dir) = parent {
+                if let Err(err) = fs::create_dir_all(&dir) {
+                    state.borrow_mut().push_status(format!(
+                        "SDR preset export failed creating directory {}: {err}",
+                        dir.display()
+                    ));
+                    return;
+                }
+            }
+
+            let presets = state.borrow().settings.sdr_operator_presets.clone();
+            match serde_json::to_string_pretty(&presets) {
+                Ok(serialized) => {
+                    if let Err(err) = fs::write(&path, serialized) {
+                        state.borrow_mut().push_status(format!(
+                            "SDR preset export failed writing {}: {err}",
+                            path.display()
+                        ));
+                        return;
+                    }
+                    state.borrow_mut().push_status(format!(
+                        "exported {} SDR presets to {}",
+                        presets.len(),
+                        path.display()
+                    ));
+                }
+                Err(err) => {
+                    state.borrow_mut().push_status(format!(
+                        "SDR preset export failed serializing presets: {err}"
+                    ));
+                }
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_preset_defs = sdr_preset_defs.clone();
+        let sdr_preset_combo = sdr_preset_combo.clone();
+        sdr_preset_import_btn.connect_clicked(move |_| {
+            let path = sdr_preset_exchange_path();
+            let raw = match fs::read_to_string(&path) {
+                Ok(raw) => raw,
+                Err(err) => {
+                    state.borrow_mut().push_status(format!(
+                        "SDR preset import failed reading {}: {err}",
+                        path.display()
+                    ));
+                    return;
+                }
+            };
+            let imported = match serde_json::from_str::<Vec<SdrOperatorPresetSetting>>(&raw) {
+                Ok(imported) => imported,
+                Err(err) => {
+                    state.borrow_mut().push_status(format!(
+                        "SDR preset import failed parsing {}: {err}",
+                        path.display()
+                    ));
+                    return;
+                }
+            };
+
+            let mut s = state.borrow_mut();
+            let added = merge_sdr_operator_presets(&mut s.settings.sdr_operator_presets, imported);
+
+            s.save_settings_to_disk();
+            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
+            rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), None);
+            s.push_status(format!(
+                "imported {} SDR presets from {}",
+                added,
+                path.display()
+            ));
         });
     }
 
@@ -4998,6 +5880,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_bottom,
             ap_detail_notebook,
             ap_assoc_box,
+            ap_inline_channel_box,
             ap_header_holder,
             ap_list,
             ap_pagination,
@@ -5049,9 +5932,16 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             bluetooth_geiger_progress,
             bluetooth_geiger_state,
             channel_draw,
+            ap_inline_channel_draw,
             sdr_frequency_label,
             sdr_decoder_label,
             sdr_dependency_label,
+            sdr_center_geiger_rssi_label,
+            sdr_center_geiger_tone_label,
+            sdr_center_geiger_progress,
+            sdr_center_geiger_auto_squelch_check,
+            sdr_center_geiger_margin_spin,
+            sdr_squelch_scale,
             sdr_fft_draw,
             sdr_spectrogram_draw,
             sdr_map_draw,
@@ -5086,6 +5976,7 @@ fn bind_poll_loop(
         ap_bottom: _ap_bottom,
         ap_detail_notebook: _ap_detail_notebook,
         ap_assoc_box: _ap_assoc_box,
+        ap_inline_channel_box: _ap_inline_channel_box,
         ap_header_holder,
         ap_list,
         ap_pagination,
@@ -5137,9 +6028,16 @@ fn bind_poll_loop(
         bluetooth_geiger_progress,
         bluetooth_geiger_state,
         channel_draw,
+        ap_inline_channel_draw,
         sdr_frequency_label,
         sdr_decoder_label,
         sdr_dependency_label,
+        sdr_center_geiger_rssi_label,
+        sdr_center_geiger_tone_label,
+        sdr_center_geiger_progress,
+        sdr_center_geiger_auto_squelch_check,
+        sdr_center_geiger_margin_spin,
+        sdr_squelch_scale,
         sdr_fft_draw,
         sdr_spectrogram_draw,
         sdr_map_draw,
@@ -5180,6 +6078,7 @@ fn bind_poll_loop(
     let pending_bluetooth_refresh = Cell::new(true);
     let pending_channel_refresh = Cell::new(true);
     let pending_sdr_refresh = Cell::new(true);
+    let sdr_auto_squelch_last_apply = Rc::new(RefCell::new(None::<(Instant, f32)>));
 
     glib::timeout_add_local(Duration::from_millis(UI_POLL_INTERVAL_MS), move || {
         let mut refresh = UiRefreshHint::none();
@@ -5361,11 +6260,23 @@ fn bind_poll_loop(
 
         if layout_changed {
             let s = state.borrow();
+            ap_pagination.filter_columns.replace(table_filter_columns(
+                &s.settings.ap_table_layout,
+                ap_column_label,
+            ));
+            rebuild_pagination_filter_bar(&ap_pagination);
             rebuild_header_container(
                 &ap_header_holder,
                 &ap_table_header(&s.settings.ap_table_layout, &s.ap_sort, state.clone()),
                 Some(&ap_pagination.filter_bar),
             );
+            client_pagination
+                .filter_columns
+                .replace(table_filter_columns(
+                    &s.settings.client_table_layout,
+                    client_column_label,
+                ));
+            rebuild_pagination_filter_bar(&client_pagination);
             rebuild_header_container(
                 &client_header_holder,
                 &client_table_header(
@@ -5375,6 +6286,13 @@ fn bind_poll_loop(
                 ),
                 Some(&client_pagination.filter_bar),
             );
+            ap_assoc_pagination
+                .filter_columns
+                .replace(table_filter_columns(
+                    &s.settings.assoc_client_table_layout,
+                    assoc_client_column_label,
+                ));
+            rebuild_pagination_filter_bar(&ap_assoc_pagination);
             rebuild_header_container(
                 &ap_assoc_header_holder,
                 &ap_assoc_clients_header(
@@ -5384,6 +6302,13 @@ fn bind_poll_loop(
                 ),
                 Some(&ap_assoc_pagination.filter_bar),
             );
+            bluetooth_pagination
+                .filter_columns
+                .replace(table_filter_columns(
+                    &s.settings.bluetooth_table_layout,
+                    bluetooth_column_label,
+                ));
+            rebuild_pagination_filter_bar(&bluetooth_pagination);
             rebuild_header_container(
                 &bluetooth_header_holder,
                 &bluetooth_table_header(
@@ -5879,9 +6804,17 @@ fn bind_poll_loop(
             }
         }
 
-        if channel_tab_active && pending_channel_refresh.get() {
-            channel_draw.queue_draw();
-            pending_channel_refresh.set(false);
+        if pending_channel_refresh.get() {
+            if channel_tab_active {
+                channel_draw.queue_draw();
+            }
+            let show_ap_inline_channel_usage = state.borrow().settings.show_ap_inline_channel_usage;
+            if show_ap_inline_channel_usage {
+                ap_inline_channel_draw.queue_draw();
+            }
+            if channel_tab_active || show_ap_inline_channel_usage {
+                pending_channel_refresh.set(false);
+            }
         }
 
         if sdr_tab_active && pending_sdr_refresh.get() {
@@ -5927,16 +6860,18 @@ fn bind_poll_loop(
 
         {
             let model = sdr_model.borrow();
+            let center_geiger = sdr_center_geiger_reading(&model.spectrum_bins);
             let sweep_state = if model.sweep_paused {
                 "paused"
             } else {
                 "active"
             };
             sdr_frequency_label.set_text(&format!(
-                "Center: {} Hz | Sample Rate: {} Hz | Sweep: {} | Satcom Audit Rows: {}",
+                "Center: {} Hz | Sample Rate: {} Hz | Sweep: {} | Map Points: {} | Satcom Audit Rows: {}",
                 model.current_freq_hz,
                 model.sample_rate_hz,
                 sweep_state,
+                model.map_points.len(),
                 model.satcom_observations.len()
             ));
             sdr_decoder_label.set_text(
@@ -5947,6 +6882,41 @@ fn bind_poll_loop(
                     .unwrap_or_else(|| "Decoder: idle".to_string()),
             );
             sdr_dependency_label.set_text(&format_sdr_dependency_status(&model.dependency_status));
+            if let Some((center_dbm, tone_hz, fraction)) = center_geiger {
+                sdr_center_geiger_rssi_label
+                    .set_text(&format!("Center Geiger RSSI: {:.1} dBm", center_dbm));
+                sdr_center_geiger_tone_label
+                    .set_text(&format!("Center Geiger Tone: {} Hz", tone_hz));
+                sdr_center_geiger_progress.set_fraction(fraction);
+                sdr_center_geiger_progress
+                    .set_text(Some(&format!("Center Activity {:.0}%", fraction * 100.0)));
+            } else {
+                sdr_center_geiger_rssi_label.set_text("Center Geiger RSSI: -- dBm");
+                sdr_center_geiger_tone_label.set_text("Center Geiger Tone: -- Hz");
+                sdr_center_geiger_progress.set_fraction(0.0);
+                sdr_center_geiger_progress.set_text(Some("No spectrum yet"));
+            }
+        }
+        if sdr_center_geiger_auto_squelch_check.is_active() {
+            let model = sdr_model.borrow();
+            if let Some((center_dbm, _, _)) = sdr_center_geiger_reading(&model.spectrum_bins) {
+                let margin_db = sdr_center_geiger_margin_spin.value() as f32;
+                let target = sdr_center_geiger_squelch_target(center_dbm, margin_db);
+                let now = Instant::now();
+                let mut last_apply = sdr_auto_squelch_last_apply.borrow_mut();
+                let previous_target = last_apply.as_ref().map(|(_, value)| *value);
+                let elapsed_ok = last_apply
+                    .as_ref()
+                    .map(|(at, _)| {
+                        now.duration_since(*at).as_millis() as u64
+                            >= SDR_AUTO_SQUELCH_MIN_INTERVAL_MS
+                    })
+                    .unwrap_or(true);
+                if elapsed_ok && should_apply_sdr_auto_squelch(previous_target, target) {
+                    sdr_squelch_scale.set_value(target as f64);
+                    *last_apply = Some((now, target));
+                }
+            }
         }
 
         let (status_text, gps_text, wifi_running, bluetooth_running, scan_transition_in_progress) = {
@@ -6714,8 +7684,8 @@ fn update_table_pagination_summary(
 
 fn pagination_filter_terms(pagination: &TablePaginationUi) -> Vec<(String, String)> {
     let entries = pagination.filter_entries.borrow();
-    let mut filters = pagination
-        .filter_order
+    let filter_order = pagination.filter_order.borrow();
+    let mut filters = filter_order
         .iter()
         .filter_map(|column_id| {
             let value = entries.get(column_id)?.text().trim().to_string();
@@ -6752,7 +7722,7 @@ fn row_matches_column_filters(
 
 fn focus_first_filter_entry(pagination: &TablePaginationUi) {
     let entries = pagination.filter_entries.borrow();
-    for column_id in pagination.filter_order.iter() {
+    for column_id in pagination.filter_order.borrow().iter() {
         if let Some(entry) = entries.get(column_id) {
             entry.grab_focus();
             entry.select_region(0, -1);
@@ -9718,14 +10688,12 @@ fn attach_ap_context_menu(
             if let Some(ap) = selected_ap(&state, &ap_list) {
                 if let Some(channel) = ap.channel {
                     let label = ap.ssid.clone().unwrap_or_else(|| ap.bssid.clone());
-                    let _ = state
-                        .borrow_mut()
-                        .lock_wifi_to_channel(
-                            channel,
-                            "HT20",
-                            label,
-                            ap.source_adapters.first().map(String::as_str),
-                        );
+                    let _ = state.borrow_mut().lock_wifi_to_channel(
+                        channel,
+                        "HT20",
+                        label,
+                        ap.source_adapters.first().map(String::as_str),
+                    );
                 }
             }
         });
@@ -9735,8 +10703,8 @@ fn attach_ap_context_menu(
         let state = state.clone();
         let ap_list = ap_list.clone();
         unlock_btn.connect_clicked(move |_| {
-            let preferred = selected_ap(&state, &ap_list)
-                .and_then(|ap| ap.source_adapters.first().cloned());
+            let preferred =
+                selected_ap(&state, &ap_list).and_then(|ap| ap.source_adapters.first().cloned());
             let _ = state.borrow_mut().unlock_wifi_card(preferred.as_deref());
         });
     }
@@ -9839,14 +10807,12 @@ fn attach_client_context_menu(
                 };
                 (channel, ap.ssid.clone().unwrap_or_else(|| ap.bssid.clone()))
             };
-            let _ = state
-                .borrow_mut()
-                .lock_wifi_to_channel(
-                    channel,
-                    "HT20",
-                    label,
-                    client.source_adapters.first().map(String::as_str),
-                );
+            let _ = state.borrow_mut().lock_wifi_to_channel(
+                channel,
+                "HT20",
+                label,
+                client.source_adapters.first().map(String::as_str),
+            );
         });
     }
 
@@ -10398,8 +11364,7 @@ fn bluetooth_action_controller(
         .filter(|value| !value.is_empty());
     match configured {
         Some(value)
-            if value != bluetooth::ALL_CONTROLLERS_ID
-                && !value.eq_ignore_ascii_case("default") =>
+            if value != bluetooth::ALL_CONTROLLERS_ID && !value.eq_ignore_ascii_case("default") =>
         {
             Some(value.to_string())
         }
@@ -11270,10 +12235,7 @@ fn open_interface_settings_dialog_inner(
 
     let bluetooth_controller_combo = ComboBoxText::new();
     bluetooth_controller_combo.append(Some("default"), "Default Controller");
-    bluetooth_controller_combo.append(
-        Some(bluetooth::ALL_CONTROLLERS_ID),
-        "All Controllers",
-    );
+    bluetooth_controller_combo.append(Some(bluetooth::ALL_CONTROLLERS_ID), "All Controllers");
     for ctrl in bluetooth::list_controllers().unwrap_or_default() {
         bluetooth_controller_combo.append(
             Some(&ctrl.id),
@@ -12047,6 +13009,10 @@ fn open_preferences_window(
     show_detail_pane_check.set_active(settings_snapshot.show_detail_pane);
     let show_device_pane_check = CheckButton::with_label("Device Pane");
     show_device_pane_check.set_active(settings_snapshot.show_device_pane);
+    let show_column_filters_check = CheckButton::with_label("Column Filters");
+    show_column_filters_check.set_active(settings_snapshot.show_column_filters);
+    let show_ap_inline_channel_usage_check = CheckButton::with_label("AP Inline Channel Usage");
+    show_ap_inline_channel_usage_check.set_active(settings_snapshot.show_ap_inline_channel_usage);
 
     let ap_columns = Rc::new(RefCell::new(
         settings_snapshot.ap_table_layout.columns.clone(),
@@ -12069,6 +13035,8 @@ fn open_preferences_window(
     view_page.append(&show_status_bar_check);
     view_page.append(&show_detail_pane_check);
     view_page.append(&show_device_pane_check);
+    view_page.append(&show_column_filters_check);
+    view_page.append(&show_ap_inline_channel_usage_check);
 
     let general_page = page(&stack, "general", "General");
     general_page.append(&section_heading("General"));
@@ -12234,10 +13202,7 @@ fn open_preferences_window(
 
     let bluetooth_controller_combo = ComboBoxText::new();
     bluetooth_controller_combo.append(Some("default"), "Default Controller");
-    bluetooth_controller_combo.append(
-        Some(bluetooth::ALL_CONTROLLERS_ID),
-        "All Controllers",
-    );
+    bluetooth_controller_combo.append(Some(bluetooth::ALL_CONTROLLERS_ID), "All Controllers");
     for ctrl in bluetooth::list_controllers().unwrap_or_default() {
         bluetooth_controller_combo.append(
             Some(&ctrl.id),
@@ -12576,7 +13541,10 @@ fn open_preferences_window(
                     let view_changed = s.settings.show_status_bar
                         != show_status_bar_check.is_active()
                         || s.settings.show_detail_pane != show_detail_pane_check.is_active()
-                        || s.settings.show_device_pane != show_device_pane_check.is_active();
+                        || s.settings.show_device_pane != show_device_pane_check.is_active()
+                        || s.settings.show_column_filters != show_column_filters_check.is_active()
+                        || s.settings.show_ap_inline_channel_usage
+                            != show_ap_inline_channel_usage_check.is_active();
 
                     if s.settings.default_rows_per_page != requested_rows {
                         s.settings.default_rows_per_page = requested_rows;
@@ -12733,6 +13701,8 @@ fn open_preferences_window(
                     Some(show_status_bar_check.is_active()),
                     Some(show_detail_pane_check.is_active()),
                     Some(show_device_pane_check.is_active()),
+                    Some(show_column_filters_check.is_active()),
+                    Some(show_ap_inline_channel_usage_check.is_active()),
                 );
                 state.borrow_mut().save_settings_to_disk();
                 if view_changed {
@@ -12751,6 +13721,16 @@ fn open_preferences_window(
                             &app,
                             "settings_show_device_pane",
                             show_device_pane_check.is_active(),
+                        );
+                        sync_view_menu_action_state(
+                            &app,
+                            "settings_show_column_filters",
+                            show_column_filters_check.is_active(),
+                        );
+                        sync_view_menu_action_state(
+                            &app,
+                            "settings_show_ap_inline_channel_usage",
+                            show_ap_inline_channel_usage_check.is_active(),
                         );
                     }
                 }
@@ -12878,10 +13858,7 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
 
     let controller_combo = ComboBoxText::new();
     controller_combo.append(Some("default"), "Default Controller");
-    controller_combo.append(
-        Some(bluetooth::ALL_CONTROLLERS_ID),
-        "All Controllers",
-    );
+    controller_combo.append(Some(bluetooth::ALL_CONTROLLERS_ID), "All Controllers");
     let controllers = bluetooth::list_controllers().unwrap_or_default();
     for ctrl in &controllers {
         controller_combo.append(
@@ -13382,7 +14359,10 @@ fn sanitize_name(value: &str) -> String {
 
 fn merge_unique_strings(existing: &mut Vec<String>, incoming: Vec<String>) {
     for value in incoming {
-        if !existing.iter().any(|current| current.eq_ignore_ascii_case(&value)) {
+        if !existing
+            .iter()
+            .any(|current| current.eq_ignore_ascii_case(&value))
+        {
             existing.push(value);
         }
     }
@@ -13397,7 +14377,8 @@ fn format_source_adapters(adapters: &[String]) -> String {
 }
 
 fn active_interface_name_for_settings(iface: &InterfaceSettings) -> String {
-    iface.monitor_interface_name
+    iface
+        .monitor_interface_name
         .clone()
         .unwrap_or_else(|| iface.interface_name.clone())
 }
@@ -13634,6 +14615,165 @@ mod tests {
         assert!(!row_matches_column_filters(&filters, |column| values
             .get(column)
             .cloned()));
+    }
+
+    #[test]
+    fn sdr_center_geiger_reading_uses_center_window() {
+        let mut bins = vec![-100.0_f32; 64];
+        bins[31] = -55.0;
+        bins[32] = -50.0;
+        bins[33] = -53.0;
+        let (dbm, tone_hz, fraction) =
+            sdr_center_geiger_reading(&bins).expect("expected geiger reading");
+        assert!(dbm > -90.0);
+        assert!(tone_hz >= 250);
+        assert!(fraction > 0.0);
+    }
+
+    #[test]
+    fn sdr_center_geiger_reading_none_for_empty_bins() {
+        assert!(sdr_center_geiger_reading(&[]).is_none());
+    }
+
+    #[test]
+    fn sdr_center_geiger_squelch_target_applies_margin_and_clamps() {
+        assert!((sdr_center_geiger_squelch_target(-55.0, 8.0) - (-63.0)).abs() < f32::EPSILON);
+        assert!((sdr_center_geiger_squelch_target(-120.0, 30.0) - (-130.0)).abs() < f32::EPSILON);
+        assert!((sdr_center_geiger_squelch_target(-4.0, 2.0) - (-10.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn should_apply_sdr_auto_squelch_requires_minimum_delta() {
+        assert!(should_apply_sdr_auto_squelch(None, -70.0));
+        assert!(!should_apply_sdr_auto_squelch(Some(-70.4), -70.0));
+        assert!(should_apply_sdr_auto_squelch(Some(-72.0), -70.0));
+    }
+
+    #[test]
+    fn sdr_operator_presets_have_unique_ids() {
+        let presets = sdr_operator_presets();
+        let unique = presets
+            .iter()
+            .map(|preset| preset.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(presets.len(), unique.len());
+        assert!(presets
+            .iter()
+            .all(|preset| preset.center_freq_hz >= 100_000));
+    }
+
+    #[test]
+    fn user_sdr_preset_id_round_trip() {
+        let id = user_sdr_preset_id(7);
+        assert_eq!(parse_user_sdr_preset_id(&id), Some(7));
+        assert_eq!(parse_user_sdr_preset_id("wide_433"), None);
+    }
+
+    #[test]
+    fn sdr_preset_exchange_path_uses_expected_filename() {
+        let path = sdr_preset_exchange_path();
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("wirelessexplorer-sdr-presets.json")
+        );
+    }
+
+    #[test]
+    fn merge_sdr_operator_presets_skips_invalid_and_duplicates() {
+        let base = SdrOperatorPresetSetting {
+            label: "Airband".to_string(),
+            center_freq_hz: 127_500_000,
+            sample_rate_hz: 2_400_000,
+            scan_enabled: true,
+            scan_start_hz: 118_000_000,
+            scan_end_hz: 137_000_000,
+            scan_step_hz: 25_000,
+            scan_steps_per_sec: 8.0,
+            squelch_dbm: -72.0,
+        };
+        let mut existing = vec![base.clone()];
+        let imported = vec![
+            base,
+            SdrOperatorPresetSetting {
+                label: "invalid".to_string(),
+                center_freq_hz: 0,
+                sample_rate_hz: 2_400_000,
+                scan_enabled: false,
+                scan_start_hz: 0,
+                scan_end_hz: 0,
+                scan_step_hz: 0,
+                scan_steps_per_sec: 0.0,
+                squelch_dbm: -80.0,
+            },
+            SdrOperatorPresetSetting {
+                label: "AIS".to_string(),
+                center_freq_hz: 162_000_000,
+                sample_rate_hz: 2_400_000,
+                scan_enabled: true,
+                scan_start_hz: 161_950_000,
+                scan_end_hz: 162_050_000,
+                scan_step_hz: 25_000,
+                scan_steps_per_sec: 6.0,
+                squelch_dbm: -76.0,
+            },
+        ];
+
+        let added = merge_sdr_operator_presets(&mut existing, imported);
+        assert_eq!(added, 1);
+        assert_eq!(existing.len(), 2);
+    }
+
+    #[test]
+    fn static_output_gps_coordinates_match_expected_defaults() {
+        let (lat, lon) = static_output_gps_coordinates();
+        assert!((lat - 35.145_395_7).abs() < 1e-9);
+        assert!((lon + 79.474_718_1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn output_gps_coordinates_uses_static_setting_when_valid() {
+        let settings = AppSettings {
+            gps: GpsSettings::Static {
+                latitude: 33.1234,
+                longitude: -80.4321,
+                altitude_m: None,
+            },
+            ..AppSettings::default()
+        };
+        let (lat, lon) = output_gps_coordinates_for_settings(&settings);
+        assert!((lat - 33.1234).abs() < 1e-9);
+        assert!((lon + 80.4321).abs() < 1e-9);
+    }
+
+    #[test]
+    fn output_gps_coordinates_falls_back_for_invalid_static_setting() {
+        let settings = AppSettings {
+            gps: GpsSettings::Static {
+                latitude: 123.0,
+                longitude: -250.0,
+                altitude_m: None,
+            },
+            ..AppSettings::default()
+        };
+        let (lat, lon) = output_gps_coordinates_for_settings(&settings);
+        let (default_lat, default_lon) = static_output_gps_coordinates();
+        assert!((lat - default_lat).abs() < 1e-9);
+        assert!((lon - default_lon).abs() < 1e-9);
+    }
+
+    #[test]
+    fn output_gps_coordinates_falls_back_for_non_static_mode() {
+        let settings = AppSettings {
+            gps: GpsSettings::Gpsd {
+                host: "127.0.0.1".to_string(),
+                port: 2947,
+            },
+            ..AppSettings::default()
+        };
+        let (lat, lon) = output_gps_coordinates_for_settings(&settings);
+        let (default_lat, default_lon) = static_output_gps_coordinates();
+        assert!((lat - default_lat).abs() < 1e-9);
+        assert!((lon - default_lon).abs() < 1e-9);
     }
 
     #[test]

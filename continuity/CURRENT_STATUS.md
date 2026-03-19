@@ -20,15 +20,22 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 
 1. Access Points tab with sortable/paged table.
 2. Per-column filtering.
-3. Watchlist row highlighting with named watchlist entry column.
-4. AP details pane with identity, security, country, notes, and packet pie chart.
-5. AP-associated clients pane.
-6. RSSI geiger tab with lock/unlock workflow.
-7. Multi-interface Wi-Fi runtime support.
-8. Multi-interface Wi-Fi noninteractive test mode.
-9. CSV/JSON/KML/PCAPNG output pipeline.
-10. SQLite-backed session storage.
-11. GPS-aware export plumbing.
+3. Toggleable column filter bars (View + Preferences).
+4. Watchlist row highlighting with named watchlist entry column.
+5. AP details pane with identity, security, country, notes, and packet pie chart.
+6. AP-associated clients pane scoped to current AP association.
+7. RSSI geiger tab with lock/unlock workflow.
+8. Multi-interface Wi-Fi runtime support.
+9. Multi-interface Wi-Fi noninteractive test mode.
+10. `--packet-headers radiotap|ppi` support in Wi-Fi test mode.
+11. Optional inline Channel Usage panel on the AP tab.
+12. CSV/JSON/KML/PCAPNG output pipeline.
+13. SQLite-backed session storage.
+14. GPS-aware export plumbing.
+15. Output GPS coordinates now honor configured static GPS settings when valid, with default fallback.
+16. Interactive Wi-Fi decode parsing now reads both radiotap and PPI RSSI fields (radiotap preferred, PPI fallback) to match packet-header mode behavior.
+17. Wi-Fi geiger capture now parses both radiotap and PPI RSSI fields with fallback behavior.
+18. Interactive Wi-Fi decoder startup now follows packet-header mode selection with fallback (`PPI` then `Radiotap`), aligned with PCAP saver behavior.
 
 ### Bluetooth
 
@@ -48,6 +55,15 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 4. Decoder dependency detection and install-plan logic exist.
 5. Basic noninteractive SDR test mode exists.
 6. RTL-SDR / HackRF / bladeRF / B210 detection paths are wired.
+7. Center-frequency geiger indicators in SDR UI (RSSI, tone, activity).
+8. Optional center-geiger-driven auto squelch in SDR UI.
+9. Bookmarks/presets plus scan-range/scan-speed/squelch controls are present.
+10. User-added SDR bookmarks persist in app settings.
+11. One-click SDR operator presets can apply tuned scan/squelch profiles.
+12. User-defined SDR operator presets can be saved and persist in app settings.
+13. User-defined SDR presets can be renamed, deleted, and reordered from SDR controls.
+14. User-defined SDR presets can be exported/imported via JSON for migration.
+15. SDR map and satcom audit records now include both parsed message and raw decoder text, with redaction applied before satcom derivation when no-payload mode is enabled.
 
 ### Packaging / transfer
 
@@ -62,7 +78,10 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 2. SDR decoder execution exists, but most advanced decoders still depend on missing external tools or deeper integration.
 3. Bluetooth multi-adapter support is implemented in code paths, but live validation on this host is limited.
 4. Geoiger-style Wi-Fi workflows exist, but ongoing live RF validation depends heavily on the RF environment.
-5. Export/format expansion requested later (for example richer KMZ iconography or more PPI/radiotap control) is not complete.
+5. Export/format expansion requested later (for example richer KMZ iconography and full KMZ icon policy) is not complete.
+6. KMZ folder/property/style coverage now has regression tests, but live GIS-tool interoperability is still pending.
+7. Bluetooth KML style policy improved (BLE vs classic style IDs, including transport-string normalization), but broader icon policy is still pending.
+8. Summary JSON now covers additional model fields (`band`, `wps`, bluetooth `active_enumeration`) with regression coverage, but live external consumer validation is still pending.
 
 ## What is not implemented yet
 
@@ -72,10 +91,9 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 4. ACARS/ADS-B aircraft correlation.
 5. GSMTAP export.
 6. Full GSM/LTE/CDMA metadata tooling integration.
-7. Channel Usage as an optional inline panel on the AP tab.
-8. All requested SDR decoder families and mapping workflows.
-9. Complete KMZ iconography/color policy for all requested object classes.
-10. Verified static fake GPS workflow for all output paths.
+7. All requested SDR decoder families and mapping workflows.
+8. Complete KMZ iconography/color policy for all requested object classes.
+9. Fully live-validated static fake GPS workflow for all output paths.
 
 ## Current outputs
 

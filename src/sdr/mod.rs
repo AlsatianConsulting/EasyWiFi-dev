@@ -131,6 +131,7 @@ pub struct SdrMapPoint {
     pub longitude: f64,
     pub altitude_m: Option<f64>,
     pub label: String,
+    pub message: String,
     pub raw: String,
 }
 
@@ -145,6 +146,8 @@ pub struct SdrSatcomObservation {
     pub has_coordinates: bool,
     pub identifier_hints: Vec<String>,
     pub summary: String,
+    pub message: String,
+    pub raw: String,
 }
 
 #[derive(Debug, Clone)]
@@ -694,9 +697,12 @@ fn run_sdr_loop(
                         &plugin_defs,
                     );
                     let Some(command_line) = command_line else {
+                        let reason = decoder_unavailability_reason(&kind, hardware)
+                            .unwrap_or_else(|| "required tool not found".to_string());
                         let _ = sender.send(SdrEvent::Log(format!(
-                            "decoder {} unavailable: required tool not found",
-                            kind.label()
+                            "decoder {} unavailable: {}",
+                            kind.label(),
+                            reason
                         )));
                         continue;
                     };
@@ -965,8 +971,6 @@ fn resolve_decoder_command_line(
         SdrDecoderKind::Acars => {
             if command_exists("acarsdec") {
                 resolve_acarsdec_command_line(freq_hz, hardware)
-            } else if command_exists("acars_parser") {
-                Some("acars_parser".to_string())
             } else {
                 None
             }
@@ -1038,10 +1042,28 @@ fn resolve_decoder_command_line(
     })
 }
 
+fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -> Option<String> {
+    match kind {
+        SdrDecoderKind::Acars => {
+            if command_exists("acarsdec")
+                && resolve_acarsdec_command_line(131_550_000, hardware).is_none()
+            {
+                Some(format!(
+                    "acarsdec is installed but {} mode is not configured for ACARS in this build",
+                    hardware.label()
+                ))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn resolve_acarsdec_command_line(freq_hz: u64, hardware: SdrHardware) -> Option<String> {
     let freq_mhz = (freq_hz as f64) / 1_000_000.0;
     match hardware {
-        SdrHardware::RtlSdr => Some(format!("acarsdec -A -o 4 -r 0 {freq_mhz:.3}")),
+        SdrHardware::RtlSdr => Some(format!("acarsdec -o 4 -r 0 {freq_mhz:.3}")),
         _ => None,
     }
 }
@@ -1184,18 +1206,15 @@ fn spawn_decoder(
                 raw: message,
             };
             let mut map_point = parse_map_point(&row);
-            let satcom_observation = if let Some(point) = map_point.as_ref() {
-                derive_satcom_observation(&row, Some(point))
-            } else {
-                derive_satcom_observation(&row, None)
-            };
+            let satcom_detected = derive_satcom_observation(&row, map_point.as_ref()).is_some();
 
-            if no_payload_satcom_stdout && satcom_observation.is_some() {
+            if no_payload_satcom_stdout && satcom_detected {
                 redact_satcom_decode_row(&mut row);
                 if let Some(point) = map_point.as_mut() {
-                    point.raw = row.raw.clone();
+                    sync_map_point_payload_from_row(point, &row);
                 }
             }
+            let satcom_observation = derive_satcom_observation(&row, map_point.as_ref());
 
             let _ = sender_stdout.send(SdrEvent::DecodeRow(row.clone()));
             if let Some(log_file) = &log_stdout {
@@ -1359,8 +1378,14 @@ fn parse_map_point(row: &SdrDecodeRow) -> Option<SdrMapPoint> {
         longitude,
         altitude_m,
         label,
+        message: row.message.clone(),
         raw: row.raw.clone(),
     })
+}
+
+fn sync_map_point_payload_from_row(point: &mut SdrMapPoint, row: &SdrDecodeRow) {
+    point.message = row.message.clone();
+    point.raw = row.raw.clone();
 }
 
 fn derive_satcom_observation(
@@ -1395,6 +1420,8 @@ fn derive_satcom_observation(
         has_coordinates,
         identifier_hints,
         summary,
+        message: row.message.clone(),
+        raw: row.raw.clone(),
     })
 }
 
@@ -2396,6 +2423,7 @@ fn install_dependency_packages(packages: &[String]) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     fn sample_row(freq_hz: u64, protocol: &str, message: &str) -> SdrDecodeRow {
         SdrDecodeRow {
@@ -2428,6 +2456,8 @@ mod tests {
         assert_eq!(observation.band, "Unknown Satcom Band");
         assert_eq!(observation.encryption_posture, "unknown");
         assert!(observation.identifier_hints.contains(&"mmsi".to_string()));
+        assert_eq!(observation.message, "message mmsi=123456789");
+        assert_eq!(observation.raw, "message mmsi=123456789");
     }
 
     #[test]
@@ -2454,6 +2484,7 @@ mod tests {
             longitude: -79.4747181,
             altitude_m: None,
             label: "test".to_string(),
+            message: "message".to_string(),
             raw: "raw".to_string(),
         };
         let observation =
@@ -2464,6 +2495,146 @@ mod tests {
             .identifier_hints
             .iter()
             .any(|hint| hint == "mmsi"));
+    }
+
+    #[test]
+    fn parse_map_point_preserves_message_and_raw_fields() {
+        let row = sample_row(
+            162_025_000,
+            "ais",
+            "lat=35.1453957 lon=-79.4747181 callsign=TEST",
+        );
+        let point = parse_map_point(&row).expect("map point");
+        assert_eq!(point.message, row.message);
+        assert_eq!(point.raw, row.raw);
+    }
+
+    #[test]
+    fn parse_map_point_converts_altitude_feet_to_meters() {
+        let row = sample_row(
+            162_025_000,
+            "ais",
+            "lat=35.1453957 lon=-79.4747181 alt=1000ft callsign=TEST",
+        );
+        let point = parse_map_point(&row).expect("map point");
+        let altitude_m = point.altitude_m.expect("altitude");
+        assert!((altitude_m - 304.8).abs() < 0.1);
+    }
+
+    #[test]
+    fn parse_map_point_rejects_out_of_range_coordinates() {
+        let row = sample_row(162_025_000, "ais", "lat=95.0 lon=-79.4747181");
+        assert!(parse_map_point(&row).is_none());
+    }
+
+    #[test]
+    fn sync_map_point_payload_from_row_updates_message_and_raw() {
+        let mut row = sample_row(
+            1_541_000_000,
+            "inmarsat_c",
+            "clear payload sample mmsi=123456789",
+        );
+        let mut point = parse_map_point(&sample_row(
+            162_025_000,
+            "ais",
+            "lat=35.1453957 lon=-79.4747181 callsign=TEST",
+        ))
+        .expect("map point");
+        redact_satcom_decode_row(&mut row);
+        sync_map_point_payload_from_row(&mut point, &row);
+        assert_eq!(point.message, "[redacted: satcom payload disabled]");
+        assert_eq!(point.raw, "[redacted: satcom payload disabled]");
+    }
+
+    #[test]
+    fn satcom_observation_uses_redacted_payload_when_row_is_redacted() {
+        let mut row = sample_row(
+            1_541_000_000,
+            "inmarsat_c",
+            "clear payload sample mmsi=123456789",
+        );
+        redact_satcom_decode_row(&mut row);
+        let observation = derive_satcom_observation(&row, None).expect("satcom observation");
+        assert_eq!(observation.message, "[redacted: satcom payload disabled]");
+        assert_eq!(observation.raw, "[redacted: satcom payload disabled]");
+    }
+
+    #[test]
+    fn satcom_observation_serialization_includes_message_and_raw_fields() {
+        let row = sample_row(1_626_000_000, "iridium", "mmsi=123456789");
+        let observation = derive_satcom_observation(&row, None).expect("satcom observation");
+        let payload = serde_json::to_value(&observation).expect("serialize satcom observation");
+        assert_eq!(payload["message"], "mmsi=123456789");
+        assert_eq!(payload["raw"], "mmsi=123456789");
+    }
+
+    #[test]
+    fn append_map_point_log_writes_message_and_raw_fields() {
+        let path =
+            std::env::temp_dir().join(format!("wirelessexplorer-map-log-{}.jsonl", Uuid::new_v4()));
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("open temp map log");
+        let log = Arc::new(Mutex::new(file));
+
+        let point = SdrMapPoint {
+            timestamp: Utc::now(),
+            decoder: "TestDecoder".to_string(),
+            protocol: "iridium".to_string(),
+            freq_hz: 1_626_000_000,
+            latitude: 35.1453957,
+            longitude: -79.4747181,
+            altitude_m: None,
+            label: "test".to_string(),
+            message: "decoded message".to_string(),
+            raw: "raw payload".to_string(),
+        };
+        append_map_point_log(&log, &point);
+
+        let raw = fs::read_to_string(&path).expect("read map log file");
+        let line = raw.lines().next().expect("map log line");
+        let payload: serde_json::Value = serde_json::from_str(line).expect("parse map jsonl");
+        assert_eq!(payload["message"], "decoded message");
+        assert_eq!(payload["raw"], "raw payload");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn append_satcom_observation_log_writes_message_and_raw_fields() {
+        let path = std::env::temp_dir().join(format!(
+            "wirelessexplorer-satcom-log-{}.jsonl",
+            Uuid::new_v4()
+        ));
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("open temp satcom log");
+        let log = Arc::new(Mutex::new(file));
+
+        let observation = SdrSatcomObservation {
+            timestamp: Utc::now(),
+            decoder: "TestDecoder".to_string(),
+            protocol: "inmarsat_c".to_string(),
+            freq_hz: 1_541_000_000,
+            band: "L-Band".to_string(),
+            encryption_posture: "unknown".to_string(),
+            has_coordinates: false,
+            identifier_hints: vec!["mmsi".to_string()],
+            summary: "band=L-Band posture=unknown coords=no identifiers=mmsi".to_string(),
+            message: "decoded message".to_string(),
+            raw: "raw payload".to_string(),
+        };
+        append_satcom_observation_log(&log, &observation);
+
+        let raw = fs::read_to_string(&path).expect("read satcom log file");
+        let line = raw.lines().next().expect("satcom log line");
+        let payload: serde_json::Value = serde_json::from_str(line).expect("parse satcom jsonl");
+        assert_eq!(payload["message"], "decoded message");
+        assert_eq!(payload["raw"], "raw payload");
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
@@ -2511,12 +2682,29 @@ mod tests {
     fn acarsdec_command_line_uses_rtl_mode_with_mhz_frequency() {
         let command = resolve_acarsdec_command_line(131_550_000, SdrHardware::RtlSdr)
             .expect("rtl acars command");
-        assert_eq!(command, "acarsdec -A -o 4 -r 0 131.550");
+        assert_eq!(command, "acarsdec -o 4 -r 0 131.550");
     }
 
     #[test]
     fn acarsdec_command_line_is_not_assumed_for_non_rtl_hardware() {
         assert!(resolve_acarsdec_command_line(131_550_000, SdrHardware::HackRf).is_none());
+    }
+
+    #[test]
+    fn acars_decoder_requires_acarsdec_when_resolving_command_line() {
+        let command = resolve_decoder_command_line(
+            &SdrDecoderKind::Acars,
+            131_550_000,
+            2_400_000,
+            SdrHardware::HackRf,
+            &[],
+        );
+        assert!(command.is_none());
+    }
+
+    #[test]
+    fn decoder_unavailability_reason_is_none_for_non_acars() {
+        assert!(decoder_unavailability_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf).is_none());
     }
 
     #[test]

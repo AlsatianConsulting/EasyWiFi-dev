@@ -43,6 +43,14 @@ pub fn default_show_device_pane() -> bool {
     true
 }
 
+pub fn default_show_column_filters() -> bool {
+    true
+}
+
+pub fn default_show_ap_inline_channel_usage() -> bool {
+    false
+}
+
 pub fn default_default_rows_per_page() -> usize {
     50
 }
@@ -197,6 +205,36 @@ pub struct WatchlistEntry {
     pub name: String,
     #[serde(default = "default_watchlist_color_hex")]
     pub color_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SdrBookmarkSetting {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub frequency_hz: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SdrOperatorPresetSetting {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub center_freq_hz: u64,
+    #[serde(default)]
+    pub sample_rate_hz: u32,
+    #[serde(default)]
+    pub scan_enabled: bool,
+    #[serde(default)]
+    pub scan_start_hz: u64,
+    #[serde(default)]
+    pub scan_end_hz: u64,
+    #[serde(default)]
+    pub scan_step_hz: u64,
+    #[serde(default)]
+    pub scan_steps_per_sec: f64,
+    #[serde(default)]
+    pub squelch_dbm: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -789,6 +827,10 @@ pub struct AppSettings {
     pub show_detail_pane: bool,
     #[serde(default = "default_show_device_pane")]
     pub show_device_pane: bool,
+    #[serde(default = "default_show_column_filters")]
+    pub show_column_filters: bool,
+    #[serde(default = "default_show_ap_inline_channel_usage")]
+    pub show_ap_inline_channel_usage: bool,
     #[serde(default = "default_default_rows_per_page")]
     pub default_rows_per_page: usize,
     #[serde(default = "default_oui_source_path")]
@@ -837,6 +879,10 @@ pub struct AppSettings {
     pub auto_create_exports_on_startup: bool,
     #[serde(default = "default_auto_check_oui_updates")]
     pub auto_check_oui_updates: bool,
+    #[serde(default)]
+    pub sdr_bookmarks: Vec<SdrBookmarkSetting>,
+    #[serde(default)]
+    pub sdr_operator_presets: Vec<SdrOperatorPresetSetting>,
 }
 
 impl Default for AppSettings {
@@ -845,6 +891,8 @@ impl Default for AppSettings {
             show_status_bar: default_show_status_bar(),
             show_detail_pane: default_show_detail_pane(),
             show_device_pane: default_show_device_pane(),
+            show_column_filters: default_show_column_filters(),
+            show_ap_inline_channel_usage: default_show_ap_inline_channel_usage(),
             default_rows_per_page: default_default_rows_per_page(),
             oui_source_path: default_oui_source_path(),
             wifi_packet_header_mode: default_wifi_packet_header_mode(),
@@ -869,6 +917,8 @@ impl Default for AppSettings {
             store_sqlite: default_store_sqlite(),
             auto_create_exports_on_startup: default_auto_create_exports_on_startup(),
             auto_check_oui_updates: default_auto_check_oui_updates(),
+            sdr_bookmarks: Vec::new(),
+            sdr_operator_presets: Vec::new(),
         }
     }
 }
@@ -937,18 +987,58 @@ mod tests {
 
         let mut settings = AppSettings::default();
         settings.show_status_bar = true;
+        settings.show_column_filters = false;
+        settings.show_ap_inline_channel_usage = true;
         settings.default_rows_per_page = 100;
         settings.bluetooth_enabled = false;
         settings.oui_source_path = PathBuf::from("/tmp/test-manuf");
         settings.bluetooth_detail_view.descriptors_expanded = true;
+        settings.sdr_bookmarks = vec![SdrBookmarkSetting {
+            label: "Test Bookmark".to_string(),
+            frequency_hz: 915_000_000,
+        }];
+        settings.sdr_operator_presets = vec![SdrOperatorPresetSetting {
+            label: "Airband Fast".to_string(),
+            center_freq_hz: 127_500_000,
+            sample_rate_hz: 2_400_000,
+            scan_enabled: true,
+            scan_start_hz: 118_000_000,
+            scan_end_hz: 137_000_000,
+            scan_step_hz: 25_000,
+            scan_steps_per_sec: 8.0,
+            squelch_dbm: -72.0,
+        }];
         settings.save_to_disk().expect("save settings");
 
         let loaded = AppSettings::load_from_disk().expect("load settings");
         assert!(loaded.show_status_bar);
+        assert!(!loaded.show_column_filters);
+        assert!(loaded.show_ap_inline_channel_usage);
         assert_eq!(loaded.default_rows_per_page, 100);
         assert!(!loaded.bluetooth_enabled);
         assert_eq!(loaded.oui_source_path, PathBuf::from("/tmp/test-manuf"));
         assert!(loaded.bluetooth_detail_view.descriptors_expanded);
+        assert_eq!(
+            loaded.sdr_bookmarks,
+            vec![SdrBookmarkSetting {
+                label: "Test Bookmark".to_string(),
+                frequency_hz: 915_000_000,
+            }]
+        );
+        assert_eq!(
+            loaded.sdr_operator_presets,
+            vec![SdrOperatorPresetSetting {
+                label: "Airband Fast".to_string(),
+                center_freq_hz: 127_500_000,
+                sample_rate_hz: 2_400_000,
+                scan_enabled: true,
+                scan_start_hz: 118_000_000,
+                scan_end_hz: 137_000_000,
+                scan_step_hz: 25_000,
+                scan_steps_per_sec: 8.0,
+                squelch_dbm: -72.0,
+            }]
+        );
 
         let _ = fs::remove_file(&path);
         if backup_path.exists() {

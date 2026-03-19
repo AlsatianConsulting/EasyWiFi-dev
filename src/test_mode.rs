@@ -2,7 +2,7 @@ use crate::bluetooth::{self, BluetoothEvent, BluetoothScanConfig};
 use crate::capture;
 use crate::model::BluetoothDeviceRecord;
 use crate::sdr::{self, SdrConfig, SdrDecoderKind, SdrEvent, SdrHardware};
-use crate::settings::{ChannelSelectionMode, InterfaceSettings};
+use crate::settings::{ChannelSelectionMode, InterfaceSettings, WifiPacketHeaderMode};
 use anyhow::{bail, Context, Result};
 use crossbeam_channel::unbounded;
 use std::collections::BTreeMap;
@@ -16,6 +16,7 @@ pub struct WifiTestOptions {
     pub channels: Vec<u16>,
     pub duration_secs: u64,
     pub ht_mode: String,
+    pub packet_header_mode: WifiPacketHeaderMode,
     pub max_networks_per_channel: usize,
 }
 
@@ -26,6 +27,7 @@ impl Default for WifiTestOptions {
             channels: vec![1, 6, 11],
             duration_secs: 6,
             ht_mode: "HT20".to_string(),
+            packet_header_mode: WifiPacketHeaderMode::Radiotap,
             max_networks_per_channel: 50,
         }
     }
@@ -156,6 +158,13 @@ fn parse_wifi_test_args(args: &[String]) -> Result<WifiTestOptions> {
                     .ok_or_else(|| anyhow::anyhow!("missing value for --ht-mode"))?;
                 options.ht_mode = value.clone();
             }
+            "--packet-headers" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for --packet-headers"))?;
+                options.packet_header_mode = parse_wifi_packet_header_mode(value)?;
+            }
             "--max-networks" => {
                 idx += 1;
                 let value = args
@@ -203,6 +212,7 @@ pub fn print_wifi_test_usage() {
     println!("  --channels <csv>        Channel list, default: 1,6,11");
     println!("  --duration-secs <n>     Per-channel capture duration, default: 6");
     println!("  --ht-mode <mode>        HT mode for channel set, default: HT20");
+    println!("  --packet-headers <mode> radiotap|ppi (default: radiotap)");
     println!("  --max-networks <n>      Max APs shown per channel, default: 50");
 }
 
@@ -1046,6 +1056,17 @@ fn parse_interface_list(value: &str) -> Result<Vec<String>> {
     Ok(interfaces)
 }
 
+fn parse_wifi_packet_header_mode(value: &str) -> Result<WifiPacketHeaderMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "radiotap" => Ok(WifiPacketHeaderMode::Radiotap),
+        "ppi" => Ok(WifiPacketHeaderMode::Ppi),
+        other => bail!(
+            "invalid value for --packet-headers `{}` (expected radiotap|ppi)",
+            other
+        ),
+    }
+}
+
 fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
     if !capture::running_as_root() {
         bail!("--test-wifi must be run as root, for example: `sudo -E ./target/debug/wirelessexplorer --test-wifi ...`");
@@ -1068,6 +1089,13 @@ fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
     );
     println!("duration per channel: {}s", options.duration_secs);
     println!("ht mode: {}", options.ht_mode);
+    println!(
+        "packet headers: {}",
+        match options.packet_header_mode {
+            WifiPacketHeaderMode::Radiotap => "Radiotap",
+            WifiPacketHeaderMode::Ppi => "PPI",
+        }
+    );
     println!();
 
     let mut interface_totals = Vec::new();
@@ -1083,7 +1111,10 @@ fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
         for (interface, total_networks) in &interface_totals {
             println!("  {}: {} observed access points", interface, total_networks);
         }
-        let grand_total = interface_totals.iter().map(|(_, count)| *count).sum::<usize>();
+        let grand_total = interface_totals
+            .iter()
+            .map(|(_, count)| *count)
+            .sum::<usize>();
         println!("  combined: {} observed access points", grand_total);
     } else if let Some((_, total_networks)) = interface_totals.first() {
         println!("total observed access points: {}", total_networks);
@@ -1137,8 +1168,12 @@ fn run_wifi_test_for_interface(interface: &str, options: &WifiTestOptions) -> Re
     for channel in &options.channels {
         capture::set_channel_with_ht(&active_interface, *channel, &options.ht_mode)
             .with_context(|| format!("failed to set {} channel {}", active_interface, channel))?;
-        let observations =
-            capture_beacons_for_channel(&active_interface, *channel, options.duration_secs)?;
+        let observations = capture_beacons_for_channel(
+            &active_interface,
+            *channel,
+            options.duration_secs,
+            options.packet_header_mode,
+        )?;
         total_networks += observations.len();
         print_channel_summary(*channel, &observations, options.max_networks_per_channel);
     }
@@ -1197,11 +1232,26 @@ fn capture_beacons_for_channel(
     interface: &str,
     channel: u16,
     duration_secs: u64,
+    packet_header_mode: WifiPacketHeaderMode,
 ) -> Result<Vec<BeaconObservation>> {
-    let mut command = build_tshark_command(interface, duration_secs);
-    let output = command
+    let mut command = build_tshark_command(interface, duration_secs, packet_header_mode);
+    let mut output = command
         .output()
         .with_context(|| format!("failed to launch tshark on {}", interface))?;
+
+    if !output.status.success() {
+        if packet_header_mode == WifiPacketHeaderMode::Ppi {
+            eprintln!(
+                "PPI packet headers failed on {}; retrying with Radiotap",
+                interface
+            );
+            let mut fallback_command =
+                build_tshark_command(interface, duration_secs, WifiPacketHeaderMode::Radiotap);
+            output = fallback_command
+                .output()
+                .with_context(|| format!("failed to launch tshark on {}", interface))?;
+        }
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1222,11 +1272,17 @@ fn capture_beacons_for_channel(
             continue;
         }
         let ssid_raw = fields.next().unwrap_or("").trim().to_string();
-        let rssi = fields
+        let radiotap_rssi = fields
             .next()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .and_then(|value| value.parse::<i32>().ok());
+        let ppi_rssi = fields
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(|value| value.parse::<i32>().ok());
+        let rssi = radiotap_rssi.or(ppi_rssi);
         let channel_seen = fields
             .next()
             .map(str::trim)
@@ -1274,12 +1330,21 @@ fn capture_beacons_for_channel(
     Ok(observations)
 }
 
-fn build_tshark_command(interface: &str, duration_secs: u64) -> Command {
+fn build_tshark_command(
+    interface: &str,
+    duration_secs: u64,
+    packet_header_mode: WifiPacketHeaderMode,
+) -> Command {
     let mut command = Command::new("tshark");
 
     command
         .arg("-i")
         .arg(interface)
+        .arg("-y")
+        .arg(match packet_header_mode {
+            WifiPacketHeaderMode::Radiotap => "IEEE802_11_RADIO",
+            WifiPacketHeaderMode::Ppi => "PPI",
+        })
         .arg("-a")
         .arg(format!("duration:{}", duration_secs.max(1)))
         .arg("-l")
@@ -1299,6 +1364,8 @@ fn build_tshark_command(interface: &str, duration_secs: u64) -> Command {
         .arg("wlan.ssid")
         .arg("-e")
         .arg("radiotap.dbm_antsignal")
+        .arg("-e")
+        .arg("ppi.dbm_antsignal")
         .arg("-e")
         .arg("wlan_radio.channel")
         .arg("-e")
@@ -1321,9 +1388,11 @@ fn command_exists(cmd: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_channels, parse_interface_list, parse_sdr_decoder_with_plugins, parse_wifi_test_args,
+        build_tshark_command, parse_channels, parse_interface_list, parse_sdr_decoder_with_plugins,
+        parse_sdr_test_args, parse_wifi_test_args,
     };
     use crate::sdr::{SdrDecoderKind, SdrPluginDefinition};
+    use crate::settings::WifiPacketHeaderMode;
 
     #[test]
     fn parses_channel_csv() {
@@ -1349,7 +1418,54 @@ mod tests {
         assert_eq!(options.channels, vec![1, 6, 11]);
         assert_eq!(options.duration_secs, 8);
         assert_eq!(options.ht_mode, "HT20");
+        assert_eq!(options.packet_header_mode, WifiPacketHeaderMode::Radiotap);
         assert_eq!(options.max_networks_per_channel, 25);
+    }
+
+    #[test]
+    fn parses_wifi_packet_headers_mode() {
+        let args = vec![
+            "--interface".to_string(),
+            "wlx1cbfcef8e928".to_string(),
+            "--packet-headers".to_string(),
+            "ppi".to_string(),
+        ];
+        let options = parse_wifi_test_args(&args).unwrap();
+        assert_eq!(options.packet_header_mode, WifiPacketHeaderMode::Ppi);
+    }
+
+    #[test]
+    fn rejects_invalid_wifi_packet_headers_mode() {
+        let args = vec![
+            "--interface".to_string(),
+            "wlx1cbfcef8e928".to_string(),
+            "--packet-headers".to_string(),
+            "invalid".to_string(),
+        ];
+        let err = parse_wifi_test_args(&args).unwrap_err().to_string();
+        assert!(err.contains("expected radiotap|ppi"));
+    }
+
+    #[test]
+    fn build_tshark_command_uses_radiotap_link_type() {
+        let cmd = build_tshark_command("wlan0", 3, WifiPacketHeaderMode::Radiotap);
+        let args = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        let y_index = args.iter().position(|arg| arg == "-y").unwrap();
+        assert_eq!(args.get(y_index + 1), Some(&"IEEE802_11_RADIO".to_string()));
+    }
+
+    #[test]
+    fn build_tshark_command_uses_ppi_link_type() {
+        let cmd = build_tshark_command("wlan0", 3, WifiPacketHeaderMode::Ppi);
+        let args = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        let y_index = args.iter().position(|arg| arg == "-y").unwrap();
+        assert_eq!(args.get(y_index + 1), Some(&"PPI".to_string()));
     }
 
     #[test]
@@ -1381,6 +1497,18 @@ mod tests {
         assert!(matches!(parsed, SdrDecoderKind::Adsb));
         let parsed = parse_sdr_decoder_with_plugins("GSM_LTE", &[]).unwrap();
         assert!(matches!(parsed, SdrDecoderKind::GsmLte));
+    }
+
+    #[test]
+    fn sdr_test_defaults_to_no_payload_satcom() {
+        let options = parse_sdr_test_args(&[]).unwrap();
+        assert!(options.no_payload_satcom);
+    }
+
+    #[test]
+    fn sdr_test_allow_satcom_payload_disables_redaction_flag() {
+        let options = parse_sdr_test_args(&["--allow-satcom-payload".to_string()]).unwrap();
+        assert!(!options.no_payload_satcom);
     }
 
     #[test]

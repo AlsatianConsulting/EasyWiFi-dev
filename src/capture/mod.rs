@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -1052,6 +1052,8 @@ pub fn start_geiger_mode(
                 "separator=\t".to_string(),
                 "-e".to_string(),
                 "radiotap.dbm_antsignal".to_string(),
+                "-e".to_string(),
+                "ppi.dbm_antsignal".to_string(),
             ];
             let mut child = match spawn_privileged_tshark(&args) {
                 Ok(c) => c.child,
@@ -1068,7 +1070,7 @@ pub fn start_geiger_mode(
                     let Ok(line) = line else {
                         continue;
                     };
-                    let rssi = line.trim().parse::<i32>().unwrap_or(-100);
+                    let rssi = parse_geiger_rssi(&line).unwrap_or(-100);
                     let tone = rssi_to_tone_hz(rssi);
                     let _ = sender.send(GeigerUpdate {
                         rssi_dbm: rssi,
@@ -1221,113 +1223,147 @@ fn run_interface_capture(
         has_pmkid_count_field: supports_pmkid_count_field,
     };
 
-    let mut decoder_args = vec![
-        "-i".to_string(),
-        interface.interface_name.clone(),
-        "-l".to_string(),
-        "-n".to_string(),
-        "-y".to_string(),
-        tshark_capture_link_type(WifiPacketHeaderMode::Radiotap).to_string(),
-        "-T".to_string(),
-        "fields".to_string(),
-        "-E".to_string(),
-        "separator=\t".to_string(),
-        "-E".to_string(),
-        "quote=n".to_string(),
-        "-E".to_string(),
-        "occurrence=f".to_string(),
-    ];
-    let mut push_decoder_field = |field: &str| {
-        decoder_args.push("-e".to_string());
-        decoder_args.push(field.to_string());
+    let build_decoder_args = |link_type: &str| {
+        let mut decoder_args = vec![
+            "-i".to_string(),
+            interface.interface_name.clone(),
+            "-l".to_string(),
+            "-n".to_string(),
+            "-y".to_string(),
+            link_type.to_string(),
+            "-T".to_string(),
+            "fields".to_string(),
+            "-E".to_string(),
+            "separator=\t".to_string(),
+            "-E".to_string(),
+            "quote=n".to_string(),
+            "-E".to_string(),
+            "occurrence=f".to_string(),
+        ];
+        let mut push_decoder_field = |field: &str| {
+            decoder_args.push("-e".to_string());
+            decoder_args.push(field.to_string());
+        };
+        push_decoder_field("frame.time_epoch");
+        push_decoder_field("frame.len");
+        push_decoder_field("wlan.bssid");
+        push_decoder_field("wlan.sa");
+        push_decoder_field("wlan.da");
+        if let Some(field) = &ssid_field {
+            push_decoder_field(field);
+        }
+        push_decoder_field("radiotap.dbm_antsignal");
+        push_decoder_field("ppi.dbm_antsignal");
+        push_decoder_field("wlan_radio.channel");
+        push_decoder_field("wlan_radio.frequency");
+        push_decoder_field("wlan.fc.type");
+        push_decoder_field("wlan.fc.subtype");
+        if let Some(field) = &eapol_msg_field {
+            push_decoder_field(field);
+        }
+        if let Some(field) = &rsn_version_field {
+            push_decoder_field(field);
+        }
+        push_decoder_field("wlan.fc.protected");
+        if supports_country_field {
+            push_decoder_field("wlan.country_info.code");
+        }
+        if supports_beacon_tsf_field {
+            push_decoder_field("wlan.fixed.timestamp");
+        }
+        if supports_privacy_field {
+            push_decoder_field("wlan.fixed.capabilities.privacy");
+        }
+        if supports_rsn_akm_field {
+            push_decoder_field("wlan.rsn.akms.type");
+        }
+        if supports_rsn_cipher_field {
+            push_decoder_field("wlan.rsn.pcs.type");
+        }
+        if supports_rsn_mfpc_field {
+            push_decoder_field("wlan.rsn.capabilities.mfpc");
+        }
+        if supports_rsn_mfpr_field {
+            push_decoder_field("wlan.rsn.capabilities.mfpr");
+        }
+        if supports_wpa_version_field {
+            push_decoder_field("wlan.wfa.ie.wpa.version");
+        }
+        if supports_wpa_akm_field {
+            push_decoder_field("wlan.wfa.ie.wpa.akms.type");
+        }
+        if supports_wpa_cipher_field {
+            push_decoder_field("wlan.wfa.ie.wpa.ucs.type");
+        }
+        if supports_retry_field {
+            push_decoder_field("wlan.fc.retry");
+        }
+        if supports_power_save_field {
+            push_decoder_field("wlan.fc.pwrmgt");
+        }
+        if supports_qos_priority_field {
+            push_decoder_field("wlan.qos.priority");
+        }
+        if supports_status_code_field {
+            push_decoder_field("wlan.fixed.status_code");
+        }
+        if supports_reason_code_field {
+            push_decoder_field("wlan.fixed.reason_code");
+        }
+        if supports_listen_interval_field {
+            push_decoder_field("wlan.fixed.listen_ival");
+        }
+        if supports_pmkid_count_field {
+            push_decoder_field("wlan.rsn.pmkid.count");
+        }
+        decoder_args
     };
-    push_decoder_field("frame.time_epoch");
-    push_decoder_field("frame.len");
-    push_decoder_field("wlan.bssid");
-    push_decoder_field("wlan.sa");
-    push_decoder_field("wlan.da");
-    if let Some(field) = &ssid_field {
-        push_decoder_field(field);
-    }
-    push_decoder_field("radiotap.dbm_antsignal");
-    push_decoder_field("wlan_radio.channel");
-    push_decoder_field("wlan_radio.frequency");
-    push_decoder_field("wlan.fc.type");
-    push_decoder_field("wlan.fc.subtype");
-    if let Some(field) = &eapol_msg_field {
-        push_decoder_field(field);
-    }
-    if let Some(field) = &rsn_version_field {
-        push_decoder_field(field);
-    }
-    push_decoder_field("wlan.fc.protected");
-    if supports_country_field {
-        push_decoder_field("wlan.country_info.code");
-    }
-    if supports_beacon_tsf_field {
-        push_decoder_field("wlan.fixed.timestamp");
-    }
-    if supports_privacy_field {
-        push_decoder_field("wlan.fixed.capabilities.privacy");
-    }
-    if supports_rsn_akm_field {
-        push_decoder_field("wlan.rsn.akms.type");
-    }
-    if supports_rsn_cipher_field {
-        push_decoder_field("wlan.rsn.pcs.type");
-    }
-    if supports_rsn_mfpc_field {
-        push_decoder_field("wlan.rsn.capabilities.mfpc");
-    }
-    if supports_rsn_mfpr_field {
-        push_decoder_field("wlan.rsn.capabilities.mfpr");
-    }
-    if supports_wpa_version_field {
-        push_decoder_field("wlan.wfa.ie.wpa.version");
-    }
-    if supports_wpa_akm_field {
-        push_decoder_field("wlan.wfa.ie.wpa.akms.type");
-    }
-    if supports_wpa_cipher_field {
-        push_decoder_field("wlan.wfa.ie.wpa.ucs.type");
-    }
-    if supports_retry_field {
-        push_decoder_field("wlan.fc.retry");
-    }
-    if supports_power_save_field {
-        push_decoder_field("wlan.fc.pwrmgt");
-    }
-    if supports_qos_priority_field {
-        push_decoder_field("wlan.qos.priority");
-    }
-    if supports_status_code_field {
-        push_decoder_field("wlan.fixed.status_code");
-    }
-    if supports_reason_code_field {
-        push_decoder_field("wlan.fixed.reason_code");
-    }
-    if supports_listen_interval_field {
-        push_decoder_field("wlan.fixed.listen_ival");
-    }
-    if supports_pmkid_count_field {
-        push_decoder_field("wlan.rsn.pmkid.count");
+
+    let decoder_attempts = pcap_saver_link_type_attempts(wifi_packet_header_mode);
+    let mut decoder_link_type_used = None::<&str>;
+    let mut decoder_proc = None;
+    let mut decoder_start_error = None::<String>;
+    for (idx, link_type) in decoder_attempts.iter().enumerate() {
+        let args = build_decoder_args(link_type);
+        match spawn_privileged_tshark(&args) {
+            Ok(proc) => {
+                decoder_link_type_used = Some(*link_type);
+                decoder_proc = Some(proc);
+                break;
+            }
+            Err(err) => {
+                decoder_start_error = Some(err.to_string());
+                let has_fallback = idx + 1 < decoder_attempts.len();
+                if has_fallback {
+                    let _ = sender.send(CaptureEvent::Log(format!(
+                        "{} packet header mode failed on {}; retrying live decoder with {} ({})",
+                        wifi_packet_header_mode_label_from_link_type(link_type),
+                        interface.interface_name,
+                        wifi_packet_header_mode_label_from_link_type(decoder_attempts[idx + 1]),
+                        err
+                    )));
+                }
+            }
+        }
     }
 
-    let mut decoder = match spawn_privileged_tshark(&decoder_args) {
-        Ok(proc) => {
-            let _ = sender.send(CaptureEvent::Log(format!(
-                "privileged Wi-Fi capture running on {} via {}",
-                interface.interface_name, proc.launch_mode
-            )));
-            proc.child
-        }
-        Err(err) => {
-            let _ = sender.send(CaptureEvent::Log(format!(
-                "failed to start privileged tshark on {}: {}",
-                interface.interface_name, err
-            )));
-            return;
-        }
+    let mut decoder = if let Some(proc) = decoder_proc {
+        let _ = sender.send(CaptureEvent::Log(format!(
+            "privileged Wi-Fi capture running on {} via {} ({})",
+            interface.interface_name,
+            proc.launch_mode,
+            decoder_link_type_used
+                .map(wifi_packet_header_mode_label_from_link_type)
+                .unwrap_or("Unknown")
+        )));
+        proc.child
+    } else {
+        let _ = sender.send(CaptureEvent::Log(format!(
+            "failed to start privileged tshark on {}: {}",
+            interface.interface_name,
+            decoder_start_error.unwrap_or_else(|| "unknown startup error".to_string())
+        )));
+        return;
     };
 
     let Some(decoder_stdout) = decoder.stdout.take() else {
@@ -1350,62 +1386,45 @@ fn run_interface_capture(
 
     let mut saver = None;
     let saver_stderr_handle = if let Some(path) = session_pcap_path.as_ref() {
-        let preferred_link_type = tshark_capture_link_type(wifi_packet_header_mode);
-        let build_saver_args = |link_type: &str| {
-            vec![
-                "-i".to_string(),
-                interface.interface_name.clone(),
-                "-n".to_string(),
-                "-Q".to_string(),
-                "-y".to_string(),
-                link_type.to_string(),
-                "-w".to_string(),
-                path.display().to_string(),
-            ]
-        };
-        let mut saver_link_type_used = preferred_link_type;
-        let primary_saver_args = build_saver_args(preferred_link_type);
+        let build_saver_args =
+            |link_type: &str| build_pcap_saver_args(&interface.interface_name, path, link_type);
+        let mut saver_link_type_used = None::<&str>;
+        let mut saver_proc = None;
+        let mut last_start_error = None::<String>;
+        let attempts = pcap_saver_link_type_attempts(wifi_packet_header_mode);
 
-        let saver_proc = match spawn_privileged_tshark(&primary_saver_args) {
-            Ok(proc) => Some(proc),
-            Err(primary_err) => {
-                if wifi_packet_header_mode == WifiPacketHeaderMode::Ppi {
-                    let fallback_link_type =
-                        tshark_capture_link_type(WifiPacketHeaderMode::Radiotap);
-                    let _ = sender.send(CaptureEvent::Log(format!(
-                        "PPI packet header mode failed on {}; retrying PCAP saver with Radiotap ({})",
-                        interface.interface_name, primary_err
-                    )));
-                    let fallback_saver_args = build_saver_args(fallback_link_type);
-                    match spawn_privileged_tshark(&fallback_saver_args) {
-                        Ok(proc) => {
-                            saver_link_type_used = fallback_link_type;
-                            Some(proc)
-                        }
-                        Err(fallback_err) => {
-                            let _ = sender.send(CaptureEvent::Log(format!(
-                                "failed to start privileged PCAP saver on {} with PPI and Radiotap fallback: {}",
-                                interface.interface_name, fallback_err
-                            )));
-                            None
-                        }
+        for (idx, link_type) in attempts.iter().enumerate() {
+            let args = build_saver_args(link_type);
+            match spawn_privileged_tshark(&args) {
+                Ok(proc) => {
+                    saver_link_type_used = Some(*link_type);
+                    saver_proc = Some(proc);
+                    break;
+                }
+                Err(err) => {
+                    last_start_error = Some(err.to_string());
+                    let has_fallback = idx + 1 < attempts.len();
+                    if has_fallback {
+                        let _ = sender.send(CaptureEvent::Log(format!(
+                            "{} packet header mode failed on {}; retrying PCAP saver with {} ({})",
+                            wifi_packet_header_mode_label_from_link_type(link_type),
+                            interface.interface_name,
+                            wifi_packet_header_mode_label_from_link_type(attempts[idx + 1]),
+                            err
+                        )));
                     }
-                } else {
-                    let _ = sender.send(CaptureEvent::Log(format!(
-                        "failed to start privileged PCAP saver on {}: {}",
-                        interface.interface_name, primary_err
-                    )));
-                    None
                 }
             }
-        };
+        }
 
         if let Some(proc) = saver_proc {
             let _ = sender.send(CaptureEvent::Log(format!(
                 "privileged PCAP saver running on {} via {} ({})",
                 interface.interface_name,
                 proc.launch_mode,
-                wifi_packet_header_mode_label_from_link_type(saver_link_type_used)
+                saver_link_type_used
+                    .map(wifi_packet_header_mode_label_from_link_type)
+                    .unwrap_or("Unknown")
             )));
             let mut child = proc.child;
             let stderr = child.stderr.take().map(|mut stderr| {
@@ -1418,6 +1437,12 @@ fn run_interface_capture(
             saver = Some(child);
             stderr
         } else {
+            if let Some(err) = last_start_error {
+                let _ = sender.send(CaptureEvent::Log(format!(
+                    "failed to start privileged PCAP saver on {}: {}",
+                    interface.interface_name, err
+                )));
+            }
             None
         }
     } else {
@@ -1508,6 +1533,31 @@ fn run_interface_capture(
                 format!(" | {}", stderr_summary)
             }
         )));
+    }
+}
+
+fn build_pcap_saver_args(interface_name: &str, output_path: &Path, link_type: &str) -> Vec<String> {
+    vec![
+        "-i".to_string(),
+        interface_name.to_string(),
+        "-n".to_string(),
+        "-Q".to_string(),
+        "-y".to_string(),
+        link_type.to_string(),
+        "-w".to_string(),
+        output_path.display().to_string(),
+    ]
+}
+
+fn pcap_saver_link_type_attempts(mode: WifiPacketHeaderMode) -> Vec<&'static str> {
+    match mode {
+        WifiPacketHeaderMode::Radiotap => {
+            vec![tshark_capture_link_type(WifiPacketHeaderMode::Radiotap)]
+        }
+        WifiPacketHeaderMode::Ppi => vec![
+            tshark_capture_link_type(WifiPacketHeaderMode::Ppi),
+            tshark_capture_link_type(WifiPacketHeaderMode::Radiotap),
+        ],
     }
 }
 
@@ -1617,7 +1667,11 @@ fn process_live_tshark_fields(
                     if client.first_seen > now {
                         client.first_seen = now;
                     }
-                    if !client.source_adapters.iter().any(|name| name == interface_name) {
+                    if !client
+                        .source_adapters
+                        .iter()
+                        .any(|name| name == interface_name)
+                    {
                         client.source_adapters.push(interface_name.to_string());
                     }
                     client.associated_ap = if bssid.is_empty() || bssid_is_broadcast {
@@ -2131,7 +2185,7 @@ struct TSharkParseLayout {
 
 fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFrame> {
     let fields: Vec<&str> = line.split('\t').collect();
-    let required = 10
+    let required = 11
         + usize::from(layout.has_ssid_field)
         + usize::from(layout.has_eapol_msg_field)
         + usize::from(layout.has_rsn_version_field)
@@ -2177,8 +2231,11 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
         None
     };
 
-    let rssi = parse_opt_i32(fields.get(i).copied().unwrap_or(""));
+    let radiotap_rssi = parse_opt_i32(fields.get(i).copied().unwrap_or(""));
     i += 1;
+    let ppi_rssi = parse_opt_i32(fields.get(i).copied().unwrap_or(""));
+    i += 1;
+    let rssi = radiotap_rssi.or(ppi_rssi);
     let channel = parse_opt_u16(fields.get(i).copied().unwrap_or(""));
     i += 1;
     let frequency = parse_opt_u32(fields.get(i).copied().unwrap_or(""));
@@ -2574,9 +2631,138 @@ fn tshark_pick_supported_field(candidates: &[&str]) -> Option<String> {
         .map(|f| (*f).to_string())
 }
 
+fn parse_geiger_rssi(line: &str) -> Option<i32> {
+    let mut fields = line.split('\t');
+    let radiotap = parse_opt_i32(fields.next().unwrap_or(""));
+    let ppi = parse_opt_i32(fields.next().unwrap_or(""));
+    radiotap.or(ppi)
+}
+
 pub fn rssi_to_tone_hz(rssi_dbm: i32) -> u32 {
     let clamped = rssi_dbm.clamp(-100, -30);
     let normalized = (clamped + 100) as f32 / 70.0;
     let hz = 120.0 + normalized * (2300.0 - 120.0);
     hz.round() as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_parse_layout() -> TSharkParseLayout {
+        TSharkParseLayout {
+            has_ssid_field: false,
+            has_eapol_msg_field: false,
+            has_rsn_version_field: false,
+            has_country_field: false,
+            has_beacon_tsf_field: false,
+            has_privacy_field: false,
+            has_rsn_akm_field: false,
+            has_rsn_cipher_field: false,
+            has_rsn_mfpc_field: false,
+            has_rsn_mfpr_field: false,
+            has_wpa_version_field: false,
+            has_wpa_akm_field: false,
+            has_wpa_cipher_field: false,
+            has_retry_field: false,
+            has_power_save_field: false,
+            has_qos_priority_field: false,
+            has_status_code_field: false,
+            has_reason_code_field: false,
+            has_listen_interval_field: false,
+            has_pmkid_count_field: false,
+        }
+    }
+
+    #[test]
+    fn packet_header_modes_map_to_expected_tshark_link_types() {
+        assert_eq!(
+            tshark_capture_link_type(WifiPacketHeaderMode::Radiotap),
+            "IEEE802_11_RADIO"
+        );
+        assert_eq!(tshark_capture_link_type(WifiPacketHeaderMode::Ppi), "PPI");
+    }
+
+    #[test]
+    fn packet_header_mode_label_from_link_type_defaults_to_radiotap() {
+        assert_eq!(wifi_packet_header_mode_label_from_link_type("PPI"), "PPI");
+        assert_eq!(
+            wifi_packet_header_mode_label_from_link_type("IEEE802_11_RADIO"),
+            "Radiotap"
+        );
+        assert_eq!(
+            wifi_packet_header_mode_label_from_link_type("UNKNOWN_LINKTYPE"),
+            "Radiotap"
+        );
+    }
+
+    #[test]
+    fn infer_client_mac_prefers_peer_when_bssid_matches_source() {
+        let bssid = "11:22:33:44:55:66";
+        let client = infer_client_mac(
+            bssid,
+            &Some("11:22:33:44:55:66".to_string()),
+            &Some("aa:bb:cc:dd:ee:ff".to_string()),
+        );
+        assert_eq!(client.as_deref(), Some("AA:BB:CC:DD:EE:FF"));
+    }
+
+    #[test]
+    fn infer_client_mac_ignores_broadcast_candidates() {
+        let bssid = "11:22:33:44:55:66";
+        let client = infer_client_mac(
+            bssid,
+            &Some("11:22:33:44:55:66".to_string()),
+            &Some("FF:FF:FF:FF:FF:FF".to_string()),
+        );
+        assert!(client.is_none());
+    }
+
+    #[test]
+    fn build_pcap_saver_args_embeds_link_type_and_output_path() {
+        let output_path = PathBuf::from("/tmp/test_capture.pcapng");
+        let args = build_pcap_saver_args("wlan0mon", &output_path, "PPI");
+        assert!(args.windows(2).any(|w| w == ["-i", "wlan0mon"]));
+        assert!(args.windows(2).any(|w| w == ["-y", "PPI"]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-w", "/tmp/test_capture.pcapng"]));
+    }
+
+    #[test]
+    fn pcap_saver_link_type_attempts_include_ppi_fallback_to_radiotap() {
+        assert_eq!(
+            pcap_saver_link_type_attempts(WifiPacketHeaderMode::Ppi),
+            vec!["PPI", "IEEE802_11_RADIO"]
+        );
+        assert_eq!(
+            pcap_saver_link_type_attempts(WifiPacketHeaderMode::Radiotap),
+            vec!["IEEE802_11_RADIO"]
+        );
+    }
+
+    #[test]
+    fn parse_tshark_line_prefers_radiotap_rssi_when_present() {
+        let layout = base_parse_layout();
+        let line =
+            "1710000000.0\t150\t11:22:33:44:55:66\taa:bb:cc:dd:ee:ff\t11:22:33:44:55:66\t-48\t-62\t6\t2437\t2\t8\t1";
+        let parsed = parse_tshark_line(line, layout).expect("parse frame");
+        assert_eq!(parsed.rssi, Some(-48));
+    }
+
+    #[test]
+    fn parse_tshark_line_falls_back_to_ppi_rssi_when_radiotap_missing() {
+        let layout = base_parse_layout();
+        let line = "1710000000.0\t150\t11:22:33:44:55:66\taa:bb:cc:dd:ee:ff\t11:22:33:44:55:66\t\t-62\t6\t2437\t2\t8\t1";
+        let parsed = parse_tshark_line(line, layout).expect("parse frame");
+        assert_eq!(parsed.rssi, Some(-62));
+    }
+
+    #[test]
+    fn parse_geiger_rssi_prefers_radiotap_then_ppi() {
+        assert_eq!(parse_geiger_rssi("-44\t-70"), Some(-44));
+        assert_eq!(parse_geiger_rssi("\t-70"), Some(-70));
+        assert_eq!(parse_geiger_rssi("-58"), Some(-58));
+        assert_eq!(parse_geiger_rssi("\t"), None);
+    }
 }

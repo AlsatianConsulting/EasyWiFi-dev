@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Passive Wi-Fi analysis and mapping app"
 license = "MIT"
+default-run = "wirelessexplorer"
 
 [dependencies]
 anyhow = "1.0"
