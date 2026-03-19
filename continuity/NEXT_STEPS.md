@@ -21,8 +21,9 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 1. Re-check watchlist row alignment and table filter placement after migration.
 2. Confirm AP selection restricts the associated-client pane strictly to the selected AP.
 3. Re-validate multi-adapter Wi-Fi runtime behavior.
-4. Re-validate BlueZ + Ubertooth routing and enumeration on the new host.
-5. Re-validate column filter visibility toggle and persistence.
+4. Validate opt-in Wi-Fi parsing mode transitions (disabled capture-only vs enabled live parsing) and resource impact in dense RF environments.
+5. Re-validate BlueZ + Ubertooth routing and enumeration on the new host.
+6. Re-validate column filter visibility toggle and persistence.
 
 ## Priority 2: finish the remaining core export requests
 

@@ -99,6 +99,10 @@ pub fn default_wifi_packet_header_mode() -> WifiPacketHeaderMode {
     WifiPacketHeaderMode::Radiotap
 }
 
+pub fn default_enable_wifi_frame_parsing() -> bool {
+    false
+}
+
 pub fn default_bluetooth_identity_expanded() -> bool {
     true
 }
@@ -837,6 +841,8 @@ pub struct AppSettings {
     pub oui_source_path: PathBuf,
     #[serde(default = "default_wifi_packet_header_mode")]
     pub wifi_packet_header_mode: WifiPacketHeaderMode,
+    #[serde(default = "default_enable_wifi_frame_parsing")]
+    pub enable_wifi_frame_parsing: bool,
     #[serde(default)]
     pub output_to_files: bool,
     #[serde(default = "default_output_root")]
@@ -896,6 +902,7 @@ impl Default for AppSettings {
             default_rows_per_page: default_default_rows_per_page(),
             oui_source_path: default_oui_source_path(),
             wifi_packet_header_mode: default_wifi_packet_header_mode(),
+            enable_wifi_frame_parsing: default_enable_wifi_frame_parsing(),
             output_to_files: false,
             output_root: default_output_root(),
             interfaces: Vec::new(),
@@ -991,6 +998,7 @@ mod tests {
         settings.show_ap_inline_channel_usage = true;
         settings.default_rows_per_page = 100;
         settings.bluetooth_enabled = false;
+        settings.enable_wifi_frame_parsing = true;
         settings.oui_source_path = PathBuf::from("/tmp/test-manuf");
         settings.bluetooth_detail_view.descriptors_expanded = true;
         settings.sdr_bookmarks = vec![SdrBookmarkSetting {
@@ -1016,6 +1024,7 @@ mod tests {
         assert!(loaded.show_ap_inline_channel_usage);
         assert_eq!(loaded.default_rows_per_page, 100);
         assert!(!loaded.bluetooth_enabled);
+        assert!(loaded.enable_wifi_frame_parsing);
         assert_eq!(loaded.oui_source_path, PathBuf::from("/tmp/test-manuf"));
         assert!(loaded.bluetooth_detail_view.descriptors_expanded);
         assert_eq!(

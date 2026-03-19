@@ -720,6 +720,7 @@ impl AppState {
         let interfaces = self.settings.interfaces.clone();
         let session_capture_path = self.session_capture_path.clone();
         let wifi_packet_header_mode = self.settings.wifi_packet_header_mode;
+        let enable_wifi_frame_parsing = self.settings.enable_wifi_frame_parsing;
         let gps_enabled = !matches!(self.settings.gps, GpsSettings::Disabled);
         let capture_sender = self.capture_sender.clone();
         let bluetooth_sender = self.bluetooth_sender.clone();
@@ -746,6 +747,7 @@ impl AppState {
                     interfaces,
                     session_capture_path,
                     wifi_packet_header_mode,
+                    enable_wifi_frame_parsing,
                     gps_enabled,
                     capture_sender,
                 );
@@ -2983,6 +2985,7 @@ fn prepare_and_start_wifi_capture(
     mut interfaces: Vec<InterfaceSettings>,
     session_capture_path: PathBuf,
     wifi_packet_header_mode: WifiPacketHeaderMode,
+    wifi_frame_parsing_enabled: bool,
     gps_enabled: bool,
     capture_sender: Sender<CaptureEvent>,
 ) -> WifiStartResult {
@@ -2994,6 +2997,14 @@ fn prepare_and_start_wifi_capture(
         match wifi_packet_header_mode {
             WifiPacketHeaderMode::Radiotap => "Radiotap",
             WifiPacketHeaderMode::Ppi => "PPI",
+        }
+    ));
+    status_lines.push(format!(
+        "Wi-Fi frame parsing {}",
+        if wifi_frame_parsing_enabled {
+            "enabled (higher CPU and memory use)"
+        } else {
+            "disabled (capture-only mode)"
         }
     ));
 
@@ -3036,6 +3047,7 @@ fn prepare_and_start_wifi_capture(
             interfaces: interfaces.clone(),
             session_pcap_path: Some(session_capture_path),
             wifi_packet_header_mode,
+            wifi_frame_parsing_enabled,
             gps_enabled,
             passive_only: true,
         },
@@ -12142,6 +12154,7 @@ fn apply_interface_selection(
     iface_name: String,
     mode: ChannelSelectionMode,
     wifi_packet_header_mode: WifiPacketHeaderMode,
+    enable_wifi_frame_parsing: bool,
     bluetooth_enabled: bool,
     bluetooth_scan_source: BluetoothScanSource,
     bluetooth_controller: Option<String>,
@@ -12164,6 +12177,7 @@ fn apply_interface_selection(
     s.settings.bluetooth_controller = bluetooth_controller;
     s.settings.ubertooth_device = ubertooth_device;
     s.settings.wifi_packet_header_mode = wifi_packet_header_mode;
+    s.settings.enable_wifi_frame_parsing = enable_wifi_frame_parsing;
     s.settings.output_to_files = output_to_files;
 
     if output_to_files {
@@ -12267,6 +12281,13 @@ fn open_interface_settings_dialog_inner(
     packet_header_combo.append(Some("radiotap"), "Radiotap");
     packet_header_combo.append(Some("ppi"), "PPI");
     packet_header_combo.set_active_id(Some("radiotap"));
+    let wifi_parse_check =
+        CheckButton::with_label("Enable Wi-Fi frame parsing (slower, higher resource use)");
+    let wifi_parse_warning = Label::new(Some(
+        "Warning: Wi-Fi frame parsing can be CPU/memory intensive on busy channels.",
+    ));
+    wifi_parse_warning.set_xalign(0.0);
+    wifi_parse_warning.set_wrap(true);
 
     let dwell_entry = Entry::new();
     dwell_entry.set_placeholder_text(Some("Dwell ms (200 = 5 ch/sec)"));
@@ -12354,6 +12375,12 @@ fn open_interface_settings_dialog_inner(
     packet_header_label.set_width_chars(18);
     packet_header_row.append(&packet_header_label);
     packet_header_row.append(&packet_header_combo);
+    let wifi_parse_row = GtkBox::new(Orientation::Horizontal, 8);
+    let wifi_parse_label = Label::new(Some("Wi-Fi Parsing"));
+    wifi_parse_label.set_xalign(0.0);
+    wifi_parse_label.set_width_chars(18);
+    wifi_parse_row.append(&wifi_parse_label);
+    wifi_parse_row.append(&wifi_parse_check);
 
     let channels_row = GtkBox::new(Orientation::Horizontal, 8);
     let channels_label = Label::new(Some("Specific Channels"));
@@ -12445,6 +12472,8 @@ fn open_interface_settings_dialog_inner(
     root.append(&interface_status);
     root.append(&mode_row);
     root.append(&packet_header_row);
+    root.append(&wifi_parse_row);
+    root.append(&wifi_parse_warning);
     root.append(&channels_row);
     root.append(&dwell_row);
     root.append(&band_row);
@@ -12704,6 +12733,7 @@ fn open_interface_settings_dialog_inner(
             s.settings.bluetooth_scan_source,
             s.settings.bluetooth_controller.clone(),
             s.settings.ubertooth_device.clone(),
+            s.settings.enable_wifi_frame_parsing,
             s.settings.output_to_files,
             s.settings.output_root.clone(),
         )
@@ -12779,10 +12809,11 @@ fn open_interface_settings_dialog_inner(
             ubertooth_combo.set_active_id(Some("default"));
         }
     }
-    output_to_files_check.set_active(current_interface.6);
-    output_dir_entry.set_text(&current_interface.7.display().to_string());
-    output_dir_entry.set_sensitive(current_interface.6);
-    browse_output_btn.set_sensitive(current_interface.6);
+    wifi_parse_check.set_active(current_interface.6);
+    output_to_files_check.set_active(current_interface.7);
+    output_dir_entry.set_text(&current_interface.8.display().to_string());
+    output_dir_entry.set_sensitive(current_interface.7);
+    browse_output_btn.set_sensitive(current_interface.7);
 
     if let Some(cb) = apply_interface_capability.borrow().as_ref() {
         cb();
@@ -12837,6 +12868,7 @@ fn open_interface_settings_dialog_inner(
         let band_combo = band_combo.clone();
         let lock_channel_entry = lock_channel_entry.clone();
         let lock_ht_combo = lock_ht_combo.clone();
+        let wifi_parse_check = wifi_parse_check.clone();
         let bluetooth_scan_check = bluetooth_scan_check.clone();
         let bluetooth_source_combo = bluetooth_source_combo.clone();
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
@@ -12866,6 +12898,7 @@ fn open_interface_settings_dialog_inner(
                 Some("ppi") => WifiPacketHeaderMode::Ppi,
                 _ => WifiPacketHeaderMode::Radiotap,
             };
+            let enable_wifi_frame_parsing = wifi_parse_check.is_active();
             let dwell_ms = dwell_entry
                 .text()
                 .parse::<u64>()
@@ -12992,6 +13025,7 @@ fn open_interface_settings_dialog_inner(
                 iface_name,
                 mode,
                 wifi_packet_header_mode,
+                enable_wifi_frame_parsing,
                 bluetooth_enabled,
                 bluetooth_scan_source,
                 bluetooth_controller,
@@ -13133,6 +13167,16 @@ fn open_preferences_window(
     packet_header_row.append(&packet_header_label);
     packet_header_row.append(&packet_header_combo);
     wifi_page.append(&packet_header_row);
+    let wifi_parse_check =
+        CheckButton::with_label("Enable Wi-Fi frame parsing (slower, higher resource use)");
+    wifi_parse_check.set_active(settings_snapshot.enable_wifi_frame_parsing);
+    let wifi_parse_warning = Label::new(Some(
+        "Warning: enabling Wi-Fi parsing can significantly increase CPU and memory usage.",
+    ));
+    wifi_parse_warning.set_xalign(0.0);
+    wifi_parse_warning.set_wrap(true);
+    wifi_page.append(&wifi_parse_check);
+    wifi_page.append(&wifi_parse_warning);
 
     let wifi_summary = Label::new(None);
     wifi_summary.set_xalign(0.0);
@@ -13551,6 +13595,7 @@ fn open_preferences_window(
                     Some("ppi") => WifiPacketHeaderMode::Ppi,
                     _ => WifiPacketHeaderMode::Radiotap,
                 };
+                let enable_wifi_frame_parsing = wifi_parse_check.is_active();
 
                 let bluetooth_enabled = bluetooth_enabled_check.is_active();
                 let bluetooth_scan_source = match bluetooth_source_combo.active_id().as_deref() {
@@ -13682,6 +13727,18 @@ fn open_preferences_window(
                             match wifi_packet_header_mode {
                                 WifiPacketHeaderMode::Radiotap => "Radiotap",
                                 WifiPacketHeaderMode::Ppi => "PPI",
+                            }
+                        ));
+                    }
+                    if s.settings.enable_wifi_frame_parsing != enable_wifi_frame_parsing {
+                        s.settings.enable_wifi_frame_parsing = enable_wifi_frame_parsing;
+                        full_restart_needed |= s.capture_runtime.is_some();
+                        applied_messages.push(format!(
+                            "wifi parsing {}",
+                            if enable_wifi_frame_parsing {
+                                "enabled (higher resource use)"
+                            } else {
+                                "disabled (capture-only mode)"
                             }
                         ));
                     }

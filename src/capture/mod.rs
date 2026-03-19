@@ -27,6 +27,7 @@ pub struct CaptureConfig {
     pub interfaces: Vec<InterfaceSettings>,
     pub session_pcap_path: Option<PathBuf>,
     pub wifi_packet_header_mode: WifiPacketHeaderMode,
+    pub wifi_frame_parsing_enabled: bool,
     pub gps_enabled: bool,
     pub passive_only: bool,
 }
@@ -993,12 +994,14 @@ pub fn start_capture(config: CaptureConfig, sender: Sender<CaptureEvent>) -> Cap
         iface_settings.interface_name = active_interface_name.clone();
         let pcap_path = config.session_pcap_path.clone();
         let wifi_packet_header_mode = config.wifi_packet_header_mode;
+        let wifi_frame_parsing_enabled = config.wifi_frame_parsing_enabled;
 
         let handle = thread::spawn(move || {
             run_interface_capture(
                 &iface_settings,
                 pcap_path,
                 wifi_packet_header_mode,
+                wifi_frame_parsing_enabled,
                 tx,
                 stop,
             );
@@ -1118,6 +1121,7 @@ fn run_interface_capture(
     interface: &InterfaceSettings,
     session_pcap_path: Option<PathBuf>,
     wifi_packet_header_mode: WifiPacketHeaderMode,
+    wifi_frame_parsing_enabled: bool,
     sender: Sender<CaptureEvent>,
     stop_flag: Arc<AtomicBool>,
 ) {
@@ -1141,6 +1145,122 @@ fn run_interface_capture(
             interface.interface_name
         )));
         run_simulated_capture(interface, sender, stop_flag);
+        return;
+    }
+
+    if !wifi_frame_parsing_enabled {
+        let _ = sender.send(CaptureEvent::Log(format!(
+            "Wi-Fi frame parsing disabled on {}; capture-only mode active",
+            interface.interface_name
+        )));
+        let mut saver = None;
+        let mut saver_stderr_handle = None;
+        if let Some(path) = session_pcap_path.as_ref() {
+            let attempts = pcap_saver_link_type_attempts(wifi_packet_header_mode);
+            let mut saver_link_type_used = None::<&str>;
+            let mut last_start_error = None::<String>;
+
+            for (idx, link_type) in attempts.iter().enumerate() {
+                let args = build_pcap_saver_args(&interface.interface_name, path, link_type);
+                match spawn_privileged_tshark(&args) {
+                    Ok(proc) => {
+                        saver_link_type_used = Some(*link_type);
+                        let _ = sender.send(CaptureEvent::Log(format!(
+                            "privileged PCAP saver running on {} via {} ({})",
+                            interface.interface_name,
+                            proc.launch_mode,
+                            wifi_packet_header_mode_label_from_link_type(link_type)
+                        )));
+                        let mut child = proc.child;
+                        saver_stderr_handle = child.stderr.take().map(|mut stderr| {
+                            thread::spawn(move || {
+                                let mut buf = String::new();
+                                let _ = stderr.read_to_string(&mut buf);
+                                buf
+                            })
+                        });
+                        saver = Some(child);
+                        break;
+                    }
+                    Err(err) => {
+                        last_start_error = Some(err.to_string());
+                        let has_fallback = idx + 1 < attempts.len();
+                        if has_fallback {
+                            let _ = sender.send(CaptureEvent::Log(format!(
+                                "{} packet header mode failed on {}; retrying PCAP saver with {} ({})",
+                                wifi_packet_header_mode_label_from_link_type(link_type),
+                                interface.interface_name,
+                                wifi_packet_header_mode_label_from_link_type(attempts[idx + 1]),
+                                err
+                            )));
+                        }
+                    }
+                }
+            }
+
+            if saver.is_none() {
+                let _ = sender.send(CaptureEvent::Log(format!(
+                    "failed to start privileged PCAP saver on {}: {}",
+                    interface.interface_name,
+                    last_start_error.unwrap_or_else(|| "unknown startup error".to_string())
+                )));
+                return;
+            }
+            if let Some(link_type) = saver_link_type_used {
+                let _ = sender.send(CaptureEvent::Log(format!(
+                    "Wi-Fi parsing is disabled; recording {} headers only on {}",
+                    wifi_packet_header_mode_label_from_link_type(link_type),
+                    interface.interface_name
+                )));
+            }
+        } else {
+            let _ = sender.send(CaptureEvent::Log(format!(
+                "Wi-Fi parsing disabled and no session PCAP output configured on {}; waiting for stop",
+                interface.interface_name
+            )));
+        }
+
+        while !stop_flag.load(Ordering::Relaxed) {
+            if let Some(saver_child) = saver.as_mut() {
+                if let Ok(Some(status)) = saver_child.try_wait() {
+                    let _ = sender.send(CaptureEvent::Log(format!(
+                        "Wi-Fi capture-only saver exited on {} with {}",
+                        interface.interface_name, status
+                    )));
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(150));
+        }
+
+        if stop_flag.load(Ordering::Relaxed) {
+            if let Some(saver_child) = saver.as_mut() {
+                let _ = saver_child.kill();
+            }
+        }
+        if let Some(mut saver_child) = saver {
+            let _ = saver_child.wait();
+        }
+        let saver_stderr_text = saver_stderr_handle
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or_default();
+        if !saver_stderr_text.trim().is_empty() {
+            let stderr_summary = saver_stderr_text
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .filter(|line| !line.starts_with("Running as user"))
+                .filter(|line| !line.contains("This could be dangerous"))
+                .take(4)
+                .collect::<Vec<_>>()
+                .join(" | ");
+            if !stderr_summary.is_empty() {
+                let _ = sender.send(CaptureEvent::Log(format!(
+                    "Wi-Fi capture-only saver notes on {}: {}",
+                    interface.interface_name, stderr_summary
+                )));
+            }
+        }
         return;
     }
 
