@@ -38,6 +38,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 18. Interactive Wi-Fi decoder startup now follows packet-header mode selection with fallback (`PPI` then `Radiotap`), aligned with PCAP saver behavior.
 19. Bluetooth KML/KMZ ExtendedData now includes richer transport metadata and active-enumeration context fields for external GIS use.
 20. SDR spectrum frame generation now uses live IQ capture + in-process FFT for RTL-SDR/HackRF/bladeRF/B210 tool paths when available, with synthetic fallback for unavailable/failed live capture.
+21. SDR right-click frequency workflow supports per-signal decoder launch with hardware-constraint guardrails and clearer unavailable-decoder status messages.
 
 ### Bluetooth
 
@@ -77,7 +78,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 ## What is partial
 
 1. SDR FFT/waterfall now has live IQ ingestion support across hardware tool paths, but live RF validation and capture-format robustness across hosts remain partial.
-2. SDR decoder execution exists, but most advanced decoders still depend on missing external tools or deeper integration.
+2. SDR decoder execution exists with improved multi-device command tuning for some decoders, but several protocol decoders remain toolchain-limited or RTL-specific in this runtime.
 3. Bluetooth multi-adapter support is implemented in code paths, but live validation on this host is limited.
 4. Geoiger-style Wi-Fi workflows exist, but ongoing live RF validation depends heavily on the RF environment.
 5. Export/format expansion requested later (for example richer KMZ iconography and full KMZ icon policy) is not complete.

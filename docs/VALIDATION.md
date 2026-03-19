@@ -173,6 +173,7 @@ Validated behavior:
 3. bladeRF runtime starts
 4. Ettus B210 runtime path starts, but real UHD access is blocked on this host
 5. SDR spectrum frames now use live IQ-backed FFT path for available capture tools (`rtl_sdr`, `hackrf_transfer`, `bladeRF-cli`, `uhd_rx_cfile`) with synthetic fallback if live capture fails or tooling is missing
+6. SDR right-click decode actions now enforce hardware-constraint checks and provide explicit unavailable-decoder status feedback
 
 Blocked by hardware/runtime state:
 

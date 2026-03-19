@@ -46,6 +46,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 6. Validate map/satcom `message` + `raw` side-by-side logging in live decoder runs.
 7. Validate corrected ACARS runtime integration live.
 8. Validate ADS-B live and correlate with ACARS by aircraft identifier when possible.
+9. Expand non-RTL command pipelines for RTL-bound demodulators (AIS/POCSAG/DECT classes) so right-click demod selection has broader cross-hardware execution parity.
 
 ## Priority 4: requested SDR decoder backlog
 
