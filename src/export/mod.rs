@@ -1414,6 +1414,38 @@ fn build_bluetooth_kml_placemarks(bluetooth: &[BluetoothDeviceRecord]) -> String
                         .unwrap_or_default(),
                 ),
             ];
+            let mut fields = fields;
+            if let Some(active) = &dev.active_enumeration {
+                fields.push(("active_connected".to_string(), active.connected.to_string()));
+                fields.push(("active_paired".to_string(), active.paired.to_string()));
+                fields.push(("active_trusted".to_string(), active.trusted.to_string()));
+                fields.push(("active_blocked".to_string(), active.blocked.to_string()));
+                fields.push((
+                    "active_services_resolved".to_string(),
+                    active.services_resolved.to_string(),
+                ));
+                fields.push((
+                    "active_battery_percent".to_string(),
+                    active
+                        .battery_percent
+                        .map(|v| v.to_string())
+                        .unwrap_or_default(),
+                ));
+                fields.push((
+                    "active_tx_power_dbm".to_string(),
+                    active
+                        .tx_power_dbm
+                        .map(|v| v.to_string())
+                        .unwrap_or_default(),
+                ));
+                fields.push((
+                    "active_last_enumerated".to_string(),
+                    active
+                        .last_enumerated
+                        .map(|v| v.to_rfc3339())
+                        .unwrap_or_default(),
+                ));
+            }
             let description = format!(
                 "MAC={} | Name={} | Transport={} | Type={} | RSSI={} dBm",
                 dev.mac,
@@ -1811,6 +1843,17 @@ mod tests {
         bluetooth_ble.class_of_device = Some("0x000000".to_string());
         bluetooth_ble.mfgr_names = vec!["Acme".to_string()];
         bluetooth_ble.uuid_names = vec!["Battery Service".to_string()];
+        bluetooth_ble.active_enumeration = Some(crate::model::BluetoothActiveEnumeration {
+            connected: true,
+            paired: true,
+            trusted: true,
+            blocked: false,
+            services_resolved: true,
+            battery_percent: Some(82),
+            tx_power_dbm: Some(-4),
+            last_enumerated: Some(now),
+            ..crate::model::BluetoothActiveEnumeration::default()
+        });
         bluetooth_ble.source_adapters = vec!["bluez:hci0".to_string()];
         bluetooth_ble.observations.push(sample_observation(now));
         let mut bluetooth_classic = BluetoothDeviceRecord::new("22:33:44:55:66:88", now);
@@ -1869,6 +1912,11 @@ mod tests {
             "<Data name=\"class_of_device\"><value>0x000000</value></Data>",
             "<Data name=\"mfgr_names\"><value>Acme</value></Data>",
             "<Data name=\"uuid_names\"><value>Battery Service</value></Data>",
+            "<Data name=\"active_connected\"><value>true</value></Data>",
+            "<Data name=\"active_paired\"><value>true</value></Data>",
+            "<Data name=\"active_services_resolved\"><value>true</value></Data>",
+            "<Data name=\"active_battery_percent\"><value>82</value></Data>",
+            "<Data name=\"active_tx_power_dbm\"><value>-4</value></Data>",
             "<Data name=\"device_type\"><value>wifi_ap</value></Data>",
             "<Data name=\"device_type\"><value>wifi_client</value></Data>",
             "<Data name=\"device_type\"><value>bluetooth</value></Data>",
@@ -1883,6 +1931,7 @@ mod tests {
                 "kmz doc.kml missing expected fragment: {expected}"
             );
         }
+        assert!(xml.contains("<Data name=\"active_last_enumerated\"><value>"));
     }
 
     #[test]
