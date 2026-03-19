@@ -723,6 +723,16 @@ fn run_sdr_loop(
                         hardware,
                         &plugin_defs,
                     );
+                    if let Some(override_id) =
+                        plugin_override_id_for_builtin(&kind, hardware, &plugin_defs)
+                    {
+                        let _ = sender.send(SdrEvent::Log(format!(
+                            "using decoder override `{}` for {} on {}",
+                            override_id,
+                            kind.label(),
+                            hardware.label()
+                        )));
+                    }
                     let Some(command_line) = command_line else {
                         let reason = decoder_unavailability_reason(&kind, hardware)
                             .unwrap_or_else(|| "required tool not found".to_string());
@@ -1335,6 +1345,18 @@ fn plugin_override_command_template(
     hardware: SdrHardware,
     plugins: &[SdrPluginDefinition],
 ) -> Option<String> {
+    let override_id = plugin_override_id_for_builtin(decoder, hardware, plugins)?;
+    plugins
+        .iter()
+        .find(|entry| entry.id == override_id)
+        .map(|entry| entry.command_template.clone())
+}
+
+fn plugin_override_id_for_builtin(
+    decoder: &SdrDecoderKind,
+    hardware: SdrHardware,
+    plugins: &[SdrPluginDefinition],
+) -> Option<String> {
     if matches!(decoder, SdrDecoderKind::Plugin { .. }) {
         return None;
     }
@@ -1346,8 +1368,8 @@ fn plugin_override_command_template(
         decoder_id,
     ];
     for candidate in candidates {
-        if let Some(def) = plugins.iter().find(|entry| entry.id == candidate) {
-            return Some(def.command_template.clone());
+        if plugins.iter().any(|entry| entry.id == candidate) {
+            return Some(candidate);
         }
     }
     None
@@ -3136,6 +3158,9 @@ mod tests {
         assert!(command.contains("custom_ais_demod"));
         assert!(command.contains("--freq 162025000"));
         assert!(command.contains("--driver hackrf"));
+        let override_id =
+            plugin_override_id_for_builtin(&SdrDecoderKind::Ais, SdrHardware::HackRf, &plugin_defs);
+        assert_eq!(override_id.as_deref(), Some("ais_hackrf"));
     }
 
     #[test]
