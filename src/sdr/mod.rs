@@ -300,6 +300,8 @@ enum SdrCommand {
 enum LiveSpectrumSource {
     RtlSdr,
     HackRf,
+    BladeRf,
+    EttusB210,
 }
 
 pub struct SdrRuntime {
@@ -995,6 +997,10 @@ fn detect_live_spectrum_source(hardware: SdrHardware) -> Option<LiveSpectrumSour
         SdrHardware::HackRf if command_exists("hackrf_transfer") => {
             Some(LiveSpectrumSource::HackRf)
         }
+        SdrHardware::BladeRf if command_exists("bladeRF-cli") => Some(LiveSpectrumSource::BladeRf),
+        SdrHardware::EttusB210 if command_exists("uhd_rx_cfile") => {
+            Some(LiveSpectrumSource::EttusB210)
+        }
         _ => None,
     }
 }
@@ -1003,6 +1009,8 @@ fn live_spectrum_source_label(source: LiveSpectrumSource) -> &'static str {
     match source {
         LiveSpectrumSource::RtlSdr => "rtl_sdr",
         LiveSpectrumSource::HackRf => "hackrf_transfer",
+        LiveSpectrumSource::BladeRf => "bladeRF-cli",
+        LiveSpectrumSource::EttusB210 => "uhd_rx_cfile",
     }
 }
 
@@ -1037,6 +1045,20 @@ fn generate_live_spectrum_frame(
             sample_count,
             shell_escape_path(&output_path)
         ),
+        LiveSpectrumSource::BladeRf => format!(
+            "bladeRF-cli -e \"set frequency rx {}; set samplerate rx {}; rx config file={} format=bin n={}; rx start; rx wait\" >/dev/null 2>&1",
+            center_freq_hz,
+            sample_rate_hz,
+            shell_escape_path(&output_path),
+            sample_count
+        ),
+        LiveSpectrumSource::EttusB210 => format!(
+            "uhd_rx_cfile -f {} -r {} -N {} --type short {} >/dev/null 2>&1",
+            center_freq_hz,
+            sample_rate_hz,
+            sample_count,
+            shell_escape_path(&output_path)
+        ),
     };
 
     let capture_output = Command::new("bash").arg("-lc").arg(command_line).output()?;
@@ -1057,6 +1079,9 @@ fn generate_live_spectrum_frame(
     let iq = match source {
         LiveSpectrumSource::RtlSdr => iq_pairs_from_u8_interleaved(&raw, fft_bins),
         LiveSpectrumSource::HackRf => iq_pairs_from_i8_interleaved(&raw, fft_bins),
+        LiveSpectrumSource::BladeRf | LiveSpectrumSource::EttusB210 => {
+            iq_pairs_from_i16_interleaved_le(&raw, fft_bins)
+        }
     };
     if iq.len() < fft_bins {
         anyhow::bail!(
@@ -1092,6 +1117,17 @@ fn iq_pairs_from_i8_interleaved(raw: &[u8], fft_bins: usize) -> Vec<(f32, f32)> 
     for chunk in raw.chunks_exact(2).take(max_pairs) {
         let i = (chunk[0] as i8) as f32 / 128.0;
         let q = (chunk[1] as i8) as f32 / 128.0;
+        iq.push((i, q));
+    }
+    iq
+}
+
+fn iq_pairs_from_i16_interleaved_le(raw: &[u8], fft_bins: usize) -> Vec<(f32, f32)> {
+    let max_pairs = (fft_bins * 2).max(fft_bins);
+    let mut iq = Vec::with_capacity(max_pairs);
+    for chunk in raw.chunks_exact(4).take(max_pairs) {
+        let i = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / 32768.0;
+        let q = i16::from_le_bytes([chunk[2], chunk[3]]) as f32 / 32768.0;
         iq.push((i, q));
     }
     iq
@@ -3027,6 +3063,19 @@ mod tests {
     }
 
     #[test]
+    fn iq_pairs_from_i16_interleaved_le_converts_signed_values() {
+        let raw = vec![
+            0x00u8, 0x80u8, 0xFFu8, 0x7Fu8, 0x00u8, 0x00u8, 0x00u8, 0x40u8,
+        ];
+        let pairs = iq_pairs_from_i16_interleaved_le(&raw, 2);
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs[0].0 < 0.0);
+        assert!(pairs[0].1 > 0.0);
+        assert_eq!(pairs[1].0, 0.0);
+        assert!(pairs[1].1 > 0.0);
+    }
+
+    #[test]
     fn power_spectrum_dbm_from_iq_returns_expected_bin_count() {
         let fft_bins = 64usize;
         let mut iq = Vec::with_capacity(fft_bins * 2);
@@ -3061,6 +3110,20 @@ mod tests {
             assert!(matches!(hackrf, Some(LiveSpectrumSource::HackRf)));
         } else {
             assert!(hackrf.is_none());
+        }
+
+        let bladerf = detect_live_spectrum_source(SdrHardware::BladeRf);
+        if command_exists("bladeRF-cli") {
+            assert!(matches!(bladerf, Some(LiveSpectrumSource::BladeRf)));
+        } else {
+            assert!(bladerf.is_none());
+        }
+
+        let b210 = detect_live_spectrum_source(SdrHardware::EttusB210);
+        if command_exists("uhd_rx_cfile") {
+            assert!(matches!(b210, Some(LiveSpectrumSource::EttusB210)));
+        } else {
+            assert!(b210.is_none());
         }
     }
 }
