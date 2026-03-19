@@ -1271,6 +1271,8 @@ fn resolve_decoder_command_line(
                     "rtl_fm -f {freq_hz} -M fm -s 22050 -g 35 - | multimon-ng -t raw -a POCSAG1200 -a POCSAG2400 -"
                         .to_string(),
                 )
+            } else if hardware != SdrHardware::RtlSdr {
+                resolve_multimon_non_rtl_command(hardware, freq_hz, "pocsag")
             } else {
                 None
             }
@@ -1291,6 +1293,8 @@ fn resolve_decoder_command_line(
                     "rtl_fm -f {freq_hz} -M fm -s 48000 -g 35 - | multimon-ng -t raw -a DECT -"
                         .to_string(),
                 )
+            } else if hardware != SdrHardware::RtlSdr {
+                resolve_multimon_non_rtl_command(hardware, freq_hz, "dect")
             } else {
                 None
             }
@@ -1344,10 +1348,18 @@ fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -
             "AIS built-in decoder currently requires RTL-SDR tools in this runtime".to_string(),
         ),
         SdrDecoderKind::Pocsag if hardware != SdrHardware::RtlSdr => Some(
-            "POCSAG built-in decoder currently requires RTL-SDR tools in this runtime".to_string(),
+            if resolve_multimon_non_rtl_command(hardware, 169_650_000, "pocsag").is_none() {
+                "POCSAG on non-RTL hardware requires csdr + sox + multimon-ng and a compatible capture tool".to_string()
+            } else {
+                return None;
+            },
         ),
         SdrDecoderKind::Dect if hardware != SdrHardware::RtlSdr => Some(
-            "DECT built-in decoder currently requires RTL-SDR tools in this runtime".to_string(),
+            if resolve_multimon_non_rtl_command(hardware, 1_881_792_000, "dect").is_none() {
+                "DECT on non-RTL hardware requires csdr + sox + multimon-ng and a compatible capture tool".to_string()
+            } else {
+                return None;
+            },
         ),
         _ => None,
     }
@@ -1360,6 +1372,50 @@ fn soapy_driver_name(hardware: SdrHardware) -> &'static str {
         SdrHardware::BladeRf => "bladerf",
         SdrHardware::EttusB210 => "uhd",
     }
+}
+
+fn resolve_multimon_non_rtl_command(
+    hardware: SdrHardware,
+    freq_hz: u64,
+    mode: &str,
+) -> Option<String> {
+    if !(command_exists("csdr") && command_exists("sox") && command_exists("multimon-ng")) {
+        return None;
+    }
+    let mode_args = match mode {
+        "pocsag" => "-a POCSAG1200 -a POCSAG2400",
+        "dect" => "-a DECT",
+        _ => return None,
+    };
+    let sample_rate_hz = 240_000u32;
+    let capture_samples = sample_rate_hz as u64 * 2;
+    let capture_command = match hardware {
+        SdrHardware::HackRf if command_exists("hackrf_transfer") => format!(
+            "hackrf_transfer -f {} -s {} -n {} -r \"$tmp_iq\" >/dev/null 2>&1",
+            freq_hz, sample_rate_hz, capture_samples
+        ),
+        SdrHardware::BladeRf if command_exists("bladeRF-cli") => format!(
+            "bladeRF-cli -e \"set frequency rx {}; set samplerate rx {}; rx config file=$tmp_iq format=bin n={}; rx start; rx wait\" >/dev/null 2>&1",
+            freq_hz, sample_rate_hz, capture_samples
+        ),
+        SdrHardware::EttusB210 if command_exists("uhd_rx_cfile") => format!(
+            "uhd_rx_cfile -f {} -r {} -N {} --type short \"$tmp_iq\" >/dev/null 2>&1",
+            freq_hz, sample_rate_hz, capture_samples
+        ),
+        _ => return None,
+    };
+    let csdr_convert = match hardware {
+        SdrHardware::HackRf => "convert_i8_f",
+        SdrHardware::BladeRf | SdrHardware::EttusB210 => "convert_s16_f",
+        SdrHardware::RtlSdr => return None,
+    };
+
+    Some(format!(
+        "tmp_iq=\"$(mktemp)\"; trap 'rm -f \"$tmp_iq\"' EXIT; while true; do {capture}; csdr {convert} < \"$tmp_iq\" | csdr fmdemod_quadri_cf | csdr limit_ff | csdr old_fractional_decimator_ff 4 | csdr convert_f_s16 | sox -t raw -r 60000 -e signed -b 16 -c 1 - -t raw -r 22050 -e signed -b 16 -c 1 - | multimon-ng -t raw {mode_args} -; done",
+        capture = capture_command,
+        convert = csdr_convert,
+        mode_args = mode_args
+    ))
 }
 
 pub fn decoder_hardware_constraint_reason(
@@ -3205,14 +3261,21 @@ mod tests {
         assert!(
             decoder_hardware_constraint_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf).is_some()
         );
-        assert!(
-            decoder_hardware_constraint_reason(&SdrDecoderKind::Pocsag, SdrHardware::BladeRf)
-                .is_some()
-        );
-        assert!(
-            decoder_hardware_constraint_reason(&SdrDecoderKind::Dect, SdrHardware::EttusB210)
-                .is_some()
-        );
+        let pocsag_reason =
+            decoder_hardware_constraint_reason(&SdrDecoderKind::Pocsag, SdrHardware::BladeRf);
+        if resolve_multimon_non_rtl_command(SdrHardware::BladeRf, 169_650_000, "pocsag").is_some() {
+            assert!(pocsag_reason.is_none());
+        } else {
+            assert!(pocsag_reason.is_some());
+        }
+        let dect_reason =
+            decoder_hardware_constraint_reason(&SdrDecoderKind::Dect, SdrHardware::EttusB210);
+        if resolve_multimon_non_rtl_command(SdrHardware::EttusB210, 1_881_792_000, "dect").is_some()
+        {
+            assert!(dect_reason.is_none());
+        } else {
+            assert!(dect_reason.is_some());
+        }
         assert!(
             decoder_hardware_constraint_reason(&SdrDecoderKind::Rtl433, SdrHardware::HackRf)
                 .is_none()
@@ -3229,5 +3292,12 @@ mod tests {
             &[],
         );
         assert!(reason.is_some());
+    }
+
+    #[test]
+    fn resolve_multimon_non_rtl_command_rejects_unknown_mode() {
+        assert!(
+            resolve_multimon_non_rtl_command(SdrHardware::HackRf, 169_650_000, "unknown").is_none()
+        );
     }
 }
