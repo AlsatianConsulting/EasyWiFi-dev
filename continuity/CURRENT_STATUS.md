@@ -81,6 +81,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 61. FCC area explorer status now explicitly reports the auto-selected decoder ID (or `none`) for clearer operator feedback.
 62. `Presets -> Frequencies` now includes a one-click `Remove FCC Bookmarks` action that prunes FCC-imported bookmark entries from runtime and persisted settings.
 63. `Scan Around Bookmark` now preserves the operator’s current scan speed and squelch settings instead of forcing fixed defaults.
+64. `Presets -> Frequencies` now includes `Export SDR Bookmarks CSV`, emitting labeled bookmark inventory with source tagging (`fcc_imported` vs `manual_or_default`).
 
 ### Bluetooth
 
