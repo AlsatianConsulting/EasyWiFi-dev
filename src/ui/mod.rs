@@ -2140,6 +2140,7 @@ fn build_fcc_frequency_bookmarks_from_csv(
 fn build_fcc_area_scan_preset_from_csv(
     csv_path: &PathBuf,
     area_filter: &str,
+    signal_type_filter: &str,
 ) -> Result<Option<FccAreaScanPreset>> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -2156,6 +2157,7 @@ fn build_fcc_area_scan_preset_from_csv(
         .map(|(idx, key)| (key.trim().to_ascii_lowercase(), idx))
         .collect::<HashMap<_, _>>();
     let filter = area_filter.trim().to_ascii_lowercase();
+    let signal_filter = signal_type_filter.trim().to_ascii_lowercase();
     let mut ranges = Vec::<(u64, u64)>::new();
     let mut matched_rows = 0usize;
     let mut signal_type_counts = HashMap::<String, usize>::new();
@@ -2178,9 +2180,7 @@ fn build_fcc_area_scan_preset_from_csv(
                 continue;
             }
         }
-        matched_rows = matched_rows.saturating_add(1);
-
-        if let Some(signal_type) = fcc_record_value(
+        let signal_type = fcc_record_value(
             &record,
             &header_index,
             &[
@@ -2192,7 +2192,17 @@ fn build_fcc_area_scan_preset_from_csv(
                 "station_class_code",
                 "station_type",
             ],
-        ) {
+        );
+        if !signal_filter.is_empty() {
+            let Some(current_signal) = signal_type.as_ref() else {
+                continue;
+            };
+            if !current_signal.to_ascii_lowercase().contains(&signal_filter) {
+                continue;
+            }
+        }
+        matched_rows = matched_rows.saturating_add(1);
+        if let Some(signal_type) = signal_type {
             let normalized = signal_type.trim();
             if !normalized.is_empty() {
                 *signal_type_counts
@@ -4053,8 +4063,14 @@ fn build_menubar(
             note.set_xalign(0.0);
             let area_entry = Entry::new();
             area_entry.set_placeholder_text(Some("Example: Raleigh or NC"));
+            let signal_label = Label::new(Some("Signal/Service filter (optional)"));
+            signal_label.set_xalign(0.0);
+            let signal_entry = Entry::new();
+            signal_entry.set_placeholder_text(Some("Example: Public Safety"));
             content.append(&note);
             content.append(&area_entry);
+            content.append(&signal_label);
+            content.append(&signal_entry);
 
             let window = window.clone();
             let state = state.clone();
@@ -4072,6 +4088,7 @@ fn build_menubar(
                     return;
                 }
                 let area = area_entry.text().to_string();
+                let signal_filter = signal_entry.text().to_string();
                 d.close();
                 choose_file_path(
                     &window,
@@ -4087,13 +4104,17 @@ fn build_menubar(
                         let sdr_scan_step_entry = sdr_scan_step_entry.clone();
                         let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
                         let sdr_squelch_scale = sdr_squelch_scale.clone();
+                        let signal_filter = signal_filter.clone();
                         move |selected| {
                             let Some(csv_path) = selected else {
                                 return;
                             };
-                            let fcc_scan =
-                                match build_fcc_area_scan_preset_from_csv(&csv_path, &area) {
-                                    Ok(Some(preset)) => preset,
+                            let fcc_scan = match build_fcc_area_scan_preset_from_csv(
+                                &csv_path,
+                                &area,
+                                &signal_filter,
+                            ) {
+                                Ok(Some(preset)) => preset,
                                     Ok(None) => {
                                         state.borrow_mut().push_status(format!(
                                             "FCC area explorer: no matching frequency assignments found in {}",
@@ -4140,12 +4161,17 @@ fn build_menubar(
                                 runtime.set_squelch(preset.squelch_dbm);
                             }
                             s.push_status(format!(
-                                "FCC area explorer loaded from {} [{}] type={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
+                                "FCC area explorer loaded from {} [{} | type_filter={}] type={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
                                 csv_path.display(),
                                 if area.trim().is_empty() {
                                     "all rows".to_string()
                                 } else {
                                     area.trim().to_string()
+                                },
+                                if signal_filter.trim().is_empty() {
+                                    "all".to_string()
+                                } else {
+                                    signal_filter.trim().to_string()
                                 },
                                 signal_type.unwrap_or_else(|| "unknown".to_string()),
                                 matched_rows,
@@ -4190,12 +4216,18 @@ fn build_menubar(
             area_label.set_xalign(0.0);
             let area_entry = Entry::new();
             area_entry.set_placeholder_text(Some("Example: Raleigh or NC"));
+            let signal_label = Label::new(Some("Signal/Service filter (optional)"));
+            signal_label.set_xalign(0.0);
+            let signal_entry = Entry::new();
+            signal_entry.set_placeholder_text(Some("Example: Public Safety"));
             let url_label = Label::new(Some("CSV URL"));
             url_label.set_xalign(0.0);
             let url_entry = Entry::new();
             url_entry.set_placeholder_text(Some("https://.../fcc-assignments.csv"));
             content.append(&area_label);
             content.append(&area_entry);
+            content.append(&signal_label);
+            content.append(&signal_entry);
             content.append(&url_label);
             content.append(&url_entry);
 
@@ -4214,6 +4246,7 @@ fn build_menubar(
                     return;
                 }
                 let area = area_entry.text().to_string();
+                let signal_filter = signal_entry.text().to_string();
                 let url = url_entry.text().to_string();
                 d.close();
 
@@ -4227,8 +4260,9 @@ fn build_menubar(
                     }
                 };
 
-                let fcc_scan = match build_fcc_area_scan_preset_from_csv(&csv_path, &area) {
-                    Ok(Some(preset)) => preset,
+                let fcc_scan =
+                    match build_fcc_area_scan_preset_from_csv(&csv_path, &area, &signal_filter) {
+                        Ok(Some(preset)) => preset,
                     Ok(None) => {
                         state.borrow_mut().push_status(format!(
                             "FCC area explorer: no matching frequency assignments found in {}",
@@ -4275,11 +4309,16 @@ fn build_menubar(
                     runtime.set_squelch(preset.squelch_dbm);
                 }
                 s.push_status(format!(
-                    "FCC area explorer URL loaded [{}] type={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
+                    "FCC area explorer URL loaded [{} | type_filter={}] type={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
                     if area.trim().is_empty() {
                         "all rows".to_string()
                     } else {
                         area.trim().to_string()
+                    },
+                    if signal_filter.trim().is_empty() {
+                        "all".to_string()
+                    } else {
+                        signal_filter.trim().to_string()
                     },
                     signal_type.unwrap_or_else(|| "unknown".to_string()),
                     matched_rows,
@@ -17805,7 +17844,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("fcc-area-{}.csv", Uuid::new_v4()));
         let csv = "city,state,frequency_assigned,radio_service_desc\nRaleigh,NC,155.340,Public Safety\nRaleigh,NC,460.125,Public Safety\nAustin,TX,453.500,Business\n";
         std::fs::write(&path, csv).expect("write csv");
-        let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh")
+        let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh", "")
             .expect("parse ok")
             .expect("preset");
         let preset = scan.preset;
@@ -17823,8 +17862,22 @@ mod tests {
         let path = std::env::temp_dir().join(format!("fcc-area-empty-{}.csv", Uuid::new_v4()));
         let csv = "city,state,frequency_assigned\nAustin,TX,453.500\n";
         std::fs::write(&path, csv).expect("write csv");
-        let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh").expect("parse ok");
+        let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh", "").expect("parse ok");
         assert!(scan.is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn fcc_area_scan_preset_builder_applies_signal_type_filter() {
+        let path = std::env::temp_dir().join(format!("fcc-area-type-{}.csv", Uuid::new_v4()));
+        let csv = "city,state,frequency_assigned,radio_service_desc\nRaleigh,NC,155.340,Public Safety\nRaleigh,NC,460.125,Business\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh", "public")
+            .expect("parse ok")
+            .expect("preset");
+        assert!(scan.preset.scan_start_hz <= 155_340_000);
+        assert!(scan.preset.scan_end_hz >= 155_340_000);
+        assert_eq!(scan.matched_rows, 1);
         let _ = std::fs::remove_file(path);
     }
 
