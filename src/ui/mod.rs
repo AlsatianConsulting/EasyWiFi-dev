@@ -6305,6 +6305,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     );
     let sdr_capture_sample_btn = Button::with_label("Capture IQ Sample");
     let sdr_export_map_btn = Button::with_label("Export Map JSON");
+    let sdr_export_decode_btn = Button::with_label("Export Decode JSON");
     let sdr_export_satcom_btn = Button::with_label("Export Satcom JSON");
     let sdr_export_satcom_filtered_btn = Button::with_label("Export Satcom (Filtered)");
     let sdr_export_aircraft_correlation_btn = Button::with_label("Export Aircraft Correlation");
@@ -6434,6 +6435,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&sdr_export_map_btn, 9, 7, 1, 1);
     sdr_controls.attach(&sdr_export_satcom_btn, 10, 7, 1, 1);
     sdr_controls.attach(&sdr_export_satcom_filtered_btn, 9, 8, 2, 1);
+    sdr_controls.attach(&sdr_export_decode_btn, 7, 14, 2, 1);
     sdr_controls.attach(&sdr_export_aircraft_correlation_btn, 9, 14, 2, 1);
     sdr_controls.attach(&sdr_center_geiger_rssi_label, 0, 8, 3, 1);
     sdr_controls.attach(&sdr_center_geiger_tone_label, 3, 8, 3, 1);
@@ -7930,6 +7932,50 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     duration_secs,
                     output_dir.display()
                 ));
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_model = sdr_model.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        sdr_export_decode_btn.connect_clicked(move |_| {
+            let rows = sdr_model.borrow().decode_rows.clone();
+            if rows.is_empty() {
+                state
+                    .borrow_mut()
+                    .push_status("SDR decode export skipped: no decode rows yet".to_string());
+                return;
+            }
+
+            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
+            let output_dir = if output_dir_text.is_empty() {
+                SdrConfig::default().log_output_dir
+            } else {
+                PathBuf::from(output_dir_text)
+            };
+            if let Err(err) = fs::create_dir_all(&output_dir) {
+                state.borrow_mut().push_status(format!(
+                    "SDR decode export failed (create dir {}): {err}",
+                    output_dir.display()
+                ));
+                return;
+            }
+
+            let json_path = output_dir.join(format!(
+                "sdr_decode_rows_{}.json",
+                Utc::now().format("%Y%m%dT%H%M%SZ")
+            ));
+            match export_sdr_decode_artifacts(&json_path, &rows) {
+                Ok((json_path, csv_path)) => state.borrow_mut().push_status(format!(
+                    "exported SDR decode artifacts: {}, {}",
+                    json_path.display(),
+                    csv_path.display()
+                )),
+                Err(err) => state
+                    .borrow_mut()
+                    .push_status(format!("SDR decode export failed: {err}")),
             }
         });
     }
@@ -11682,6 +11728,34 @@ fn write_sdr_satcom_csv(path: &std::path::Path, rows: &[SdrSatcomObservation]) -
     }
     fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
     Ok(())
+}
+
+fn write_sdr_decode_csv(path: &std::path::Path, rows: &[SdrDecodeRow]) -> Result<()> {
+    let mut out = String::from("timestamp,decoder,freq_hz,protocol,message,raw\n");
+    for row in rows {
+        out.push_str(&format!(
+            "{},{},{},{},{},{}\n",
+            csv_escape(&row.timestamp.to_rfc3339()),
+            csv_escape(&row.decoder),
+            row.freq_hz,
+            csv_escape(&row.protocol),
+            csv_escape(&row.message),
+            csv_escape(&row.raw),
+        ));
+    }
+    fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+fn export_sdr_decode_artifacts(
+    primary_json_path: &std::path::Path,
+    rows: &[SdrDecodeRow],
+) -> Result<(PathBuf, PathBuf)> {
+    write_json_pretty(primary_json_path, rows)?;
+    let mut csv_path = primary_json_path.to_path_buf();
+    csv_path.set_extension("csv");
+    write_sdr_decode_csv(&csv_path, rows)?;
+    Ok((primary_json_path.to_path_buf(), csv_path))
 }
 
 fn write_sdr_aircraft_correlation_csv(
@@ -18687,6 +18761,27 @@ mod tests {
         assert!(csv.contains("key,icao_hex,callsign,adsb_rows,acars_rows,total_rows"));
         assert!(csv.contains("icao:ABC123"));
         assert!(csv.contains("131550000|1090000000"));
+        let _ = std::fs::remove_file(json_path);
+        let _ = std::fs::remove_file(path.with_extension("csv"));
+    }
+
+    #[test]
+    fn export_sdr_decode_artifacts_writes_json_and_csv() {
+        let path = std::env::temp_dir().join(format!("sdr-decode-{}.json", Uuid::new_v4()));
+        let rows = vec![SdrDecodeRow {
+            timestamp: Utc::now(),
+            decoder: "ACARS".to_string(),
+            freq_hz: 131_550_000,
+            protocol: "acars".to_string(),
+            message: "flight=UAL123".to_string(),
+            raw: "flight=UAL123".to_string(),
+        }];
+        let (json_path, csv_path) = export_sdr_decode_artifacts(&path, &rows).expect("export");
+        assert!(json_path.exists());
+        assert!(csv_path.exists());
+        let csv = std::fs::read_to_string(csv_path).expect("read csv");
+        assert!(csv.contains("timestamp,decoder,freq_hz,protocol,message,raw"));
+        assert!(csv.contains("ACARS"));
         let _ = std::fs::remove_file(json_path);
         let _ = std::fs::remove_file(path.with_extension("csv"));
     }

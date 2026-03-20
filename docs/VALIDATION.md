@@ -28,6 +28,7 @@ Current SDR logging can also emit:
 - satcom audit records now include `payload_capture_mode`, `payload_parse_state`, and normalized `payload_fields` for unencrypted frames
 - optional satcom parser denylist control via `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST` (protocol/decoder token match)
 - satcom export action now emits companion CSV + parsed-only JSON + denied-only JSON + summary JSON artifacts
+- decode export action emits decode-row JSON + CSV artifacts
 - aircraft correlation export action emits ADS-B/ACARS correlation JSON + CSV artifacts (`icao_hex`/`callsign` merged identities)
 - SDR pane now surfaces decoder telemetry counters (`rows`, `map`, `satcom`, `stderr`)
 - SDR pane now surfaces live aircraft-correlation and satcom-summary status counters for operator monitoring

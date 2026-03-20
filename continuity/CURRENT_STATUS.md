@@ -86,6 +86,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 66. SDR satcom export now emits an additional summary JSON artifact with aggregate metadata counters (protocol/decoder/band/posture/payload-parse/capture state plus coordinate and identifier-hint rollups).
 67. SDR pane now surfaces a live aircraft-correlation status line showing correlated target counts and mixed ADS-B+ACARS linkage counts from current decode rows.
 68. SDR pane now surfaces a live satcom summary status line with parse-state and encryption-posture counters for quick non-content policy/runtime monitoring.
+69. SDR controls now include `Export Decode JSON`, which exports raw decode rows as JSON+CSV artifacts for offline triage alongside map/satcom/correlation exports.
 
 ### Bluetooth
 
