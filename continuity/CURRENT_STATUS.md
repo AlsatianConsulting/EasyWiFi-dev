@@ -60,6 +60,8 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 40. SDR test-mode CLI now supports explicit positive payload capture flag (`--satcom-payload-capture`), while retaining backward-compatible `--allow-satcom-payload`.
 41. Presets now include protocol-focused `Scan Macros` that apply decoder target + scan range/speed/squelch in one action.
 42. Weather satellite APT scanning now has dedicated presets/macro coverage, and plugin override hooks are present for RTL-SDR/HackRF/bladeRF/B210 demod paths.
+43. Scan macro catalog now includes additional core workflows (ADS-B, ACARS, AIS, APRS/AX.25, and P25) for one-click decoder/range setup.
+44. SDR dependency status now tracks weather APT plugin requirements explicitly, including satdump-backed decoder readiness.
 
 ### Bluetooth
 
