@@ -18050,6 +18050,12 @@ fn open_preferences_window(
                     for message in applied_messages {
                         s.push_status(message);
                     }
+                    let time_mode_label = if s.settings.use_zulu_time {
+                        "ZULU (UTC)"
+                    } else {
+                        "LOCAL"
+                    };
+                    s.push_status(format!("current time mode: {}", time_mode_label));
 
                     if full_restart_needed {
                         let _ = s.begin_async_scan_shutdown(Some(
