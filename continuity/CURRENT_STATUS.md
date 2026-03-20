@@ -68,6 +68,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 48. FCC URL ingestion now uses retry+timeout handling, and frequency-bookmark explorer also supports direct CSV URL import under `Presets -> Frequencies`.
 49. FCC frequency-bookmark import status now reports added vs skipped-duplicate counts to improve large-import auditability.
 50. FCC frequency-bookmark explorers (CSV and URL) now support optional signal/service-type filtering during import.
+51. FCC area explorer workflows (CSV and URL) now support optional signal/service-type filtering for targeted scan-profile generation.
 
 ### Bluetooth
 
