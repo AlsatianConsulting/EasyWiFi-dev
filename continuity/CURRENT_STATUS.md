@@ -98,6 +98,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 78. `Export SDR Bookmarks CSV` now also emits a JSON companion artifact (`sdr_bookmarks.json`) with source tagging for downstream automation.
 79. SDR CSV exports that include timestamp fields (decode/satcom/aircraft-correlation) now honor the local-vs-Zulu time display setting.
 80. SDR decoder text log timestamp rendering now follows the same local-vs-Zulu mode selected in settings.
+81. SDR summary JSON artifacts now render human-readable `generated_at`/window timestamps using the selected local-vs-Zulu display mode.
 
 ### Bluetooth
 

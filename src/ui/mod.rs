@@ -12376,7 +12376,7 @@ fn build_sdr_health_snapshot(
 ) -> serde_json::Value {
     let aircraft = sdr::correlate_aircraft(decode_rows);
     serde_json::json!({
-        "generated_at": Utc::now().to_rfc3339(),
+        "generated_at": format_display_timestamp(Utc::now()),
         "counts": {
             "decode_rows": decode_rows.len(),
             "satcom_rows": satcom_rows.len(),
@@ -12519,10 +12519,10 @@ fn build_sdr_satcom_summary(rows: &[SdrSatcomObservation]) -> serde_json::Value 
     identifier_hint_types.sort();
 
     serde_json::json!({
-        "generated_at": Utc::now().to_rfc3339(),
+        "generated_at": format_display_timestamp(Utc::now()),
         "total_rows": rows.len(),
-        "first_seen": first_seen.map(|ts| ts.to_rfc3339()),
-        "last_seen": last_seen.map(|ts| ts.to_rfc3339()),
+        "first_seen": first_seen.map(format_display_timestamp),
+        "last_seen": last_seen.map(format_display_timestamp),
         "with_coordinates": with_coordinates,
         "without_coordinates": without_coordinates,
         "identifier_hint_types": identifier_hint_types,

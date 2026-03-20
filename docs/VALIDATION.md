@@ -95,6 +95,7 @@ Time display behavior now includes:
 - optional Zulu/UTC display mode toggle in Preferences -> General
 - SDR CSV exports with timestamp fields follow the same Local/Zulu mode
 - SDR decoder text log timestamps follow the same Local/Zulu mode
+- SDR summary JSON artifact time fields (`generated_at`, first/last windows) follow the same Local/Zulu mode
 
 ## Multi-Adapter Status
 
