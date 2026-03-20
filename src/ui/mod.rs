@@ -2878,7 +2878,7 @@ struct SdrUiModel {
     decoder_telemetry_rates: HashMap<String, SdrDecoderTelemetryRate>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 struct SdrDecoderTelemetryRate {
     decoded_rows_per_sec: f64,
     map_points_per_sec: f64,
@@ -6439,6 +6439,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let sdr_capture_sample_btn = Button::with_label("Capture IQ Sample");
     let sdr_export_map_btn = Button::with_label("Export Map JSON");
     let sdr_export_decode_btn = Button::with_label("Export Decode JSON");
+    let sdr_export_health_btn = Button::with_label("Export SDR Health JSON");
     let sdr_export_satcom_btn = Button::with_label("Export Satcom JSON");
     let sdr_export_satcom_filtered_btn = Button::with_label("Export Satcom (Filtered)");
     let sdr_export_aircraft_correlation_btn = Button::with_label("Export Aircraft Correlation");
@@ -6573,6 +6574,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&sdr_export_satcom_filtered_btn, 9, 8, 2, 1);
     sdr_controls.attach(&sdr_export_decode_btn, 7, 14, 2, 1);
     sdr_controls.attach(&sdr_export_aircraft_correlation_btn, 9, 14, 2, 1);
+    sdr_controls.attach(&sdr_export_health_btn, 7, 15, 4, 1);
     sdr_controls.attach(&sdr_center_geiger_rssi_label, 0, 8, 3, 1);
     sdr_controls.attach(&sdr_center_geiger_tone_label, 3, 8, 3, 1);
     sdr_controls.attach(&sdr_center_geiger_progress, 6, 8, 5, 1);
@@ -8303,6 +8305,48 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 Err(err) => state
                     .borrow_mut()
                     .push_status(format!("SDR decode export failed: {err}")),
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_model = sdr_model.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        sdr_export_health_btn.connect_clicked(move |_| {
+            let snapshot = {
+                let model = sdr_model.borrow();
+                build_sdr_health_snapshot(
+                    &model.decode_rows,
+                    &model.satcom_observations,
+                    &model.decoder_telemetry,
+                    &model.decoder_telemetry_rates,
+                )
+            };
+            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
+            let output_dir = if output_dir_text.is_empty() {
+                SdrConfig::default().log_output_dir
+            } else {
+                PathBuf::from(output_dir_text)
+            };
+            if let Err(err) = fs::create_dir_all(&output_dir) {
+                state.borrow_mut().push_status(format!(
+                    "SDR health export failed (create dir {}): {err}",
+                    output_dir.display()
+                ));
+                return;
+            }
+            let path = output_dir.join(format!(
+                "sdr_health_snapshot_{}.json",
+                Utc::now().format("%Y%m%dT%H%M%SZ")
+            ));
+            match write_json_pretty(&path, &snapshot) {
+                Ok(()) => state
+                    .borrow_mut()
+                    .push_status(format!("exported SDR health snapshot: {}", path.display())),
+                Err(err) => state
+                    .borrow_mut()
+                    .push_status(format!("SDR health export failed: {err}")),
             }
         });
     }
@@ -12083,6 +12127,27 @@ fn export_sdr_decode_artifacts(
     csv_path.set_extension("csv");
     write_sdr_decode_csv(&csv_path, rows)?;
     Ok((primary_json_path.to_path_buf(), csv_path))
+}
+
+fn build_sdr_health_snapshot(
+    decode_rows: &[SdrDecodeRow],
+    satcom_rows: &[SdrSatcomObservation],
+    telemetry: &HashMap<String, SdrDecoderTelemetry>,
+    telemetry_rates: &HashMap<String, SdrDecoderTelemetryRate>,
+) -> serde_json::Value {
+    let aircraft = sdr::correlate_aircraft(decode_rows);
+    serde_json::json!({
+        "generated_at": Utc::now().to_rfc3339(),
+        "counts": {
+            "decode_rows": decode_rows.len(),
+            "satcom_rows": satcom_rows.len(),
+            "aircraft_correlated_targets": aircraft.len(),
+        },
+        "aircraft_correlation_summary": format_sdr_aircraft_correlation_summary(decode_rows),
+        "satcom_summary": format_sdr_satcom_summary(satcom_rows),
+        "decoder_telemetry": telemetry,
+        "decoder_telemetry_rates": telemetry_rates,
+    })
 }
 
 fn write_sdr_aircraft_correlation_csv(
@@ -19265,6 +19330,61 @@ mod tests {
         assert!(summary.contains("denied=1"));
         assert!(summary.contains("unencrypted=1"));
         assert!(summary.contains("encrypted=1"));
+    }
+
+    #[test]
+    fn sdr_health_snapshot_includes_core_sections() {
+        let decode_rows = vec![SdrDecodeRow {
+            timestamp: Utc::now(),
+            decoder: "ACARS".to_string(),
+            freq_hz: 131_550_000,
+            protocol: "acars".to_string(),
+            message: "flight=UAL123".to_string(),
+            raw: "flight=UAL123".to_string(),
+        }];
+        let satcom_rows = vec![SdrSatcomObservation {
+            timestamp: Utc::now(),
+            decoder: "inmarsat_stdc".to_string(),
+            protocol: "inmarsat_c".to_string(),
+            freq_hz: 1_541_450_000,
+            band: "L-Band".to_string(),
+            encryption_posture: "unknown".to_string(),
+            payload_capture_mode: "enabled".to_string(),
+            has_coordinates: false,
+            identifier_hints: vec![],
+            payload_parse_state: "not_unencrypted".to_string(),
+            payload_fields: HashMap::new(),
+            summary: "sample".to_string(),
+            message: "sample".to_string(),
+            raw: "sample".to_string(),
+        }];
+        let mut telemetry = HashMap::new();
+        telemetry.insert(
+            "ACARS".to_string(),
+            SdrDecoderTelemetry {
+                timestamp: Utc::now(),
+                decoder: "ACARS".to_string(),
+                decoded_rows: 1,
+                map_points: 0,
+                satcom_rows: 0,
+                stderr_lines: 0,
+            },
+        );
+        let mut rates = HashMap::new();
+        rates.insert(
+            "ACARS".to_string(),
+            SdrDecoderTelemetryRate {
+                decoded_rows_per_sec: 1.0,
+                map_points_per_sec: 0.0,
+                satcom_rows_per_sec: 0.0,
+                stderr_lines_per_sec: 0.0,
+            },
+        );
+        let snapshot = build_sdr_health_snapshot(&decode_rows, &satcom_rows, &telemetry, &rates);
+        assert!(snapshot.get("counts").is_some());
+        assert!(snapshot.get("decoder_telemetry").is_some());
+        assert!(snapshot.get("aircraft_correlation_summary").is_some());
+        assert!(snapshot.get("satcom_summary").is_some());
     }
 
     #[test]

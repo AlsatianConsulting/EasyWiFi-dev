@@ -32,6 +32,7 @@ Current SDR logging can also emit:
 - bookmark management now includes `Import SDR Bookmarks CSV` (`frequency_hz` or `frequency_mhz` columns)
 - bookmark workflow now includes one-click tune + decoder start (`Decode Bookmark`)
 - aircraft correlation export action emits ADS-B/ACARS correlation JSON + CSV artifacts (`icao_hex`/`callsign` merged identities)
+- `Export SDR Health JSON` now emits a telemetry/counter snapshot artifact for runtime monitoring handoff
 - SDR pane now surfaces decoder telemetry counters (`rows`, `map`, `satcom`, `stderr`)
 - SDR pane now surfaces live aircraft-correlation and satcom-summary status counters for operator monitoring
 - SDR controls now include a dry-run decoder validation check for selected decoder/hardware/frequency settings
