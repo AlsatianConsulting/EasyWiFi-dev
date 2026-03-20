@@ -1438,7 +1438,14 @@ fn resolve_decoder_command_line(
         }
         SdrDecoderKind::GsmLte => {
             if command_exists("grgsm_livemon_headless") {
-                Some("grgsm_livemon_headless".to_string())
+                if hardware == SdrHardware::RtlSdr {
+                    Some("grgsm_livemon_headless -f {freq_hz}".to_string())
+                } else {
+                    Some(
+                        "grgsm_livemon_headless --args driver={soapy_driver} -f {freq_hz}"
+                            .to_string(),
+                    )
+                }
             } else if command_exists("cell_search") {
                 Some("cell_search -g 50".to_string())
             } else {
@@ -4321,6 +4328,38 @@ mod tests {
             &plugin_defs,
         );
         assert!(reason.is_none());
+    }
+
+    #[test]
+    fn gsm_lte_command_includes_frequency_for_rtl() {
+        let command = resolve_decoder_command_line(
+            &SdrDecoderKind::GsmLte,
+            947_200_000,
+            2_400_000,
+            SdrHardware::RtlSdr,
+            &[],
+        );
+        if command_exists("grgsm_livemon_headless") {
+            let command = command.expect("grgsm command");
+            assert!(command.contains("grgsm_livemon_headless"));
+            assert!(command.contains("-f 947200000"));
+        }
+    }
+
+    #[test]
+    fn gsm_lte_command_uses_soapy_driver_for_non_rtl() {
+        let command = resolve_decoder_command_line(
+            &SdrDecoderKind::GsmLte,
+            947_200_000,
+            2_400_000,
+            SdrHardware::HackRf,
+            &[],
+        );
+        if command_exists("grgsm_livemon_headless") {
+            let command = command.expect("grgsm command");
+            assert!(command.contains("--args driver=hackrf"));
+            assert!(command.contains("-f 947200000"));
+        }
     }
 
     #[test]
