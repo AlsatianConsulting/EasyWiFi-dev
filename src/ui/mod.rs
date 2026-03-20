@@ -2520,6 +2520,25 @@ struct BookmarkImportSummary {
     skipped_duplicates: usize,
 }
 
+fn refresh_sdr_bookmark_combo(
+    sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
+    sdr_bookmark_combo: &ComboBoxText,
+    preferred_active_hz: Option<u64>,
+) {
+    {
+        let mut bookmarks = sdr_bookmarks.borrow_mut();
+        bookmarks.sort_by_key(|(_, freq)| *freq);
+        bookmarks.dedup_by(|left, right| left.1 == right.1);
+    }
+    sdr_bookmark_combo.remove_all();
+    for (label, freq) in sdr_bookmarks.borrow().iter() {
+        sdr_bookmark_combo.append(Some(&freq.to_string()), label);
+    }
+    if let Some(freq_hz) = preferred_active_hz {
+        let _ = sdr_bookmark_combo.set_active_id(Some(&freq_hz.to_string()));
+    }
+}
+
 fn import_sdr_bookmarks(
     state: &Rc<RefCell<AppState>>,
     sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
@@ -2529,6 +2548,7 @@ fn import_sdr_bookmarks(
     let mut s = state.borrow_mut();
     let mut added = 0usize;
     let mut skipped_duplicates = 0usize;
+    let mut preferred_active_hz = None::<u64>;
     for bookmark in imported {
         if s.settings
             .sdr_bookmarks
@@ -2542,10 +2562,13 @@ fn import_sdr_bookmarks(
         sdr_bookmarks
             .borrow_mut()
             .push((bookmark.label.clone(), bookmark.frequency_hz));
+        preferred_active_hz = Some(bookmark.frequency_hz);
         s.settings.sdr_bookmarks.push(bookmark);
         added = added.saturating_add(1);
     }
     s.save_settings_to_disk();
+    drop(s);
+    refresh_sdr_bookmark_combo(sdr_bookmarks, sdr_bookmark_combo, preferred_active_hz);
     BookmarkImportSummary {
         added,
         skipped_duplicates,
@@ -7169,7 +7192,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             if freq_hz < 100_000 {
                 return;
             }
-            let key = freq_hz.to_string();
             let label = format!("{:.6} MHz", freq_hz as f64 / 1_000_000.0);
             if !sdr_bookmarks
                 .borrow()
@@ -7177,7 +7199,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 .any(|(_, freq)| *freq == freq_hz)
             {
                 sdr_bookmarks.borrow_mut().push((label.clone(), freq_hz));
-                sdr_bookmark_combo.append(Some(&key), &label);
                 let mut s = state.borrow_mut();
                 if !s
                     .settings
@@ -7192,7 +7213,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     s.save_settings_to_disk();
                 }
             }
-            sdr_bookmark_combo.set_active_id(Some(&key));
+            refresh_sdr_bookmark_combo(&sdr_bookmarks, &sdr_bookmark_combo, Some(freq_hz));
         });
     }
 
