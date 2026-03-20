@@ -52,6 +52,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 11. Validate expanded non-RTL AIS/ACARS fallback command paths on HackRF/bladeRF/B210 hosts.
 12. Validate ADS-B live and correlate with ACARS by aircraft identifier when possible.
 13. Validate newly added non-RTL POCSAG/DECT fallback chain quality and tune audio/FM pipeline parameters per hardware.
+14. Validate `FCC Area Explorer (CSV...)` workflow with real FCC assignment exports for multiple cities/states and tune parser header mappings where needed.
 
 ## Priority 4: requested SDR decoder backlog
 
