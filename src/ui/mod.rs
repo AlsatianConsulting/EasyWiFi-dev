@@ -1324,6 +1324,16 @@ fn protocol_scan_macros() -> Vec<ProtocolScanMacro> {
             squelch_dbm: -82.0,
         },
         ProtocolScanMacro {
+            id: "macro_radiosonde_400_406".to_string(),
+            label: "Radiosonde 400-406 MHz".to_string(),
+            decoder_id: "radiosonde_rs41".to_string(),
+            start_hz: 400_000_000,
+            end_hz: 406_000_000,
+            step_hz: 25_000,
+            steps_per_sec: 7.0,
+            squelch_dbm: -84.0,
+        },
+        ProtocolScanMacro {
             id: "macro_drone_dji_24".to_string(),
             label: "Drone DJI/RID 2.4 GHz".to_string(),
             decoder_id: "drone_dji_droneid".to_string(),
@@ -1416,6 +1426,10 @@ fn default_frequency_preset_groups() -> Vec<FrequencyPresetGroup> {
         FrequencyPresetGroup {
             label: "Satellite Frequencies".to_string(),
             entries: satellite_frequency_presets(),
+        },
+        FrequencyPresetGroup {
+            label: "Weather / Sonde".to_string(),
+            entries: weather_sonde_frequency_presets(),
         },
         FrequencyPresetGroup {
             label: "Digital Voice / Utility".to_string(),
@@ -1576,6 +1590,16 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     step_hz: 25_000,
                     steps_per_sec: 6.0,
                     squelch_dbm: -86.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_radiosonde_400_406".to_string(),
+                    label: "Radiosonde 400-406".to_string(),
+                    start_hz: 400_000_000,
+                    end_hz: 406_000_000,
+                    sample_rate_hz: None,
+                    step_hz: 25_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -84.0,
                 },
                 ScannerPresetEntry {
                     id: "scan_pager_vhf_152_159".to_string(),
@@ -1784,6 +1808,36 @@ fn satellite_frequency_presets() -> Vec<FrequencyPresetEntry> {
             id: "sat_iridium_1626000".to_string(),
             label: "Iridium".to_string(),
             freq_hz: 1_626_000_000,
+        },
+    ]
+}
+
+fn weather_sonde_frequency_presets() -> Vec<FrequencyPresetEntry> {
+    vec![
+        FrequencyPresetEntry {
+            id: "sonde_400500".to_string(),
+            label: "Radiosonde 400.500".to_string(),
+            freq_hz: 400_500_000,
+        },
+        FrequencyPresetEntry {
+            id: "sonde_401500".to_string(),
+            label: "Radiosonde 401.500".to_string(),
+            freq_hz: 401_500_000,
+        },
+        FrequencyPresetEntry {
+            id: "sonde_403500".to_string(),
+            label: "Radiosonde RS41 403.500".to_string(),
+            freq_hz: 403_500_000,
+        },
+        FrequencyPresetEntry {
+            id: "sonde_404500".to_string(),
+            label: "Radiosonde 404.500".to_string(),
+            freq_hz: 404_500_000,
+        },
+        FrequencyPresetEntry {
+            id: "sonde_405100".to_string(),
+            label: "Radiosonde 405.100".to_string(),
+            freq_hz: 405_100_000,
         },
     ]
 }
@@ -17738,6 +17792,7 @@ mod tests {
         assert!(ids.contains("ism_915000"));
         assert!(ids.contains("ism_433920"));
         assert!(ids.contains("ism_315000"));
+        assert!(ids.contains("sonde_403500"));
         assert!(ids.contains("drone_rid_2437000"));
         assert!(ids.contains("drone_rid_5745000"));
     }
@@ -17759,6 +17814,9 @@ mod tests {
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_dect_1880_1900"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id == "scan_radiosonde_400_406"));
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_weather_apt_137_138"));
@@ -17822,6 +17880,7 @@ mod tests {
         assert!(ids.contains("macro_acars_vhf"));
         assert!(ids.contains("macro_ais_marine"));
         assert!(ids.contains("macro_aprs_144390"));
+        assert!(ids.contains("macro_radiosonde_400_406"));
         assert!(ids.contains("macro_drone_dji_24"));
         assert!(ids.contains("macro_drone_rid_58"));
         assert!(ids.contains("macro_weather_apt"));
