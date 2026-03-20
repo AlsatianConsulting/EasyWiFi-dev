@@ -196,6 +196,7 @@ pub enum SdrDecoderKind {
     Adsb,
     Acars,
     Ais,
+    AprsAx25,
     Pocsag,
     Iridium,
     InmarsatStdc,
@@ -216,6 +217,7 @@ impl SdrDecoderKind {
             Self::Adsb => "ads_b".to_string(),
             Self::Acars => "acars".to_string(),
             Self::Ais => "ais".to_string(),
+            Self::AprsAx25 => "aprs_ax25".to_string(),
             Self::Pocsag => "pocsag".to_string(),
             Self::Iridium => "iridium".to_string(),
             Self::InmarsatStdc => "inmarsat_stdc".to_string(),
@@ -231,6 +233,7 @@ impl SdrDecoderKind {
             Self::Adsb => "ADS-B".to_string(),
             Self::Acars => "ACARS".to_string(),
             Self::Ais => "AIS".to_string(),
+            Self::AprsAx25 => "APRS / AX.25".to_string(),
             Self::Pocsag => "POCSAG".to_string(),
             Self::Iridium => "Iridium".to_string(),
             Self::InmarsatStdc => "Inmarsat STD-C".to_string(),
@@ -246,6 +249,7 @@ impl SdrDecoderKind {
             Self::Adsb => "adsb",
             Self::Acars => "acars",
             Self::Ais => "ais",
+            Self::AprsAx25 => "aprs_ax25",
             Self::Pocsag => "pocsag",
             Self::Iridium => "iridium",
             Self::InmarsatStdc => "inmarsat_c",
@@ -513,6 +517,7 @@ pub fn builtin_decoders_in_priority_order() -> Vec<SdrDecoderKind> {
         SdrDecoderKind::Adsb,
         SdrDecoderKind::Acars,
         SdrDecoderKind::Ais,
+        SdrDecoderKind::AprsAx25,
         SdrDecoderKind::Pocsag,
         SdrDecoderKind::Iridium,
         SdrDecoderKind::InmarsatStdc,
@@ -1324,6 +1329,21 @@ fn resolve_decoder_command_line(
                 None
             }
         }
+        SdrDecoderKind::AprsAx25 => {
+            if hardware == SdrHardware::RtlSdr
+                && command_exists("rtl_fm")
+                && command_exists("multimon-ng")
+            {
+                Some(
+                    "rtl_fm -f {freq_hz} -M fm -s 22050 -g 35 - | multimon-ng -t raw -a AFSK1200 -a AFSK2400 -"
+                        .to_string(),
+                )
+            } else if hardware != SdrHardware::RtlSdr {
+                resolve_aprs_ax25_non_rtl_command(hardware, freq_hz)
+            } else {
+                None
+            }
+        }
         SdrDecoderKind::Pocsag => {
             if hardware == SdrHardware::RtlSdr
                 && command_exists("rtl_fm")
@@ -1466,6 +1486,13 @@ fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -
                 return None;
             },
         ),
+        SdrDecoderKind::AprsAx25 if hardware != SdrHardware::RtlSdr => Some(
+            if resolve_aprs_ax25_non_rtl_command(hardware, 144_390_000).is_none() {
+                "APRS/AX.25 on non-RTL hardware requires csdr + sox + multimon-ng and a compatible capture tool".to_string()
+            } else {
+                return None;
+            },
+        ),
         SdrDecoderKind::Dect if hardware != SdrHardware::RtlSdr => Some(
             if resolve_multimon_non_rtl_command(hardware, 1_881_792_000, "dect").is_none() {
                 "DECT on non-RTL hardware requires csdr + sox + multimon-ng and a compatible capture tool".to_string()
@@ -1588,6 +1615,19 @@ fn resolve_ais_non_rtl_command(hardware: SdrHardware, freq_hz: u64) -> Option<St
         "ais",
         "csdr fmdemod_quadri_cf | csdr limit_ff | csdr old_fractional_decimator_ff 4",
         "sox -t raw -r 60000 -e signed -b 16 -c 1 - -t raw -r 48000 -e signed -b 16 -c 1 - | aisdecoder",
+    )
+}
+
+fn resolve_aprs_ax25_non_rtl_command(hardware: SdrHardware, freq_hz: u64) -> Option<String> {
+    if !command_exists("multimon-ng") {
+        return None;
+    }
+    resolve_non_rtl_audio_pipeline_command(
+        hardware,
+        freq_hz,
+        "aprs_ax25",
+        "csdr fmdemod_quadri_cf | csdr limit_ff | csdr old_fractional_decimator_ff 4",
+        "sox -t raw -r 60000 -e signed -b 16 -c 1 - -t raw -r 22050 -e signed -b 16 -c 1 - | multimon-ng -t raw -a AFSK1200 -a AFSK2400 -",
     )
 }
 
@@ -2312,6 +2352,7 @@ fn decoder_autotune_frequency_hz(kind: &SdrDecoderKind) -> Option<u64> {
         SdrDecoderKind::Adsb => Some(1_090_000_000),
         SdrDecoderKind::Acars => Some(131_550_000),
         SdrDecoderKind::Ais => Some(162_025_000),
+        SdrDecoderKind::AprsAx25 => Some(144_390_000),
         SdrDecoderKind::Pocsag => Some(929_612_500),
         SdrDecoderKind::Iridium => Some(1_626_000_000),
         SdrDecoderKind::InmarsatStdc => Some(1_541_450_000),

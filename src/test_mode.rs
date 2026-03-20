@@ -243,7 +243,9 @@ pub fn print_sdr_test_usage() {
     println!("  --center-freq-hz <n>    Center frequency in Hz");
     println!("  --sample-rate-hz <n>    Sample rate in Hz");
     println!("  --duration-secs <n>     Runtime duration, default: 12");
-    println!("  --decode <name>         rtl_433|adsb|acars|ais|pocsag|iridium|inmarsat_stdc|dect|gsm_lte");
+    println!(
+        "  --decode <name>         rtl_433|adsb|acars|ais|aprs_ax25|pocsag|iridium|inmarsat_stdc|dect|gsm_lte"
+    );
     println!("                          or plugin ID/label from sdr-plugins.json");
     println!("  --scan-start-hz <n>     Optional scan range start in Hz");
     println!("  --scan-end-hz <n>       Optional scan range end in Hz");
@@ -542,6 +544,7 @@ fn print_sdr_decoder_inventory(plugin_defs: &[sdr::SdrPluginDefinition]) {
     println!("    adsb");
     println!("    acars");
     println!("    ais");
+    println!("    aprs_ax25");
     println!("    pocsag");
     println!("    iridium");
     println!("    dect");
@@ -580,6 +583,7 @@ fn parse_sdr_decoder_with_plugins(
         "adsb" => Some(SdrDecoderKind::Adsb),
         "acars" => Some(SdrDecoderKind::Acars),
         "ais" => Some(SdrDecoderKind::Ais),
+        "aprsax25" | "aprs" | "ax25" => Some(SdrDecoderKind::AprsAx25),
         "pocsag" => Some(SdrDecoderKind::Pocsag),
         "iridium" => Some(SdrDecoderKind::Iridium),
         "inmarsatstdc" | "inmarsatc" | "inmarsat" | "stdc" => Some(SdrDecoderKind::InmarsatStdc),
@@ -604,7 +608,7 @@ fn parse_sdr_decoder_with_plugins(
     }
 
     bail!(
-        "invalid --decode `{}` (expected rtl_433|adsb|acars|ais|pocsag|iridium|inmarsat_stdc|dect|gsm_lte or a plugin ID from sdr-plugins.json)",
+        "invalid --decode `{}` (expected rtl_433|adsb|acars|ais|aprs_ax25|pocsag|iridium|inmarsat_stdc|dect|gsm_lte or a plugin ID from sdr-plugins.json)",
         value
     );
 }
@@ -1501,6 +1505,8 @@ mod tests {
     fn parses_builtin_sdr_decoder_names() {
         let parsed = parse_sdr_decoder_with_plugins("ads-b", &[]).unwrap();
         assert!(matches!(parsed, SdrDecoderKind::Adsb));
+        let parsed = parse_sdr_decoder_with_plugins("APRS_AX25", &[]).unwrap();
+        assert!(matches!(parsed, SdrDecoderKind::AprsAx25));
         let parsed = parse_sdr_decoder_with_plugins("GSM_LTE", &[]).unwrap();
         assert!(matches!(parsed, SdrDecoderKind::GsmLte));
         let parsed = parse_sdr_decoder_with_plugins("inmarsat_stdc", &[]).unwrap();
