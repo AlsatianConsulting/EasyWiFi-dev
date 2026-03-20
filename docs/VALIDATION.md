@@ -30,6 +30,7 @@ Current SDR logging can also emit:
 - satcom export action now emits companion CSV + parsed-only JSON + denied-only JSON + summary JSON artifacts
 - aircraft correlation export action emits ADS-B/ACARS correlation JSON + CSV artifacts (`icao_hex`/`callsign` merged identities)
 - SDR pane now surfaces decoder telemetry counters (`rows`, `map`, `satcom`, `stderr`)
+- SDR pane now surfaces live aircraft-correlation and satcom-summary status counters for operator monitoring
 - IQ sample files captured on demand
 - user SDR preset exchange file at config path: `wirelessexplorer-sdr-presets.json` (via SDR preset import/export controls)
 

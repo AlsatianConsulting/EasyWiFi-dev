@@ -2894,6 +2894,7 @@ struct UiWidgets {
     sdr_dependency_label: Label,
     sdr_health_label: Label,
     sdr_aircraft_correlation_label: Label,
+    sdr_satcom_summary_label: Label,
     sdr_center_geiger_rssi_label: Label,
     sdr_center_geiger_tone_label: Label,
     sdr_center_geiger_progress: ProgressBar,
@@ -6161,6 +6162,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         Label::new(Some("Aircraft Correlation: no correlated targets"));
     sdr_aircraft_correlation_label.set_xalign(0.0);
     sdr_aircraft_correlation_label.set_wrap(true);
+    let sdr_satcom_summary_label = Label::new(Some("Satcom Summary: no satcom observations"));
+    sdr_satcom_summary_label.set_xalign(0.0);
+    sdr_satcom_summary_label.set_wrap(true);
     let sdr_center_geiger_rssi_label = Label::new(Some("Center Geiger RSSI: -- dBm"));
     sdr_center_geiger_rssi_label.set_xalign(0.0);
     let sdr_center_geiger_tone_label = Label::new(Some("Center Geiger Tone: -- Hz"));
@@ -6564,6 +6568,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_top.append(&sdr_dependency_label);
     sdr_top.append(&sdr_health_label);
     sdr_top.append(&sdr_aircraft_correlation_label);
+    sdr_top.append(&sdr_satcom_summary_label);
     sdr_top.append(&Label::new(Some("Spectrogram")));
     sdr_top.append(&sdr_spectrogram_draw);
     sdr_top.append(&Label::new(Some("FFT")));
@@ -8983,6 +8988,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             sdr_dependency_label,
             sdr_health_label,
             sdr_aircraft_correlation_label,
+            sdr_satcom_summary_label,
             sdr_center_geiger_rssi_label,
             sdr_center_geiger_tone_label,
             sdr_center_geiger_progress,
@@ -9091,6 +9097,7 @@ fn bind_poll_loop(
         sdr_dependency_label,
         sdr_health_label,
         sdr_aircraft_correlation_label,
+        sdr_satcom_summary_label,
         sdr_center_geiger_rssi_label,
         sdr_center_geiger_tone_label,
         sdr_center_geiger_progress,
@@ -10029,6 +10036,8 @@ fn bind_poll_loop(
                 cache.1.clone()
             };
             sdr_aircraft_correlation_label.set_text(&correlation_text);
+            sdr_satcom_summary_label
+                .set_text(&format_sdr_satcom_summary(&model.satcom_observations));
             if let Some((center_dbm, tone_hz, fraction)) = center_geiger {
                 sdr_center_geiger_rssi_label
                     .set_text(&format!("Center Geiger RSSI: {:.1} dBm", center_dbm));
@@ -12183,6 +12192,42 @@ fn format_sdr_aircraft_correlation_summary(rows: &[SdrDecodeRow]) -> String {
         mixed,
         adsb_only,
         acars_only
+    )
+}
+
+fn format_sdr_satcom_summary(rows: &[SdrSatcomObservation]) -> String {
+    if rows.is_empty() {
+        return "Satcom Summary: no satcom observations".to_string();
+    }
+    let mut parsed = 0usize;
+    let mut denied = 0usize;
+    let mut redacted = 0usize;
+    let mut unencrypted = 0usize;
+    let mut encrypted = 0usize;
+    let mut unknown = 0usize;
+
+    for row in rows {
+        match row.payload_parse_state.as_str() {
+            "parsed" => parsed += 1,
+            "denied_by_policy" => denied += 1,
+            "redacted" => redacted += 1,
+            _ => {}
+        }
+        match row.encryption_posture.as_str() {
+            "unencrypted" => unencrypted += 1,
+            "encrypted" => encrypted += 1,
+            _ => unknown += 1,
+        }
+    }
+    format!(
+        "Satcom Summary: rows={} parsed={} denied={} redacted={} posture[unencrypted={} encrypted={} unknown={}]",
+        rows.len(),
+        parsed,
+        denied,
+        redacted,
+        unencrypted,
+        encrypted,
+        unknown
     )
 }
 
@@ -18729,6 +18774,50 @@ mod tests {
         ];
         let summary = format_sdr_aircraft_correlation_summary(&rows);
         assert!(summary.contains("targets (mixed=1"));
+    }
+
+    #[test]
+    fn sdr_satcom_summary_reports_parse_and_posture_counts() {
+        let rows = vec![
+            SdrSatcomObservation {
+                timestamp: Utc::now(),
+                decoder: "inmarsat_stdc".to_string(),
+                protocol: "inmarsat_c".to_string(),
+                freq_hz: 1_541_450_000,
+                band: "L-Band".to_string(),
+                encryption_posture: "unencrypted".to_string(),
+                payload_capture_mode: "enabled".to_string(),
+                has_coordinates: false,
+                identifier_hints: vec![],
+                payload_parse_state: "parsed".to_string(),
+                payload_fields: HashMap::new(),
+                summary: "a".to_string(),
+                message: "a".to_string(),
+                raw: "a".to_string(),
+            },
+            SdrSatcomObservation {
+                timestamp: Utc::now(),
+                decoder: "iridium".to_string(),
+                protocol: "iridium".to_string(),
+                freq_hz: 1_626_000_000,
+                band: "L-Band".to_string(),
+                encryption_posture: "encrypted".to_string(),
+                payload_capture_mode: "enabled".to_string(),
+                has_coordinates: false,
+                identifier_hints: vec![],
+                payload_parse_state: "denied_by_policy".to_string(),
+                payload_fields: HashMap::new(),
+                summary: "b".to_string(),
+                message: "b".to_string(),
+                raw: "b".to_string(),
+            },
+        ];
+        let summary = format_sdr_satcom_summary(&rows);
+        assert!(summary.contains("rows=2"));
+        assert!(summary.contains("parsed=1"));
+        assert!(summary.contains("denied=1"));
+        assert!(summary.contains("unencrypted=1"));
+        assert!(summary.contains("encrypted=1"));
     }
 
     #[test]

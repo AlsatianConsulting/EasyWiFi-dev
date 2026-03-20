@@ -49,6 +49,7 @@ This repository contains an MVP implementation with:
   - Satcom export now writes full audit JSON plus companion CSV/parsed-only JSON/denied-only JSON/summary JSON artifacts
   - Aircraft correlation export now derives ADS-B/ACARS identity joins (`icao_hex`/`callsign`) and writes JSON+CSV artifacts
   - SDR health section includes live aircraft-correlation counts (mixed ADS-B/ACARS + single-source tallies)
+  - SDR health section also includes live satcom summary counters (parse state + encryption posture)
   - Decoder health telemetry is surfaced in SDR pane (`rows/map/satcom/stderr` counters)
   - FFT right-click supports direct per-signal decoder launch
   - Decoder launch availability checks now gate right-click/start actions with explicit hardware/toolchain status
