@@ -50,6 +50,7 @@ This repository contains an MVP implementation with:
   - Decode export writes full decode-row JSON + CSV artifacts
   - `Validate Decoder` button performs a dry-run command/dependency readiness check for the selected decoder/hardware profile
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks CSV` (`frequency_hz` or `frequency_mhz` input columns)
+  - Bookmark controls include `Decode Bookmark` for one-click tune + decoder start on the selected bookmark
   - Aircraft correlation export now derives ADS-B/ACARS identity joins (`icao_hex`/`callsign`) and writes JSON+CSV artifacts
   - SDR health section includes live aircraft-correlation counts (mixed ADS-B/ACARS + single-source tallies)
   - SDR health section also includes live satcom summary counters (parse state + encryption posture)

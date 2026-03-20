@@ -6489,6 +6489,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_bookmark_combo.set_active(Some(0));
     let sdr_bookmark_add_btn = Button::with_label("Add Bookmark");
     let sdr_bookmark_jump_btn = Button::with_label("Jump");
+    let sdr_bookmark_decode_btn = Button::with_label("Decode Bookmark");
     let sdr_bookmark_scan_window_entry = Entry::new();
     sdr_bookmark_scan_window_entry.set_width_chars(7);
     sdr_bookmark_scan_window_entry.set_text("100");
@@ -6555,6 +6556,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&sdr_bookmark_combo, 1, 6, 2, 1);
     sdr_controls.attach(&sdr_bookmark_jump_btn, 3, 6, 1, 1);
     sdr_controls.attach(&sdr_bookmark_add_btn, 4, 6, 1, 1);
+    sdr_controls.attach(&sdr_bookmark_decode_btn, 5, 7, 1, 1);
     sdr_controls.attach(&Label::new(Some("Scan ±kHz")), 0, 7, 1, 1);
     sdr_controls.attach(&sdr_bookmark_scan_window_entry, 1, 7, 1, 1);
     sdr_controls.attach(&sdr_bookmark_scan_btn, 2, 7, 3, 1);
@@ -7654,6 +7656,97 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             sdr_center_freq_entry.set_text(&freq_hz.to_string());
             if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
                 runtime.set_center_freq(freq_hz);
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
+        let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+        let sdr_decoder_combo = sdr_decoder_combo.clone();
+        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
+        let sdr_plugin_defs = sdr_plugin_defs.clone();
+        sdr_bookmark_decode_btn.connect_clicked(move |_| {
+            let Some(active_id) = sdr_bookmark_combo.active_id() else {
+                return;
+            };
+            let Ok(freq_hz) = active_id.as_str().parse::<u64>() else {
+                return;
+            };
+            let Some(decoder_id) = sdr_decoder_combo.active_id() else {
+                return;
+            };
+            let Some(decoder) = sdr_decoder_lookup
+                .borrow()
+                .get(decoder_id.as_str())
+                .cloned()
+            else {
+                return;
+            };
+
+            sdr_center_freq_entry.set_text(&freq_hz.to_string());
+            let mut config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
+            );
+            config.center_freq_hz = freq_hz;
+
+            let mut s = state.borrow_mut();
+            if s.sdr_runtime.is_none() {
+                s.start_sdr_runtime(config.clone());
+            }
+            if let Some(reason) = sdr::decoder_launch_unavailable_reason(
+                &decoder,
+                config.center_freq_hz,
+                config.sample_rate_hz,
+                config.hardware,
+                sdr_plugin_defs.as_slice(),
+            ) {
+                s.push_status(format!(
+                    "bookmark decode unavailable {} on {}: {}",
+                    decoder.label(),
+                    config.hardware.label(),
+                    reason
+                ));
+                return;
+            }
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                runtime.set_center_freq(config.center_freq_hz);
+                apply_sdr_runtime_controls(runtime, &config);
+                runtime.start_decode(decoder.clone());
+                s.push_status(format!(
+                    "bookmark decode started [{}] at {:.6} MHz",
+                    decoder.label(),
+                    config.center_freq_hz as f64 / 1_000_000.0
+                ));
             }
         });
     }

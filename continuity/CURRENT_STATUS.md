@@ -89,6 +89,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 69. SDR controls now include `Export Decode JSON`, which exports raw decode rows as JSON+CSV artifacts for offline triage alongside map/satcom/correlation exports.
 70. SDR controls now include `Validate Decoder`, a dry-run command/dependency readiness check for the selected decoder/hardware/frequency configuration.
 71. `Presets -> Frequencies` now includes `Import SDR Bookmarks CSV`, supporting `frequency_hz` or `frequency_mhz` columns with dedupe/normalization and live bookmark refresh.
+72. SDR bookmark controls now include `Decode Bookmark`, which tunes to the selected bookmark and starts the selected decoder in one action (with existing hardware/dependency guardrails).
 
 ### Bluetooth
 
