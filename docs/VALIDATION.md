@@ -32,6 +32,7 @@ Current SDR logging can also emit:
 - decode export now also supports filtered JSON + CSV artifacts based on active decode-table filters
 - bookmark management now includes `Import SDR Bookmarks CSV` (`frequency_hz` or `frequency_mhz` columns)
 - bookmark management now includes `Import SDR Bookmarks JSON` (array root or `{ "bookmarks": [...] }` envelope)
+- bookmark management also includes URL-based JSON import with retry/timeout fetch behavior
 - bookmark management also includes URL-based CSV import with retry/timeout fetch behavior
 - bookmark export now emits both CSV and JSON artifacts with source tagging
 - bookmark workflow now includes one-click tune + decoder start (`Decode Bookmark`)
