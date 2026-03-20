@@ -19658,6 +19658,38 @@ mod tests {
     }
 
     #[test]
+    fn sdr_summary_json_time_fields_follow_mode_toggle() {
+        let rows = vec![SdrSatcomObservation {
+            timestamp: Utc::now(),
+            decoder: "inmarsat_stdc".to_string(),
+            protocol: "inmarsat_c".to_string(),
+            freq_hz: 1_541_450_000,
+            band: "L-Band".to_string(),
+            encryption_posture: "unknown".to_string(),
+            payload_capture_mode: "enabled".to_string(),
+            has_coordinates: false,
+            identifier_hints: vec![],
+            payload_parse_state: "not_unencrypted".to_string(),
+            payload_fields: HashMap::new(),
+            summary: "sample".to_string(),
+            message: "sample".to_string(),
+            raw: "sample".to_string(),
+        }];
+        set_use_zulu_time_display(true);
+        let zulu = build_sdr_satcom_summary(&rows);
+        assert!(zulu["generated_at"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("UTC"));
+        set_use_zulu_time_display(false);
+        let local = build_sdr_satcom_summary(&rows);
+        assert!(!local["generated_at"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("UTC"));
+    }
+
+    #[test]
     fn decoder_id_for_fcc_signal_type_maps_common_services() {
         assert_eq!(
             decoder_id_for_fcc_signal_type("Public Safety Pool, Conventional"),
