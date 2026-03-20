@@ -32,6 +32,13 @@ Current SDR logging can also emit:
 - IQ sample files captured on demand
 - user SDR preset exchange file at config path: `wirelessexplorer-sdr-presets.json` (via SDR preset import/export controls)
 
+Preset/Explorer workflow additions:
+
+- `Presets -> Frequencies` includes FCC explorer actions for scan-profile generation and bookmark imports (file CSV + URL modes)
+- FCC explorer filters support area token matching and optional signal/service-type constraints
+- FCC URL workflows use retry/timeout handling for unstable upstream hosts
+- FCC bookmark imports now summarize added vs skipped duplicates and keep bookmark ordering normalized
+
 KML/KMZ regression coverage now also verifies:
 
 - AP/client/bluetooth folders are present in KMZ `doc.kml`

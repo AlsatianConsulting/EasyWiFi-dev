@@ -28,6 +28,13 @@ This repository contains an MVP implementation with:
   - Center-frequency geiger indicators (RSSI/tone estimate/activity bar from center FFT bins)
   - Optional auto-squelch from center geiger with configurable dB margin
   - Bookmark add/jump workflow with persistence in app settings
+  - Presets -> Frequencies now includes FCC-driven explorer actions:
+    - `FCC Area Explorer (CSV, with Signal Type)` to generate/apply/persist a scan profile from FCC assignment rows
+    - `FCC Area Explorer (CSV URL)` for direct URL ingestion with retry/timeout handling
+    - `FCC Frequency Explorer (CSV -> Bookmarks)` to import individual FCC-assigned frequencies as bookmarks
+    - `FCC Frequency Explorer (CSV URL -> Bookmarks)` to import bookmarks directly from URL
+  - FCC explorers support area token filtering (city/county/state/callsign) and optional signal/service-type filtering
+  - FCC frequency imports now report added vs duplicate-skipped counts and keep bookmark data normalized/sorted
   - One-click operator preset profiles for common bands/workflows
   - Save Current as Preset stores user-defined SDR presets in app settings
   - Rename/Delete/Move controls for saved user presets
