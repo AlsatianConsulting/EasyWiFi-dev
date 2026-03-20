@@ -3605,6 +3605,21 @@ mod tests {
     }
 
     #[test]
+    fn aprs_decoder_resolves_pipeline_when_available() {
+        let command = resolve_decoder_command_line(
+            &SdrDecoderKind::AprsAx25,
+            144_390_000,
+            2_400_000,
+            SdrHardware::HackRf,
+            &[],
+        );
+        if let Some(command) = command {
+            assert!(command.contains("non-rtl aprs_ax25 pipeline active"));
+            assert!(command.contains("AFSK1200"));
+        }
+    }
+
+    #[test]
     fn decoder_unavailability_reason_flags_known_non_rtl_constraints() {
         let reason = decoder_unavailability_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf);
         if resolve_ais_non_rtl_command(SdrHardware::HackRf, 162_025_000).is_some() {
@@ -3825,6 +3840,13 @@ mod tests {
             assert!(dect_reason.is_none());
         } else {
             assert!(dect_reason.is_some());
+        }
+        let aprs_reason =
+            decoder_hardware_constraint_reason(&SdrDecoderKind::AprsAx25, SdrHardware::HackRf);
+        if resolve_aprs_ax25_non_rtl_command(SdrHardware::HackRf, 144_390_000).is_some() {
+            assert!(aprs_reason.is_none());
+        } else {
+            assert!(aprs_reason.is_some());
         }
         assert!(
             decoder_hardware_constraint_reason(&SdrDecoderKind::Rtl433, SdrHardware::HackRf)
