@@ -79,6 +79,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 59. Scan macro catalog now also includes Iridium L-band and GSM/LTE metadata sweeps for one-click workflow coverage of those decoder families.
 60. Scanner preset catalog now also includes dedicated Iridium and GSM/LTE metadata scan ranges (in addition to macro shortcuts).
 61. FCC area explorer status now explicitly reports the auto-selected decoder ID (or `none`) for clearer operator feedback.
+62. `Presets -> Frequencies` now includes a one-click `Remove FCC Bookmarks` action that prunes FCC-imported bookmark entries from runtime and persisted settings.
 
 ### Bluetooth
 
