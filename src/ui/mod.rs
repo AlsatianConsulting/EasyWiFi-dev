@@ -3016,6 +3016,17 @@ fn import_sdr_bookmarks(
     }
 }
 
+fn add_dialog_filters(dialog: &FileChooserDialog, filters: &[(&str, &[&str])]) {
+    for (name, patterns) in filters {
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some(name));
+        for pattern in *patterns {
+            filter.add_pattern(pattern);
+        }
+        dialog.add_filter(&filter);
+    }
+}
+
 struct StopCompletion {
     status_lines: Vec<String>,
     cleared_interfaces: Option<Vec<InterfaceSettings>>,
@@ -5220,6 +5231,15 @@ fn build_menubar(
                     ("Import", ResponseType::Accept),
                 ],
             );
+            add_dialog_filters(
+                &dialog,
+                &[
+                    ("CSV files", &["*.csv"]),
+                    ("JSON files", &["*.json"]),
+                    ("Data files", &["*.csv", "*.json", "*.txt", "*.dat"]),
+                    ("All files", &["*"]),
+                ],
+            );
             let state = state.clone();
             let sdr_bookmarks = sdr_bookmarks.clone();
             let sdr_bookmark_combo = sdr_bookmark_combo.clone();
@@ -5280,6 +5300,15 @@ fn build_menubar(
                 &[
                     ("Cancel", ResponseType::Cancel),
                     ("Import", ResponseType::Accept),
+                ],
+            );
+            add_dialog_filters(
+                &dialog,
+                &[
+                    ("JSON files", &["*.json"]),
+                    ("CSV files", &["*.csv"]),
+                    ("Data files", &["*.json", "*.csv", "*.txt", "*.dat"]),
+                    ("All files", &["*"]),
                 ],
             );
             let state = state.clone();
