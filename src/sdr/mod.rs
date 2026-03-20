@@ -545,6 +545,27 @@ pub fn builtin_decoders_in_priority_order() -> Vec<SdrDecoderKind> {
     ]
 }
 
+pub fn dependency_status_snapshot(plugin_defs: &[SdrPluginDefinition]) -> Vec<SdrDependencyStatus> {
+    check_dependencies_for_plugins(plugin_defs)
+}
+
+pub fn decoder_command_preview(
+    decoder: &SdrDecoderKind,
+    freq_hz: u64,
+    sample_rate_hz: u32,
+    hardware: SdrHardware,
+    plugins: &[SdrPluginDefinition],
+) -> Option<String> {
+    resolve_decoder_command_line(decoder, freq_hz, sample_rate_hz, hardware, plugins)
+}
+
+pub fn decoder_unavailability_hint(
+    decoder: &SdrDecoderKind,
+    hardware: SdrHardware,
+) -> Option<String> {
+    decoder_unavailability_reason(decoder, hardware)
+}
+
 pub fn start_runtime(config: SdrConfig, sender: Sender<SdrEvent>) -> SdrRuntime {
     let (command_tx, command_rx) = unbounded::<SdrCommand>();
     let stop_flag = Arc::new(AtomicBool::new(false));

@@ -6234,6 +6234,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let sdr_decode_stop_btn = Button::with_label("Stop Decode");
     let sdr_dep_refresh_btn = Button::with_label("Refresh Dependencies");
     let sdr_dep_install_btn = Button::with_label("Install Missing Dependencies");
+    let sdr_validate_decoder_btn = Button::with_label("Validate Decoder");
 
     let sdr_log_enable_check = CheckButton::with_label("Log decoder output");
     let sdr_log_dir_entry = Entry::new();
@@ -6395,7 +6396,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&sdr_decode_start_btn, 3, 1, 1, 1);
     sdr_controls.attach(&sdr_decode_stop_btn, 4, 1, 1, 1);
     sdr_controls.attach(&sdr_dep_refresh_btn, 5, 1, 2, 1);
-    sdr_controls.attach(&sdr_dep_install_btn, 7, 1, 3, 1);
+    sdr_controls.attach(&sdr_dep_install_btn, 7, 1, 2, 1);
+    sdr_controls.attach(&sdr_validate_decoder_btn, 9, 1, 2, 1);
     sdr_controls.attach(&sdr_log_enable_check, 0, 2, 2, 1);
     sdr_controls.attach(&Label::new(Some("Log Dir")), 2, 2, 1, 1);
     sdr_controls.attach(&sdr_log_dir_entry, 3, 2, 7, 1);
@@ -7233,6 +7235,106 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         sdr_pause_check.connect_toggled(move |check| {
             if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
                 runtime.set_sweep_paused(check.is_active());
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
+        let sdr_decoder_combo = sdr_decoder_combo.clone();
+        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
+        let sdr_plugin_defs = sdr_plugin_defs.clone();
+        sdr_validate_decoder_btn.connect_clicked(move |_| {
+            let Some(active_id) = sdr_decoder_combo.active_id() else {
+                state
+                    .borrow_mut()
+                    .push_status("decoder validation skipped: no decoder selected".to_string());
+                return;
+            };
+            let decoder_id = active_id.as_str().to_string();
+            let decoder = { sdr_decoder_lookup.borrow().get(&decoder_id).cloned() };
+            let Some(decoder) = decoder else {
+                state.borrow_mut().push_status(format!(
+                    "decoder validation skipped: selected decoder not found ({decoder_id})"
+                ));
+                return;
+            };
+
+            let config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
+            );
+            let command = sdr::decoder_command_preview(
+                &decoder,
+                config.center_freq_hz,
+                config.sample_rate_hz,
+                config.hardware,
+                sdr_plugin_defs.as_slice(),
+            );
+            let reason = sdr::decoder_unavailability_hint(&decoder, config.hardware);
+            let missing = sdr::dependency_status_snapshot(sdr_plugin_defs.as_slice())
+                .into_iter()
+                .filter(|status| !status.installed)
+                .map(|status| format!("{} ({})", status.tool, status.package_hint))
+                .collect::<Vec<_>>();
+            let mut s = state.borrow_mut();
+            if let Some(command) = command {
+                s.push_status(format!(
+                    "decoder validation ok [{} @ {} {:.3} MHz]: {} | missing_deps={}",
+                    decoder_id,
+                    config.hardware.label(),
+                    config.center_freq_hz as f64 / 1_000_000.0,
+                    command,
+                    missing.len()
+                ));
+            } else {
+                let reason = reason.unwrap_or_else(|| {
+                    "command path unavailable for current hardware/toolchain".to_string()
+                });
+                if missing.is_empty() {
+                    s.push_status(format!(
+                        "decoder validation failed [{} @ {}]: {}",
+                        decoder_id,
+                        config.hardware.label(),
+                        reason
+                    ));
+                } else {
+                    s.push_status(format!(
+                        "decoder validation failed [{} @ {}]: {} | missing_deps={}",
+                        decoder_id,
+                        config.hardware.label(),
+                        reason,
+                        missing.join(", ")
+                    ));
+                }
             }
         });
     }

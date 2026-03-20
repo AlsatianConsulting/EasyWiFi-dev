@@ -48,6 +48,7 @@ This repository contains an MVP implementation with:
   - Satcom parser denylist is configurable in SDR controls (persisted in settings), with env fallback `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST`
   - Satcom export now writes full audit JSON plus companion CSV/parsed-only JSON/denied-only JSON/summary JSON artifacts
   - Decode export writes full decode-row JSON + CSV artifacts
+  - `Validate Decoder` button performs a dry-run command/dependency readiness check for the selected decoder/hardware profile
   - Aircraft correlation export now derives ADS-B/ACARS identity joins (`icao_hex`/`callsign`) and writes JSON+CSV artifacts
   - SDR health section includes live aircraft-correlation counts (mixed ADS-B/ACARS + single-source tallies)
   - SDR health section also includes live satcom summary counters (parse state + encryption posture)

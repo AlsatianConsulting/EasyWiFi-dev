@@ -58,6 +58,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 17. Validate `FCC Frequency Explorer (CSV URL -> Bookmarks)` with large regional exports and ensure bookmark label readability for long station/service strings.
 18. Validate `Export Aircraft Correlation` artifacts (JSON/CSV) during mixed ADS-B + ACARS live runs and confirm merged identity quality (`icao_hex`/`callsign`).
 19. Validate `Export Decode JSON` artifacts (JSON/CSV) for large decoder sessions and downstream parser compatibility.
+20. Validate `Validate Decoder` dry-run readiness checks across RTL-SDR/HackRF/bladeRF/B210 and compare outputs with live start behavior.
 
 ## Priority 4: requested SDR decoder backlog
 
