@@ -63,6 +63,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 22. Validate `Decode Bookmark` one-click workflow (tune + decoder start) across hardware classes with unavailable-decoder guardrail messaging.
 23. Validate `Export SDR Health JSON` snapshot contents during long decoder runs and ensure downstream tooling can parse telemetry/rate sections.
 24. Validate `Export Decode (Filtered)` output fidelity against decode-table column filters in interactive sessions.
+25. Validate `Import SDR Bookmarks CSV URL` against stable/unstable endpoints and confirm retry/error messaging quality.
 
 ## Priority 4: requested SDR decoder backlog
 

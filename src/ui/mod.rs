@@ -4193,6 +4193,10 @@ fn build_menubar(
         Some("Import SDR Bookmarks CSV"),
         Some("app.preset_import_sdr_bookmarks_csv"),
     );
+    frequency_menu.append(
+        Some("Import SDR Bookmarks CSV URL"),
+        Some("app.preset_import_sdr_bookmarks_csv_url"),
+    );
     presets_root_menu.append_submenu(Some("Frequencies"), &frequency_menu);
 
     let scanner_menu = gio::Menu::new();
@@ -5006,6 +5010,78 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_import_sdr_bookmarks_csv_action);
+
+    let presets_import_sdr_bookmarks_csv_url_action =
+        gio::SimpleAction::new("preset_import_sdr_bookmarks_csv_url", None);
+    {
+        let window = window.clone();
+        let state = state.clone();
+        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
+        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
+        presets_import_sdr_bookmarks_csv_url_action.connect_activate(move |_, _| {
+            let dialog = Dialog::builder()
+                .transient_for(&window)
+                .modal(true)
+                .title("Import SDR Bookmarks CSV URL")
+                .build();
+            dialog.add_button("Cancel", ResponseType::Cancel);
+            dialog.add_button("Import", ResponseType::Accept);
+            let content = dialog.content_area();
+            content.set_spacing(8);
+            let url_label = Label::new(Some("CSV URL"));
+            url_label.set_xalign(0.0);
+            let url_entry = Entry::new();
+            url_entry.set_placeholder_text(Some("https://.../bookmarks.csv"));
+            content.append(&url_label);
+            content.append(&url_entry);
+
+            let state = state.clone();
+            let sdr_bookmarks = sdr_bookmarks.clone();
+            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+            dialog.connect_response(move |dialog, response| {
+                if response == ResponseType::Accept {
+                    let url = url_entry.text().to_string();
+                    let csv_path = match fetch_csv_from_url(&url) {
+                        Ok(path) => path,
+                        Err(err) => {
+                            state
+                                .borrow_mut()
+                                .push_status(format!("bookmark CSV URL fetch failed: {err}"));
+                            dialog.close();
+                            return;
+                        }
+                    };
+                    match import_sdr_bookmarks_csv(&csv_path) {
+                        Ok(imported) => {
+                            if imported.is_empty() {
+                                state.borrow_mut().push_status(
+                                    "bookmark CSV URL import skipped: no valid rows".to_string(),
+                                );
+                            } else {
+                                let summary = import_sdr_bookmarks(
+                                    &state,
+                                    &sdr_bookmarks,
+                                    &sdr_bookmark_combo,
+                                    imported,
+                                );
+                                state.borrow_mut().push_status(format!(
+                                    "imported SDR bookmarks from URL (added={}, duplicates={})",
+                                    summary.added, summary.skipped_duplicates
+                                ));
+                            }
+                        }
+                        Err(err) => state
+                            .borrow_mut()
+                            .push_status(format!("bookmark CSV URL import failed: {err}")),
+                    }
+                    let _ = fs::remove_file(csv_path);
+                }
+                dialog.close();
+            });
+            dialog.present();
+        });
+    }
+    app.add_action(&presets_import_sdr_bookmarks_csv_url_action);
 
     let file_menu = gio::Menu::new();
     file_menu.append(

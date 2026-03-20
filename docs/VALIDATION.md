@@ -31,6 +31,7 @@ Current SDR logging can also emit:
 - decode export action emits decode-row JSON + CSV artifacts
 - decode export now also supports filtered JSON + CSV artifacts based on active decode-table filters
 - bookmark management now includes `Import SDR Bookmarks CSV` (`frequency_hz` or `frequency_mhz` columns)
+- bookmark management also includes URL-based CSV import with retry/timeout fetch behavior
 - bookmark workflow now includes one-click tune + decoder start (`Decode Bookmark`)
 - aircraft correlation export action emits ADS-B/ACARS correlation JSON + CSV artifacts (`icao_hex`/`callsign` merged identities)
 - `Export SDR Health JSON` now emits a telemetry/counter snapshot artifact for runtime monitoring handoff
