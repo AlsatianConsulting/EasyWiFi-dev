@@ -34,6 +34,7 @@ This repository contains an MVP implementation with:
     - `FCC Area Explorer (CSV URL)` for direct URL ingestion with retry/timeout handling
     - `FCC Frequency Explorer (CSV -> Bookmarks)` to import individual FCC-assigned frequencies as bookmarks
     - `FCC Frequency Explorer (CSV URL -> Bookmarks)` to import bookmarks directly from URL
+    - `Remove FCC Bookmarks` to prune previously imported FCC bookmark entries
   - FCC explorers support area token filtering (city/county/state/callsign) and optional signal/service-type filtering
   - FCC area explorers attempt decoder auto-selection from detected signal/service type when possible (for example public safety -> P25, maritime -> AIS)
   - FCC frequency imports now report added vs duplicate-skipped counts and keep bookmark data normalized/sorted
