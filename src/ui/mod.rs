@@ -7285,7 +7285,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
         let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         sdr_start_btn.connect_clicked(move |_| {
             let config = sdr_config_from_inputs(
                 &sdr_hardware_combo,
