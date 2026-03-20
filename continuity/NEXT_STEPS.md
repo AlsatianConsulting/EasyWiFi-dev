@@ -75,6 +75,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 34. Validate ACARS non-RTL fallback behavior when `acarsdec` is missing but `csdr/sox/multimon-ng` toolchain is present.
 35. Validate APRS/POCSAG/DECT RTL fallback behavior when `rtl_fm` is absent but `rtl_sdr/csdr/sox/multimon-ng` are present.
 36. Validate `Import SDR Bookmarks URL (Auto CSV/JSON)` against mixed endpoint formats and extension mismatches.
+37. Validate right-click decoder unavailable tooltips for consistency with start-action/status-line failure reasons.
 
 ## Priority 4: requested SDR decoder backlog
 

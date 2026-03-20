@@ -109,6 +109,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 89. SDR bookmark file-import dialogs now include CSV/JSON filters (plus mixed data/all-file filters) while keeping format auto-detection enabled.
 90. APRS/POCSAG/DECT built-in command resolution on RTL now falls back to an `rtl_sdr + csdr + sox + multimon-ng` IQ pipeline when `rtl_fm` is unavailable.
 91. `Presets -> Frequencies` now includes `Import SDR Bookmarks URL (Auto CSV/JSON)`, using shared retry/timeout fetch behavior plus parser auto-detection.
+92. SDR right-click decode menus now attach hover tooltips with the exact unavailable-reason text for disabled decoder entries.
 
 ### Bluetooth
 

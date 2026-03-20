@@ -9483,6 +9483,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     Button::with_label(&format!("Decode -> {}", decoder.label()))
                 };
                 button.set_sensitive(unavailable_reason.is_none());
+                if let Some(reason) = unavailable_reason.as_deref() {
+                    button.set_tooltip_text(Some(reason));
+                }
                 let state = state.clone();
                 let decoder = decoder.clone();
                 let sdr_hardware_combo = sdr_hardware_combo.clone();
@@ -9684,6 +9687,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     Button::with_label(&format!("Decode -> {}", decoder.label()))
                 };
                 button.set_sensitive(unavailable_reason.is_none());
+                if let Some(reason) = unavailable_reason.as_deref() {
+                    button.set_tooltip_text(Some(reason));
+                }
                 let state = state.clone();
                 let decoder = decoder.clone();
                 let sdr_hardware_combo = sdr_hardware_combo.clone();
@@ -9873,6 +9879,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     Button::with_label(&format!("Decode -> {}", decoder.label()))
                 };
                 button.set_sensitive(unavailable_reason.is_none());
+                if let Some(reason) = unavailable_reason.as_deref() {
+                    button.set_tooltip_text(Some(reason));
+                }
                 let state = state.clone();
                 let decoder = decoder.clone();
                 let sdr_hardware_combo = sdr_hardware_combo.clone();
