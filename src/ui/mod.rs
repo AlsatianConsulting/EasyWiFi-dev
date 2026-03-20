@@ -6230,8 +6230,20 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 &sdr_no_payload_satcom_check,
                 &sdr_satcom_denylist_entry,
             );
-            for decoder_id in sdr_decoder_order.iter() {
-                let Some(decoder) = sdr_decoder_lookup.borrow().get(decoder_id).cloned() else {
+            let prioritized_decoder_ids = {
+                let lookup = sdr_decoder_lookup.borrow();
+                prioritized_decoder_ids_for_protocol(
+                    sdr_decoder_order.as_slice(),
+                    &lookup,
+                    observation.protocol.as_str(),
+                )
+            };
+            for decoder_id in prioritized_decoder_ids {
+                let Some(decoder) = sdr_decoder_lookup
+                    .borrow()
+                    .get(decoder_id.as_str())
+                    .cloned()
+                else {
                     continue;
                 };
                 let unavailable_reason = sdr::decoder_launch_unavailable_reason(
@@ -9603,6 +9615,52 @@ fn format_sdr_decoder_telemetry(
     } else {
         "Decoder Health: no telemetry".to_string()
     }
+}
+
+fn prioritized_decoder_ids_for_protocol(
+    decoder_order: &[String],
+    decoder_lookup: &HashMap<String, SdrDecoderKind>,
+    signal_protocol: &str,
+) -> Vec<String> {
+    let signal_protocol = signal_protocol.trim();
+    if signal_protocol.is_empty() {
+        return decoder_order.to_vec();
+    }
+    let mut ordered = decoder_order.to_vec();
+    ordered.sort_by_key(|decoder_id| {
+        decoder_lookup
+            .get(decoder_id.as_str())
+            .map(|decoder| !decoder_matches_signal_protocol(decoder, signal_protocol))
+            .unwrap_or(true)
+    });
+    ordered
+}
+
+fn decoder_matches_signal_protocol(decoder: &SdrDecoderKind, signal_protocol: &str) -> bool {
+    let normalized_signal = normalize_protocol_token(signal_protocol);
+    match decoder {
+        SdrDecoderKind::Plugin { id, protocol, .. } => {
+            protocol
+                .as_deref()
+                .map(normalize_protocol_token)
+                .map(|candidate| candidate.contains(&normalized_signal))
+                .unwrap_or(false)
+                || normalize_protocol_token(id).contains(&normalized_signal)
+        }
+        _ => {
+            normalize_protocol_token(decoder.default_protocol()).contains(&normalized_signal)
+                || normalize_protocol_token(decoder.id().as_str()).contains(&normalized_signal)
+                || normalize_protocol_token(decoder.label().as_str()).contains(&normalized_signal)
+        }
+    }
+}
+
+fn normalize_protocol_token(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect::<String>()
 }
 
 fn draw_sdr_fft(ctx: &cairo::Context, width: f64, height: f64, model: &SdrUiModel) {
