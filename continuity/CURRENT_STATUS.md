@@ -108,6 +108,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 88. ACARS built-in command resolution no longer hard-gates on `acarsdec` for non-RTL hardware, allowing valid `csdr/sox/multimon-ng` fallback pipelines to launch.
 89. SDR bookmark file-import dialogs now include CSV/JSON filters (plus mixed data/all-file filters) while keeping format auto-detection enabled.
 90. APRS/POCSAG/DECT built-in command resolution on RTL now falls back to an `rtl_sdr + csdr + sox + multimon-ng` IQ pipeline when `rtl_fm` is unavailable.
+91. `Presets -> Frequencies` now includes `Import SDR Bookmarks URL (Auto CSV/JSON)`, using shared retry/timeout fetch behavior plus parser auto-detection.
 
 ### Bluetooth
 

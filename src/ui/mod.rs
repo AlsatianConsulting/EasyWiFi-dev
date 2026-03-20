@@ -2082,7 +2082,13 @@ fn parse_fcc_frequency_hz(raw: &str) -> Option<u64> {
     }
 }
 
-fn fetch_csv_from_url(url: &str) -> Result<PathBuf> {
+fn fetch_text_from_url(
+    url: &str,
+    empty_error: &str,
+    temp_prefix: &str,
+    extension: &str,
+    write_error_label: &str,
+) -> Result<PathBuf> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
         anyhow::bail!("empty URL");
@@ -2113,7 +2119,7 @@ fn fetch_csv_from_url(url: &str) -> Result<PathBuf> {
         if !body.trim().is_empty() {
             break;
         }
-        last_error = Some(anyhow::anyhow!("downloaded CSV is empty"));
+        last_error = Some(anyhow::anyhow!(empty_error.to_string()));
     }
     if body.trim().is_empty() {
         if let Some(err) = last_error {
@@ -2121,62 +2127,44 @@ fn fetch_csv_from_url(url: &str) -> Result<PathBuf> {
         }
         anyhow::bail!("failed to fetch {trimmed}");
     }
-    let path = std::env::temp_dir().join(format!("wirelessexplorer-fcc-{}.csv", Uuid::new_v4()));
-    fs::write(&path, body)
-        .with_context(|| format!("failed to write downloaded FCC CSV {}", path.display()))?;
-    Ok(path)
-}
-
-fn fetch_json_from_url(url: &str) -> Result<PathBuf> {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        anyhow::bail!("empty URL");
-    }
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(30))
-        .timeout_write(Duration::from_secs(30))
-        .build();
-    let mut last_error: Option<anyhow::Error> = None;
-    let attempts = 3usize;
-    let mut body = String::new();
-    for _ in 0..attempts {
-        let response = match agent.get(trimmed).call() {
-            Ok(response) => response,
-            Err(err) => {
-                last_error = Some(anyhow::anyhow!("{err}"));
-                continue;
-            }
-        };
-        let mut reader = response.into_reader();
-        body.clear();
-        use std::io::Read;
-        if let Err(err) = reader.read_to_string(&mut body) {
-            last_error = Some(anyhow::anyhow!(err));
-            continue;
-        }
-        if !body.trim().is_empty() {
-            break;
-        }
-        last_error = Some(anyhow::anyhow!("downloaded JSON is empty"));
-    }
-    if body.trim().is_empty() {
-        if let Some(err) = last_error {
-            return Err(err).with_context(|| format!("failed to fetch {trimmed}"));
-        }
-        anyhow::bail!("failed to fetch {trimmed}");
-    }
-    let path = std::env::temp_dir().join(format!(
-        "wirelessexplorer-bookmarks-{}.json",
-        Uuid::new_v4()
-    ));
+    let path = std::env::temp_dir().join(format!("{temp_prefix}-{}.{}", Uuid::new_v4(), extension));
     fs::write(&path, body).with_context(|| {
         format!(
-            "failed to write downloaded bookmark JSON {}",
+            "failed to write downloaded {write_error_label} {}",
             path.display()
         )
     })?;
     Ok(path)
+}
+
+fn fetch_csv_from_url(url: &str) -> Result<PathBuf> {
+    fetch_text_from_url(
+        url,
+        "downloaded CSV is empty",
+        "wirelessexplorer-fcc",
+        "csv",
+        "FCC CSV",
+    )
+}
+
+fn fetch_json_from_url(url: &str) -> Result<PathBuf> {
+    fetch_text_from_url(
+        url,
+        "downloaded JSON is empty",
+        "wirelessexplorer-bookmarks",
+        "json",
+        "bookmark JSON",
+    )
+}
+
+fn fetch_bookmark_data_from_url(url: &str) -> Result<PathBuf> {
+    fetch_text_from_url(
+        url,
+        "downloaded bookmark data is empty",
+        "wirelessexplorer-bookmarks",
+        "dat",
+        "bookmark data",
+    )
 }
 
 fn fcc_record_value(
@@ -4447,6 +4435,10 @@ fn build_menubar(
         Some("app.preset_import_sdr_bookmarks_json_url"),
     );
     frequency_menu.append(
+        Some("Import SDR Bookmarks URL (Auto CSV/JSON)"),
+        Some("app.preset_import_sdr_bookmarks_url"),
+    );
+    frequency_menu.append(
         Some("Import SDR Bookmarks CSV URL"),
         Some("app.preset_import_sdr_bookmarks_csv_url"),
     );
@@ -5428,6 +5420,78 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_import_sdr_bookmarks_json_url_action);
+
+    let presets_import_sdr_bookmarks_url_action =
+        gio::SimpleAction::new("preset_import_sdr_bookmarks_url", None);
+    {
+        let window = window.clone();
+        let state = state.clone();
+        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
+        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
+        presets_import_sdr_bookmarks_url_action.connect_activate(move |_, _| {
+            let dialog = Dialog::builder()
+                .transient_for(&window)
+                .modal(true)
+                .title("Import SDR Bookmarks URL (Auto CSV/JSON)")
+                .build();
+            dialog.add_button("Cancel", ResponseType::Cancel);
+            dialog.add_button("Import", ResponseType::Accept);
+            let content = dialog.content_area();
+            content.set_spacing(8);
+            let url_label = Label::new(Some("Bookmark URL"));
+            url_label.set_xalign(0.0);
+            let url_entry = Entry::new();
+            url_entry.set_placeholder_text(Some("https://.../bookmarks.csv or .json"));
+            content.append(&url_label);
+            content.append(&url_entry);
+
+            let state = state.clone();
+            let sdr_bookmarks = sdr_bookmarks.clone();
+            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+            dialog.connect_response(move |dialog, response| {
+                if response == ResponseType::Accept {
+                    let url = url_entry.text().to_string();
+                    let path = match fetch_bookmark_data_from_url(&url) {
+                        Ok(path) => path,
+                        Err(err) => {
+                            state
+                                .borrow_mut()
+                                .push_status(format!("bookmark URL fetch failed: {err}"));
+                            dialog.close();
+                            return;
+                        }
+                    };
+                    match import_sdr_bookmarks_path(&path) {
+                        Ok(imported) => {
+                            if imported.is_empty() {
+                                state.borrow_mut().push_status(
+                                    "bookmark URL import skipped: no valid rows".to_string(),
+                                );
+                            } else {
+                                let summary = import_sdr_bookmarks(
+                                    &state,
+                                    &sdr_bookmarks,
+                                    &sdr_bookmark_combo,
+                                    imported,
+                                );
+                                state.borrow_mut().push_status(format!(
+                                    "imported SDR bookmarks from URL (added={}, duplicates={})",
+                                    summary.added, summary.skipped_duplicates
+                                ));
+                            }
+                        }
+                        Err(err) => state
+                            .borrow_mut()
+                            .push_status(format!("bookmark URL import failed: {err}")),
+                    }
+                    let _ = fs::remove_file(path);
+                }
+                dialog.close();
+            });
+            dialog.present();
+        });
+    }
+    app.add_action(&presets_import_sdr_bookmarks_url_action);
 
     let presets_import_sdr_bookmarks_csv_url_action =
         gio::SimpleAction::new("preset_import_sdr_bookmarks_csv_url", None);
