@@ -76,6 +76,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 56. Scanner presets now include dedicated public-safety P25 ranges (700/800 MHz) for faster targeted trunking-band sweeps.
 57. SDR controls now include a `Scan Around Bookmark` quick action with configurable ±kHz window to convert any selected bookmark (including FCC imports) into an active scan range.
 58. FCC area import workflows now attempt decoder auto-selection from detected FCC signal/service type (for example public safety -> P25, maritime -> AIS) when matching decoders are available.
+59. Scan macro catalog now also includes Iridium L-band and GSM/LTE metadata sweeps for one-click workflow coverage of those decoder families.
 
 ### Bluetooth
 
