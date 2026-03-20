@@ -1254,6 +1254,16 @@ fn protocol_scan_macros() -> Vec<ProtocolScanMacro> {
             squelch_dbm: -78.0,
         },
         ProtocolScanMacro {
+            id: "macro_p25_800".to_string(),
+            label: "P25 800 MHz Sweep".to_string(),
+            decoder_id: "p25".to_string(),
+            start_hz: 851_000_000,
+            end_hz: 869_000_000,
+            step_hz: 12_500,
+            steps_per_sec: 6.0,
+            squelch_dbm: -78.0,
+        },
+        ProtocolScanMacro {
             id: "macro_dect".to_string(),
             label: "DECT Band Sweep".to_string(),
             decoder_id: "dect".to_string(),
@@ -1272,6 +1282,46 @@ fn protocol_scan_macros() -> Vec<ProtocolScanMacro> {
             step_hz: 10_000,
             steps_per_sec: 5.0,
             squelch_dbm: -78.0,
+        },
+        ProtocolScanMacro {
+            id: "macro_adsb_1090".to_string(),
+            label: "ADS-B 1090 Window".to_string(),
+            decoder_id: "ads_b".to_string(),
+            start_hz: 1_089_800_000,
+            end_hz: 1_090_200_000,
+            step_hz: 100_000,
+            steps_per_sec: 8.0,
+            squelch_dbm: -70.0,
+        },
+        ProtocolScanMacro {
+            id: "macro_acars_vhf".to_string(),
+            label: "ACARS VHF Sweep".to_string(),
+            decoder_id: "acars".to_string(),
+            start_hz: 131_125_000,
+            end_hz: 131_725_000,
+            step_hz: 25_000,
+            steps_per_sec: 8.0,
+            squelch_dbm: -82.0,
+        },
+        ProtocolScanMacro {
+            id: "macro_ais_marine".to_string(),
+            label: "AIS Maritime Window".to_string(),
+            decoder_id: "ais".to_string(),
+            start_hz: 161_975_000,
+            end_hz: 162_025_000,
+            step_hz: 25_000,
+            steps_per_sec: 8.0,
+            squelch_dbm: -80.0,
+        },
+        ProtocolScanMacro {
+            id: "macro_aprs_144390".to_string(),
+            label: "APRS 144.390 Window".to_string(),
+            decoder_id: "aprs_ax25".to_string(),
+            start_hz: 144_300_000,
+            end_hz: 144_500_000,
+            step_hz: 25_000,
+            steps_per_sec: 8.0,
+            squelch_dbm: -82.0,
         },
         ProtocolScanMacro {
             id: "macro_weather_apt".to_string(),
@@ -16695,8 +16745,13 @@ mod tests {
             .collect::<std::collections::HashSet<_>>();
         assert!(ids.contains("macro_pager_us"));
         assert!(ids.contains("macro_dmr_uhf"));
+        assert!(ids.contains("macro_p25_800"));
         assert!(ids.contains("macro_dect"));
         assert!(ids.contains("macro_satcom_lband"));
+        assert!(ids.contains("macro_adsb_1090"));
+        assert!(ids.contains("macro_acars_vhf"));
+        assert!(ids.contains("macro_ais_marine"));
+        assert!(ids.contains("macro_aprs_144390"));
         assert!(ids.contains("macro_weather_apt"));
         assert!(ids.contains("macro_iot_915"));
     }
