@@ -4080,6 +4080,10 @@ fn build_menubar(
         Some("FCC Frequency Explorer (CSV URL -> Bookmarks)"),
         Some("app.preset_fcc_frequency_url_explorer"),
     );
+    frequency_menu.append(
+        Some("Remove FCC Bookmarks"),
+        Some("app.preset_fcc_bookmarks_remove"),
+    );
     presets_root_menu.append_submenu(Some("Frequencies"), &frequency_menu);
 
     let scanner_menu = gio::Menu::new();
@@ -4771,6 +4775,37 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_fcc_frequency_url_action);
+
+    let presets_fcc_bookmarks_remove_action =
+        gio::SimpleAction::new("preset_fcc_bookmarks_remove", None);
+    {
+        let state = state.clone();
+        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
+        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
+        presets_fcc_bookmarks_remove_action.connect_activate(move |_, _| {
+            let mut s = state.borrow_mut();
+            let before_settings = s.settings.sdr_bookmarks.len();
+            s.settings
+                .sdr_bookmarks
+                .retain(|entry| !entry.label.trim_start().starts_with("FCC |"));
+            let removed_settings = before_settings.saturating_sub(s.settings.sdr_bookmarks.len());
+            s.save_settings_to_disk();
+            drop(s);
+
+            {
+                let mut bookmarks = sdr_bookmarks.borrow_mut();
+                let before_runtime = bookmarks.len();
+                bookmarks.retain(|(label, _)| !label.trim_start().starts_with("FCC |"));
+                let _ = before_runtime.saturating_sub(bookmarks.len());
+            }
+            refresh_sdr_bookmark_combo(&sdr_bookmarks, &sdr_bookmark_combo, None);
+            state.borrow_mut().push_status(format!(
+                "FCC bookmark cleanup complete: removed {} persisted entries",
+                removed_settings
+            ));
+        });
+    }
+    app.add_action(&presets_fcc_bookmarks_remove_action);
 
     let file_menu = gio::Menu::new();
     file_menu.append(
