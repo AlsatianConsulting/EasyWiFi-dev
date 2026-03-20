@@ -34,6 +34,7 @@ Current SDR logging can also emit:
 - bookmark management now includes `Import SDR Bookmarks JSON` (array root or `{ "bookmarks": [...] }` envelope)
 - bookmark management also includes URL-based JSON import with retry/timeout fetch behavior
 - bookmark management also includes URL-based CSV import with retry/timeout fetch behavior
+- bookmark import parser path now auto-detects CSV vs JSON on unknown/mismatched file extensions
 - bookmark export now emits both CSV and JSON artifacts with source tagging
 - bookmark workflow now includes one-click tune + decoder start (`Decode Bookmark`)
 - aircraft correlation export action emits ADS-B/ACARS correlation JSON + CSV artifacts (`icao_hex`/`callsign` merged identities)

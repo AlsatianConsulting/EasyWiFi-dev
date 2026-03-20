@@ -101,6 +101,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 81. SDR summary JSON artifacts now render human-readable `generated_at`/window timestamps using the selected local-vs-Zulu display mode.
 82. `Presets -> Frequencies` now includes `Import SDR Bookmarks JSON`, supporting array root or `{ "bookmarks": [...] }` schema with the same dedupe/normalization behavior as CSV import.
 83. `Presets -> Frequencies` now includes `Import SDR Bookmarks JSON URL`, using existing retry/timeout fetch guardrails for remote bookmark ingest.
+84. SDR bookmark import actions now auto-detect CSV vs JSON on unknown/mismatched file extensions, reducing operator errors during manual and URL-based imports.
 
 ### Bluetooth
 

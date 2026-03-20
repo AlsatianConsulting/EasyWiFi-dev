@@ -56,6 +56,7 @@ This repository contains an MVP implementation with:
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks JSON` (array root or `{ "bookmarks": [...] }` with `frequency_hz`/`frequency_mhz`)
   - `Presets -> Frequencies` also supports direct bookmark import from remote JSON URL
   - `Presets -> Frequencies` also supports direct bookmark import from remote CSV URL
+  - Bookmark imports now auto-detect CSV vs JSON when file extension/content mismatch occurs
   - Bookmark controls include `Decode Bookmark` for one-click tune + decoder start on the selected bookmark
   - `Export SDR Health JSON` captures telemetry/rate counters plus satcom/aircraft summaries in one snapshot artifact
   - SDR CSV exports with timestamp fields honor the selected time display mode (Local or Zulu/UTC)

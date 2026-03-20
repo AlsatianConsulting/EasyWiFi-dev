@@ -2939,6 +2939,27 @@ fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> 
     Ok(imported)
 }
 
+fn import_sdr_bookmarks_path(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.trim().to_ascii_lowercase());
+    if matches!(extension.as_deref(), Some("csv")) {
+        return import_sdr_bookmarks_csv(path);
+    }
+    if matches!(extension.as_deref(), Some("json")) {
+        return import_sdr_bookmarks_json(path);
+    }
+    match import_sdr_bookmarks_csv(path) {
+        Ok(rows) => Ok(rows),
+        Err(csv_err) => import_sdr_bookmarks_json(path).map_err(|json_err| {
+            anyhow::anyhow!(
+                "failed to parse bookmark import as CSV ({csv_err}) or JSON ({json_err})"
+            )
+        }),
+    }
+}
+
 fn refresh_sdr_bookmark_combo(
     sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
     sdr_bookmark_combo: &ComboBoxText,
@@ -5211,7 +5232,7 @@ fn build_menubar(
                         dialog.close();
                         return;
                     };
-                    match import_sdr_bookmarks_csv(&path) {
+                    match import_sdr_bookmarks_path(&path) {
                         Ok(imported) => {
                             if imported.is_empty() {
                                 state.borrow_mut().push_status(format!(
@@ -5273,7 +5294,7 @@ fn build_menubar(
                         dialog.close();
                         return;
                     };
-                    match import_sdr_bookmarks_json(&path) {
+                    match import_sdr_bookmarks_path(&path) {
                         Ok(imported) => {
                             if imported.is_empty() {
                                 state.borrow_mut().push_status(format!(
@@ -5347,7 +5368,7 @@ fn build_menubar(
                             return;
                         }
                     };
-                    match import_sdr_bookmarks_json(&json_path) {
+                    match import_sdr_bookmarks_path(&json_path) {
                         Ok(imported) => {
                             if imported.is_empty() {
                                 state.borrow_mut().push_status(
@@ -5419,7 +5440,7 @@ fn build_menubar(
                             return;
                         }
                     };
-                    match import_sdr_bookmarks_csv(&csv_path) {
+                    match import_sdr_bookmarks_path(&csv_path) {
                         Ok(imported) => {
                             if imported.is_empty() {
                                 state.borrow_mut().push_status(
@@ -19754,6 +19775,32 @@ mod tests {
         let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].frequency_hz, 155_340_000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_path_autodetects_json_without_json_extension() {
+        let path =
+            std::env::temp_dir().join(format!("sdr-bookmarks-import-auto-{}.txt", Uuid::new_v4()));
+        let json = r#"[{"label":"APRS","frequency_hz":"144390000"}]"#;
+        std::fs::write(&path, json).expect("write json");
+        let rows = import_sdr_bookmarks_path(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].frequency_hz, 144_390_000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_path_autodetects_csv_without_csv_extension() {
+        let path = std::env::temp_dir().join(format!(
+            "sdr-bookmarks-import-auto-csv-{}.dat",
+            Uuid::new_v4()
+        ));
+        let csv = "label,frequency_hz\nACARS,131550000\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let rows = import_sdr_bookmarks_path(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].frequency_hz, 131_550_000);
         let _ = std::fs::remove_file(path);
     }
 
