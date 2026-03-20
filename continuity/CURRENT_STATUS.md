@@ -63,6 +63,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 43. Scan macro catalog now includes additional core workflows (ADS-B, ACARS, AIS, APRS/AX.25, and P25) for one-click decoder/range setup.
 44. SDR dependency status now tracks weather APT plugin requirements explicitly, including satdump-backed decoder readiness.
 45. Presets now include an `FCC Area Explorer (CSV...)` workflow that filters FCC-assignment rows by city/area token and auto-builds a scan profile (center/range/step/squelch), applies it live, and persists it to saved SDR presets.
+46. Presets `Frequencies` submenu now includes FCC explorer workflows for both area scan profile generation and per-frequency bookmark import, with signal/station type labeling where present in source data.
 
 ### Bluetooth
 
