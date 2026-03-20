@@ -2151,6 +2151,19 @@ fn decoder_id_for_fcc_signal_type(signal_type: &str) -> Option<&'static str> {
     }
 }
 
+fn apply_fcc_decoder_autoselect(
+    decoder_combo: &ComboBoxText,
+    signal_type: Option<&str>,
+) -> Option<String> {
+    let signal = signal_type?;
+    let decoder_id = decoder_id_for_fcc_signal_type(signal)?;
+    if decoder_combo.set_active_id(Some(decoder_id)) {
+        Some(decoder_id.to_string())
+    } else {
+        None
+    }
+}
+
 fn build_fcc_frequency_bookmarks_from_csv(
     csv_path: &PathBuf,
     area_filter: &str,
@@ -4314,12 +4327,8 @@ fn build_menubar(
                             let preset = fcc_scan.preset;
                             let signal_type = fcc_scan.signal_type;
                             let matched_rows = fcc_scan.matched_rows;
-                            if let Some(decoder_id) = signal_type
-                                .as_deref()
-                                .and_then(decoder_id_for_fcc_signal_type)
-                            {
-                                let _ = sdr_decoder_combo.set_active_id(Some(decoder_id));
-                            }
+                            let auto_decoder =
+                                apply_fcc_decoder_autoselect(&sdr_decoder_combo, signal_type.as_deref());
 
                             sdr_center_freq_entry.set_text(&preset.center_freq_hz.to_string());
                             sdr_sample_rate_entry.set_text(&preset.sample_rate_hz.to_string());
@@ -4349,7 +4358,7 @@ fn build_menubar(
                                 runtime.set_squelch(preset.squelch_dbm);
                             }
                             s.push_status(format!(
-                                "FCC area explorer loaded from {} [{} | type_filter={}] type={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
+                                "FCC area explorer loaded from {} [{} | type_filter={}] type={} auto_decoder={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
                                 csv_path.display(),
                                 if area.trim().is_empty() {
                                     "all rows".to_string()
@@ -4362,6 +4371,7 @@ fn build_menubar(
                                     signal_filter.trim().to_string()
                                 },
                                 signal_type.unwrap_or_else(|| "unknown".to_string()),
+                                auto_decoder.unwrap_or_else(|| "none".to_string()),
                                 matched_rows,
                                 preset.scan_start_hz as f64 / 1_000_000.0,
                                 preset.scan_end_hz as f64 / 1_000_000.0,
@@ -4472,12 +4482,8 @@ fn build_menubar(
                 let preset = fcc_scan.preset;
                 let signal_type = fcc_scan.signal_type;
                 let matched_rows = fcc_scan.matched_rows;
-                if let Some(decoder_id) = signal_type
-                    .as_deref()
-                    .and_then(decoder_id_for_fcc_signal_type)
-                {
-                    let _ = sdr_decoder_combo.set_active_id(Some(decoder_id));
-                }
+                let auto_decoder =
+                    apply_fcc_decoder_autoselect(&sdr_decoder_combo, signal_type.as_deref());
                 sdr_center_freq_entry.set_text(&preset.center_freq_hz.to_string());
                 sdr_sample_rate_entry.set_text(&preset.sample_rate_hz.to_string());
                 sdr_scan_enable_check.set_active(true);
@@ -4505,7 +4511,7 @@ fn build_menubar(
                     runtime.set_squelch(preset.squelch_dbm);
                 }
                 s.push_status(format!(
-                    "FCC area explorer URL loaded [{} | type_filter={}] type={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
+                    "FCC area explorer URL loaded [{} | type_filter={}] type={} auto_decoder={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
                     if area.trim().is_empty() {
                         "all rows".to_string()
                     } else {
@@ -4517,6 +4523,7 @@ fn build_menubar(
                         signal_filter.trim().to_string()
                     },
                     signal_type.unwrap_or_else(|| "unknown".to_string()),
+                    auto_decoder.unwrap_or_else(|| "none".to_string()),
                     matched_rows,
                     preset.scan_start_hz as f64 / 1_000_000.0,
                     preset.scan_end_hz as f64 / 1_000_000.0,
