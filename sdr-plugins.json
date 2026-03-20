@@ -29,6 +29,27 @@
       "enabled": true
     },
     {
+      "id": "weather_noaa_apt_hackrf",
+      "label": "Weather Satellite APT (HackRF)",
+      "command": "if command -v hackrf_transfer >/dev/null && command -v csdr >/dev/null && command -v sox >/dev/null && command -v satdump >/dev/null; then tmp_iq=\"$(mktemp)\"; trap 'rm -f \"$tmp_iq\"' EXIT; while true; do hackrf_transfer -f {freq_hz} -s 240000 -n 480000 -r \"$tmp_iq\" >/dev/null 2>&1; csdr convert_i8_f < \"$tmp_iq\" | csdr fmdemod_quadri_cf | csdr limit_ff | csdr old_fractional_decimator_ff 4 | csdr convert_f_s16 | sox -t raw -r 60000 -e signed -b 16 -c 1 - -t raw -r 60000 -e signed -b 16 -c 1 - deemph | satdump live noaa_apt /tmp/wirelessexplorer_noaa -; done; else echo 'missing hackrf_transfer/csdr/sox/satdump for NOAA APT on HackRF'; fi",
+      "protocol": "weather_sat",
+      "enabled": true
+    },
+    {
+      "id": "weather_noaa_apt_bladerf",
+      "label": "Weather Satellite APT (bladeRF)",
+      "command": "if command -v bladeRF-cli >/dev/null && command -v csdr >/dev/null && command -v sox >/dev/null && command -v satdump >/dev/null; then tmp_iq=\"$(mktemp)\"; trap 'rm -f \"$tmp_iq\"' EXIT; while true; do bladeRF-cli -e \"set frequency rx {freq_hz}; set samplerate rx 240000; rx config file=$tmp_iq format=bin n=480000; rx start; rx wait\" >/dev/null 2>&1; csdr convert_s16_f < \"$tmp_iq\" | csdr fmdemod_quadri_cf | csdr limit_ff | csdr old_fractional_decimator_ff 4 | csdr convert_f_s16 | sox -t raw -r 60000 -e signed -b 16 -c 1 - -t raw -r 60000 -e signed -b 16 -c 1 - deemph | satdump live noaa_apt /tmp/wirelessexplorer_noaa -; done; else echo 'missing bladeRF-cli/csdr/sox/satdump for NOAA APT on bladeRF'; fi",
+      "protocol": "weather_sat",
+      "enabled": true
+    },
+    {
+      "id": "weather_noaa_apt_ettus_b210",
+      "label": "Weather Satellite APT (Ettus B210)",
+      "command": "if command -v uhd_rx_cfile >/dev/null && command -v csdr >/dev/null && command -v sox >/dev/null && command -v satdump >/dev/null; then tmp_iq=\"$(mktemp)\"; trap 'rm -f \"$tmp_iq\"' EXIT; while true; do uhd_rx_cfile -f {freq_hz} -r 240000 -N 480000 --type short \"$tmp_iq\" >/dev/null 2>&1; csdr convert_s16_f < \"$tmp_iq\" | csdr fmdemod_quadri_cf | csdr limit_ff | csdr old_fractional_decimator_ff 4 | csdr convert_f_s16 | sox -t raw -r 60000 -e signed -b 16 -c 1 - -t raw -r 60000 -e signed -b 16 -c 1 - deemph | satdump live noaa_apt /tmp/wirelessexplorer_noaa -; done; else echo 'missing uhd_rx_cfile/csdr/sox/satdump for NOAA APT on B210'; fi",
+      "protocol": "weather_sat",
+      "enabled": true
+    },
+    {
       "id": "gqrx_am",
       "label": "AM Demod (gqrx-style)",
       "command": "if command -v rtl_fm >/dev/null; then rtl_fm -f {freq_hz} -M am -s 48000 -g 25 -; else echo 'missing rtl_fm'; fi",
