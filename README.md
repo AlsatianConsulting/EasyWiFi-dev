@@ -32,8 +32,8 @@ This repository contains an MVP implementation with:
   - Save Current as Preset stores user-defined SDR presets in app settings
   - Rename/Delete/Move controls for saved user presets
   - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)
-  - Map and satcom audit entries now carry both parsed `message` and `raw` decoder text (redacted when no-payload mode is enabled)
-  - Satcom audit includes parsed unencrypted payload metadata (`payload_parse_state`, normalized `payload_fields`)
+  - Map and satcom audit entries now carry both parsed `message` and `raw` decoder text (redacted when satellite payload capture is disabled)
+  - Satcom audit includes payload mode + parsed unencrypted metadata (`payload_capture_mode`, `payload_parse_state`, normalized `payload_fields`)
   - Built-in `Inmarsat STD-C` decoder (`inmarsat_stdc`) is available when `stdc_decoder`/`stdc-decoder`/`inmarsatc-decoder` is installed
   - Satcom parser denylist is configurable in SDR controls (persisted in settings), with env fallback `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST`
   - Satcom export now writes full audit JSON plus companion CSV/parsed-only JSON/denied-only JSON artifacts

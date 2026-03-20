@@ -147,6 +147,7 @@ pub struct SdrSatcomObservation {
     pub freq_hz: u64,
     pub band: String,
     pub encryption_posture: String,
+    pub payload_capture_mode: String,
     pub has_coordinates: bool,
     pub identifier_hints: Vec<String>,
     pub payload_parse_state: String,
@@ -1821,9 +1822,13 @@ fn spawn_decoder(
                 raw: message,
             };
             let mut map_point = parse_map_point(&row);
-            let satcom_detected =
-                derive_satcom_observation(&row, map_point.as_ref(), &satcom_parse_denylist)
-                    .is_some();
+            let satcom_detected = derive_satcom_observation(
+                &row,
+                map_point.as_ref(),
+                !no_payload_satcom_stdout,
+                &satcom_parse_denylist,
+            )
+            .is_some();
 
             if no_payload_satcom_stdout && satcom_detected {
                 redact_satcom_decode_row(&mut row);
@@ -1831,8 +1836,12 @@ fn spawn_decoder(
                     sync_map_point_payload_from_row(point, &row);
                 }
             }
-            let satcom_observation =
-                derive_satcom_observation(&row, map_point.as_ref(), &satcom_parse_denylist);
+            let satcom_observation = derive_satcom_observation(
+                &row,
+                map_point.as_ref(),
+                !no_payload_satcom_stdout,
+                &satcom_parse_denylist,
+            );
 
             let _ = sender_stdout.send(SdrEvent::DecodeRow(row.clone()));
             decoded_rows_counter_stdout.fetch_add(1, Ordering::Relaxed);
@@ -2057,6 +2066,7 @@ fn sync_map_point_payload_from_row(point: &mut SdrMapPoint, row: &SdrDecodeRow) 
 fn derive_satcom_observation(
     row: &SdrDecodeRow,
     map_point: Option<&SdrMapPoint>,
+    payload_capture_enabled: bool,
     satcom_parse_denylist: &[String],
 ) -> Option<SdrSatcomObservation> {
     let band = satcom_band_from_freq(row.freq_hz).or_else(|| {
@@ -2088,6 +2098,11 @@ fn derive_satcom_observation(
         freq_hz: row.freq_hz,
         band: band.to_string(),
         encryption_posture: posture,
+        payload_capture_mode: if payload_capture_enabled {
+            "enabled".to_string()
+        } else {
+            "disabled".to_string()
+        },
         has_coordinates,
         identifier_hints,
         payload_parse_state,
@@ -3308,7 +3323,8 @@ mod tests {
     #[test]
     fn satcom_observation_is_emitted_for_sat_protocol_keyword() {
         let row = sample_row(137_100_000, "inmarsat_c", "message mmsi=123456789");
-        let observation = derive_satcom_observation(&row, None, &[]).expect("satcom observation");
+        let observation =
+            derive_satcom_observation(&row, None, true, &[]).expect("satcom observation");
         assert_eq!(observation.band, "Unknown Satcom Band");
         assert_eq!(observation.encryption_posture, "unknown");
         assert_eq!(observation.payload_parse_state, "not_unencrypted");
@@ -3344,8 +3360,8 @@ mod tests {
             message: "message".to_string(),
             raw: "raw".to_string(),
         };
-        let observation =
-            derive_satcom_observation(&row, Some(&map_point), &[]).expect("satcom observation");
+        let observation = derive_satcom_observation(&row, Some(&map_point), true, &[])
+            .expect("satcom observation");
         assert_eq!(observation.band, "L-Band");
         assert!(observation.has_coordinates);
         assert!(observation
@@ -3411,7 +3427,8 @@ mod tests {
             "clear payload sample mmsi=123456789",
         );
         redact_satcom_decode_row(&mut row);
-        let observation = derive_satcom_observation(&row, None, &[]).expect("satcom observation");
+        let observation =
+            derive_satcom_observation(&row, None, true, &[]).expect("satcom observation");
         assert_eq!(observation.payload_parse_state, "redacted");
         assert_eq!(observation.message, "[redacted: satcom payload disabled]");
         assert_eq!(observation.raw, "[redacted: satcom payload disabled]");
@@ -3424,13 +3441,15 @@ mod tests {
             "iridium",
             "clear mmsi=123456789 lat=35.0 lon=-79.0",
         );
-        let observation = derive_satcom_observation(&row, None, &[]).expect("satcom observation");
+        let observation =
+            derive_satcom_observation(&row, None, true, &[]).expect("satcom observation");
         let payload = serde_json::to_value(&observation).expect("serialize satcom observation");
         assert_eq!(
             payload["message"],
             "clear mmsi=123456789 lat=35.0 lon=-79.0"
         );
         assert_eq!(payload["raw"], "clear mmsi=123456789 lat=35.0 lon=-79.0");
+        assert_eq!(payload["payload_capture_mode"], "enabled");
         assert_eq!(payload["payload_parse_state"], "parsed");
         assert_eq!(payload["payload_fields"]["mmsi"], "123456789");
         assert_eq!(payload["payload_fields"]["latitude"], "35.0");
@@ -3444,7 +3463,8 @@ mod tests {
             "inmarsat_c",
             "clear distress mmsi=123456789 imo=1234567 callsign=abc123 lat=35.145 lon=-79.474 snr=12.5dB",
         );
-        let observation = derive_satcom_observation(&row, None, &[]).expect("satcom observation");
+        let observation =
+            derive_satcom_observation(&row, None, true, &[]).expect("satcom observation");
         assert_eq!(observation.encryption_posture, "unencrypted");
         assert_eq!(observation.payload_parse_state, "parsed");
         assert_eq!(
@@ -3480,7 +3500,7 @@ mod tests {
         );
         let denylist = vec!["inmarsat".to_string()];
         let observation =
-            derive_satcom_observation(&row, None, &denylist).expect("satcom observation");
+            derive_satcom_observation(&row, None, true, &denylist).expect("satcom observation");
         assert_eq!(observation.payload_parse_state, "denied_by_policy");
         assert!(observation.payload_fields.is_empty());
     }
@@ -3538,6 +3558,7 @@ mod tests {
             freq_hz: 1_541_000_000,
             band: "L-Band".to_string(),
             encryption_posture: "unknown".to_string(),
+            payload_capture_mode: "enabled".to_string(),
             has_coordinates: false,
             identifier_hints: vec!["mmsi".to_string()],
             payload_parse_state: "not_unencrypted".to_string(),

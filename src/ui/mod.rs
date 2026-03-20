@@ -4687,8 +4687,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_autotune_check.set_active(SdrConfig::default().auto_tune_decoders);
     let sdr_bias_tee_check = CheckButton::with_label("Bias-Tee / Antenna Power");
     sdr_bias_tee_check.set_active(SdrConfig::default().bias_tee_enabled);
-    let sdr_no_payload_satcom_check = CheckButton::with_label("No payload for satcom decoders");
-    sdr_no_payload_satcom_check.set_active(SdrConfig::default().no_payload_satcom);
+    let sdr_no_payload_satcom_check =
+        CheckButton::with_label("Capture Satellite Payload (Unencrypted)");
+    sdr_no_payload_satcom_check
+        .set_active(state.borrow().settings.sdr_satcom_payload_capture_enabled);
     let sdr_satcom_denylist_entry = Entry::new();
     sdr_satcom_denylist_entry.set_width_chars(28);
     sdr_satcom_denylist_entry
@@ -4939,6 +4941,11 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ("freq".to_string(), "Freq".to_string(), 13),
             ("band".to_string(), "Band".to_string(), 14),
             ("posture".to_string(), "Encryption".to_string(), 12),
+            (
+                "payload_capture".to_string(),
+                "Payload Capture".to_string(),
+                14,
+            ),
             ("payload_parse".to_string(), "Payload Parse".to_string(), 14),
             (
                 "payload_fields".to_string(),
@@ -5782,6 +5789,29 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
 
     {
         let state = state.clone();
+        sdr_no_payload_satcom_check.connect_toggled(move |check| {
+            let payload_capture_enabled = check.is_active();
+            let mut s = state.borrow_mut();
+            if s.settings.sdr_satcom_payload_capture_enabled != payload_capture_enabled {
+                s.settings.sdr_satcom_payload_capture_enabled = payload_capture_enabled;
+                s.save_settings_to_disk();
+            }
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                runtime.set_no_payload_satcom(!payload_capture_enabled);
+            }
+            s.push_status(format!(
+                "satellite payload capture {}",
+                if payload_capture_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ));
+        });
+    }
+
+    {
+        let state = state.clone();
         let sdr_center_freq_entry = sdr_center_freq_entry.clone();
         let sdr_bookmark_combo = sdr_bookmark_combo.clone();
         sdr_bookmark_jump_btn.connect_clicked(move |_| {
@@ -6329,12 +6359,17 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ));
             match export_sdr_satcom_artifacts(&file_path, &observations) {
                 Ok((json_path, csv_path, parsed_path, denied_path)) => {
+                    let payload_capture_mode = observations
+                        .first()
+                        .map(|row| row.payload_capture_mode.as_str())
+                        .unwrap_or("unknown");
                     state.borrow_mut().push_status(format!(
-                        "exported SDR satcom artifacts: {}, {}, {}, {}",
+                        "exported SDR satcom artifacts: {}, {}, {}, {} | payload_capture={}",
                         json_path.display(),
                         csv_path.display(),
                         parsed_path.display(),
-                        denied_path.display()
+                        denied_path.display(),
+                        payload_capture_mode
                     ));
                 }
                 Err(err) => {
@@ -6395,12 +6430,17 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ));
             match export_sdr_satcom_artifacts(&file_path, &filtered) {
                 Ok((json_path, csv_path, parsed_path, denied_path)) => {
+                    let payload_capture_mode = filtered
+                        .first()
+                        .map(|row| row.payload_capture_mode.as_str())
+                        .unwrap_or("unknown");
                     state.borrow_mut().push_status(format!(
-                        "exported filtered SDR satcom artifacts: {}, {}, {}, {} | filters={}",
+                        "exported filtered SDR satcom artifacts: {}, {}, {}, {} | payload_capture={} | filters={}",
                         json_path.display(),
                         csv_path.display(),
                         parsed_path.display(),
                         denied_path.display(),
+                        payload_capture_mode,
                         pagination_filter_signature(&filters)
                     ));
                 }
@@ -9804,7 +9844,7 @@ fn sdr_config_from_inputs(
         squelch_dbm,
         auto_tune_decoders: autotune_check.is_active(),
         bias_tee_enabled: bias_tee_check.is_active(),
-        no_payload_satcom: no_payload_satcom_check.is_active(),
+        no_payload_satcom: !no_payload_satcom_check.is_active(),
         satcom_parse_denylist: parse_satcom_parse_denylist_input(
             satcom_parse_denylist_entry.text().as_str(),
         ),
@@ -9855,17 +9895,18 @@ fn write_json_pretty<T: serde::Serialize + ?Sized>(
 
 fn write_sdr_satcom_csv(path: &std::path::Path, rows: &[SdrSatcomObservation]) -> Result<()> {
     let mut out = String::from(
-        "timestamp,decoder,protocol,freq_hz,band,encryption_posture,payload_parse_state,has_coordinates,identifier_hints,payload_fields,summary,message,raw\n",
+        "timestamp,decoder,protocol,freq_hz,band,encryption_posture,payload_capture_mode,payload_parse_state,has_coordinates,identifier_hints,payload_fields,summary,message,raw\n",
     );
     for row in rows {
         out.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             csv_escape(&row.timestamp.to_rfc3339()),
             csv_escape(&row.decoder),
             csv_escape(&row.protocol),
             row.freq_hz,
             csv_escape(&row.band),
             csv_escape(&row.encryption_posture),
+            csv_escape(&row.payload_capture_mode),
             csv_escape(&row.payload_parse_state),
             if row.has_coordinates { "true" } else { "false" },
             csv_escape(&row.identifier_hints.join("|")),
@@ -9963,6 +10004,7 @@ fn sdr_satcom_table_header() -> Grid {
         ("Freq", 13),
         ("Band", 14),
         ("Encryption", 12),
+        ("Payload Capture", 14),
         ("Payload Parse", 14),
         ("Payload Fields", 36),
         ("Coords", 8),
@@ -10015,6 +10057,7 @@ fn sdr_satcom_row_column_value(row: &SdrSatcomObservation, column_id: &str) -> O
         "freq" => Some(row.freq_hz.to_string()),
         "band" => Some(row.band.clone()),
         "posture" => Some(row.encryption_posture.clone()),
+        "payload_capture" => Some(row.payload_capture_mode.clone()),
         "payload_parse" => Some(row.payload_parse_state.clone()),
         "payload_fields" => Some(satcom_payload_fields_text(&row.payload_fields)),
         "coords" => Some(if row.has_coordinates {
@@ -10113,6 +10156,7 @@ fn refresh_sdr_satcom_list(
         line.append(&label_cell(row.freq_hz.to_string(), 13));
         line.append(&label_cell(row.band, 14));
         line.append(&label_cell(row.encryption_posture, 12));
+        line.append(&label_cell(row.payload_capture_mode, 14));
         line.append(&label_cell(row.payload_parse_state, 14));
         line.append(&label_cell(
             satcom_payload_fields_text(&row.payload_fields),
