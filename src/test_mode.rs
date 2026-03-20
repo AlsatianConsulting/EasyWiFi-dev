@@ -91,7 +91,7 @@ pub struct SdrTestOptions {
     pub scan_steps_per_sec: Option<f64>,
     pub log_output: bool,
     pub log_output_dir: PathBuf,
-    pub no_payload_satcom: bool,
+    pub satcom_payload_capture_enabled: bool,
     pub install_missing_deps: bool,
 }
 
@@ -110,7 +110,7 @@ impl Default for SdrTestOptions {
             scan_steps_per_sec: None,
             log_output: false,
             log_output_dir: defaults.log_output_dir,
-            no_payload_satcom: true,
+            satcom_payload_capture_enabled: false,
             install_missing_deps: false,
         }
     }
@@ -253,7 +253,8 @@ pub fn print_sdr_test_usage() {
     println!("  --scan-steps-per-sec <n> Optional scan speed");
     println!("  --log-output            Save decoder logs to --log-dir");
     println!("  --log-dir <path>        Log directory (default temp)");
-    println!("  --allow-satcom-payload  Disable satcom payload redaction");
+    println!("  --satcom-payload-capture Enable satellite payload capture");
+    println!("  --allow-satcom-payload  Alias for --satcom-payload-capture");
     println!("  --list-decoders         Print built-in + plugin decoder IDs and exit");
     println!(
         "  --install-missing-deps  Attempt noninteractive install of missing decoder dependencies"
@@ -480,8 +481,8 @@ fn parse_sdr_test_args(args: &[String]) -> Result<SdrTestOptions> {
                     .ok_or_else(|| anyhow::anyhow!("missing value for --log-dir"))?;
                 options.log_output_dir = PathBuf::from(value);
             }
-            "--allow-satcom-payload" => {
-                options.no_payload_satcom = false;
+            "--satcom-payload-capture" | "--allow-satcom-payload" => {
+                options.satcom_payload_capture_enabled = true;
             }
             "--install-missing-deps" => {
                 options.install_missing_deps = true;
@@ -857,8 +858,8 @@ fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
         );
     }
     println!(
-        "satcom payload redaction: {}",
-        if options.no_payload_satcom {
+        "satcom payload capture: {}",
+        if options.satcom_payload_capture_enabled {
             "enabled"
         } else {
             "disabled"
@@ -887,7 +888,7 @@ fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
     config.hardware = options.hardware;
     config.center_freq_hz = options.center_freq_hz;
     config.sample_rate_hz = options.sample_rate_hz;
-    config.no_payload_satcom = options.no_payload_satcom;
+    config.no_payload_satcom = !options.satcom_payload_capture_enabled;
     config.log_output_enabled = options.log_output;
     config.log_output_dir = options.log_output_dir.clone();
     if let (Some(start), Some(end), Some(step), Some(speed)) = (
@@ -1514,15 +1515,21 @@ mod tests {
     }
 
     #[test]
-    fn sdr_test_defaults_to_no_payload_satcom() {
+    fn sdr_test_defaults_to_satcom_payload_capture_disabled() {
         let options = parse_sdr_test_args(&[]).unwrap();
-        assert!(options.no_payload_satcom);
+        assert!(!options.satcom_payload_capture_enabled);
     }
 
     #[test]
-    fn sdr_test_allow_satcom_payload_disables_redaction_flag() {
+    fn sdr_test_allow_satcom_payload_enables_capture() {
         let options = parse_sdr_test_args(&["--allow-satcom-payload".to_string()]).unwrap();
-        assert!(!options.no_payload_satcom);
+        assert!(options.satcom_payload_capture_enabled);
+    }
+
+    #[test]
+    fn sdr_test_satcom_payload_capture_flag_enables_capture() {
+        let options = parse_sdr_test_args(&["--satcom-payload-capture".to_string()]).unwrap();
+        assert!(options.satcom_payload_capture_enabled);
     }
 
     #[test]

@@ -57,6 +57,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 37. Scanner menu now includes user-saved scan profiles (from the existing editable SDR preset system), so custom range/squelch workflows are accessible directly under `Presets`.
 38. Satellite payload reception is now an explicit persisted enable/disable control; satcom records/exports include `payload_capture_mode` and retain full unencrypted payload text when enabled.
 39. SDR runtime payload control now uses explicit positive `satcom payload capture` semantics end-to-end (UI -> runtime -> observation/log/export path).
+40. SDR test-mode CLI now supports explicit positive payload capture flag (`--satcom-payload-capture`), while retaining backward-compatible `--allow-satcom-payload`.
 
 ### Bluetooth
 
