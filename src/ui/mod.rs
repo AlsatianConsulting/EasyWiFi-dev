@@ -1934,17 +1934,39 @@ fn fetch_csv_from_url(url: &str) -> Result<PathBuf> {
     if trimmed.is_empty() {
         anyhow::bail!("empty URL");
     }
-    let response = ureq::get(trimmed)
-        .call()
-        .with_context(|| format!("failed to fetch {trimmed}"))?;
-    let mut reader = response.into_reader();
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(30))
+        .timeout_write(Duration::from_secs(30))
+        .build();
+    let mut last_error: Option<anyhow::Error> = None;
+    let attempts = 3usize;
     let mut body = String::new();
-    use std::io::Read;
-    reader
-        .read_to_string(&mut body)
-        .with_context(|| format!("failed to read response body from {trimmed}"))?;
+    for _ in 0..attempts {
+        let response = match agent.get(trimmed).call() {
+            Ok(response) => response,
+            Err(err) => {
+                last_error = Some(anyhow::anyhow!("{err}"));
+                continue;
+            }
+        };
+        let mut reader = response.into_reader();
+        body.clear();
+        use std::io::Read;
+        if let Err(err) = reader.read_to_string(&mut body) {
+            last_error = Some(anyhow::anyhow!(err));
+            continue;
+        }
+        if !body.trim().is_empty() {
+            break;
+        }
+        last_error = Some(anyhow::anyhow!("downloaded CSV is empty"));
+    }
     if body.trim().is_empty() {
-        anyhow::bail!("downloaded CSV is empty");
+        if let Some(err) = last_error {
+            return Err(err).with_context(|| format!("failed to fetch {trimmed}"));
+        }
+        anyhow::bail!("failed to fetch {trimmed}");
     }
     let path = std::env::temp_dir().join(format!("wirelessexplorer-fcc-{}.csv", Uuid::new_v4()));
     fs::write(&path, body)
@@ -2381,6 +2403,29 @@ fn merge_sdr_operator_presets(
         existing.push(preset);
         added += 1;
     }
+    added
+}
+
+fn import_sdr_bookmarks(
+    state: &Rc<RefCell<AppState>>,
+    sdr_bookmark_combo: &ComboBoxText,
+    imported: Vec<SdrBookmarkSetting>,
+) -> usize {
+    let mut s = state.borrow_mut();
+    let mut added = 0usize;
+    for bookmark in imported {
+        if s.settings
+            .sdr_bookmarks
+            .iter()
+            .any(|current| current.frequency_hz == bookmark.frequency_hz)
+        {
+            continue;
+        }
+        sdr_bookmark_combo.append(Some(&bookmark.frequency_hz.to_string()), &bookmark.label);
+        s.settings.sdr_bookmarks.push(bookmark);
+        added = added.saturating_add(1);
+    }
+    s.save_settings_to_disk();
     added
 }
 
@@ -3774,6 +3819,10 @@ fn build_menubar(
         Some("FCC Frequency Explorer (CSV -> Bookmarks)"),
         Some("app.preset_fcc_frequency_explorer"),
     );
+    frequency_menu.append(
+        Some("FCC Frequency Explorer (CSV URL -> Bookmarks)"),
+        Some("app.preset_fcc_frequency_url_explorer"),
+    );
     presets_root_menu.append_submenu(Some("Frequencies"), &frequency_menu);
 
     let scanner_menu = gio::Menu::new();
@@ -4264,23 +4313,8 @@ fn build_menubar(
                             return;
                         }
 
-                        let mut s = state.borrow_mut();
-                        let mut added = 0usize;
-                        for bookmark in imported {
-                            if s.settings
-                                .sdr_bookmarks
-                                .iter()
-                                .any(|current| current.frequency_hz == bookmark.frequency_hz)
-                            {
-                                continue;
-                            }
-                            sdr_bookmark_combo
-                                .append(Some(&bookmark.frequency_hz.to_string()), &bookmark.label);
-                            s.settings.sdr_bookmarks.push(bookmark);
-                            added = added.saturating_add(1);
-                        }
-                        s.save_settings_to_disk();
-                        s.push_status(format!(
+                        let added = import_sdr_bookmarks(&state, &sdr_bookmark_combo, imported);
+                        state.borrow_mut().push_status(format!(
                             "FCC frequency explorer loaded from {} [{}] new bookmarks added: {}",
                             csv_path.display(),
                             if area.trim().is_empty() {
@@ -4297,6 +4331,104 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_fcc_frequency_action);
+
+    let presets_fcc_frequency_url_action =
+        gio::SimpleAction::new("preset_fcc_frequency_url_explorer", None);
+    {
+        let window = window.clone();
+        let state = state.clone();
+        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
+        presets_fcc_frequency_url_action.connect_activate(move |_, _| {
+            let dialog = Dialog::builder()
+                .transient_for(&window)
+                .modal(true)
+                .title("FCC Frequency Explorer (CSV URL)")
+                .build();
+            dialog.add_button("Cancel", ResponseType::Cancel);
+            dialog.add_button("Load URL", ResponseType::Accept);
+            let content = dialog.content_area();
+            content.set_spacing(8);
+            let note = Label::new(Some(
+                "Area filter (city/county/state/callsign token). Leave blank for full CSV.",
+            ));
+            note.set_xalign(0.0);
+            let area_entry = Entry::new();
+            area_entry.set_placeholder_text(Some("Example: Raleigh or NC"));
+            let max_label = Label::new(Some("Max bookmarks to import"));
+            max_label.set_xalign(0.0);
+            let max_entry = Entry::new();
+            max_entry.set_text("200");
+            let url_label = Label::new(Some("CSV URL"));
+            url_label.set_xalign(0.0);
+            let url_entry = Entry::new();
+            url_entry.set_placeholder_text(Some("https://.../fcc-assignments.csv"));
+            content.append(&note);
+            content.append(&area_entry);
+            content.append(&max_label);
+            content.append(&max_entry);
+            content.append(&url_label);
+            content.append(&url_entry);
+
+            let state = state.clone();
+            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+            dialog.connect_response(move |d, response| {
+                if response != ResponseType::Accept {
+                    d.close();
+                    return;
+                }
+                let area = area_entry.text().to_string();
+                let max_entries = max_entry
+                    .text()
+                    .parse::<usize>()
+                    .unwrap_or(200)
+                    .clamp(1, 5000);
+                let url = url_entry.text().to_string();
+                d.close();
+
+                let csv_path = match fetch_csv_from_url(&url) {
+                    Ok(path) => path,
+                    Err(err) => {
+                        state
+                            .borrow_mut()
+                            .push_status(format!("FCC frequency explorer URL fetch failed: {err}"));
+                        return;
+                    }
+                };
+                let imported =
+                    match build_fcc_frequency_bookmarks_from_csv(&csv_path, &area, max_entries) {
+                        Ok(rows) => rows,
+                        Err(err) => {
+                            state.borrow_mut().push_status(format!(
+                                "FCC frequency explorer import failed: {err}"
+                            ));
+                            let _ = fs::remove_file(&csv_path);
+                            return;
+                        }
+                    };
+                if imported.is_empty() {
+                    state.borrow_mut().push_status(format!(
+                        "FCC frequency explorer: no matching frequencies found in {}",
+                        csv_path.display()
+                    ));
+                    let _ = fs::remove_file(&csv_path);
+                    return;
+                }
+                let added = import_sdr_bookmarks(&state, &sdr_bookmark_combo, imported);
+                state.borrow_mut().push_status(format!(
+                    "FCC frequency explorer URL loaded [{}] new bookmarks added: {}",
+                    if area.trim().is_empty() {
+                        "all rows".to_string()
+                    } else {
+                        area.trim().to_string()
+                    },
+                    added
+                ));
+                let _ = fs::remove_file(csv_path);
+            });
+            dialog.present();
+        });
+    }
+    app.add_action(&presets_fcc_frequency_url_action);
 
     let file_menu = gio::Menu::new();
     file_menu.append(
