@@ -103,6 +103,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 83. `Presets -> Frequencies` now includes `Import SDR Bookmarks JSON URL`, using existing retry/timeout fetch guardrails for remote bookmark ingest.
 84. SDR bookmark import actions now auto-detect CSV vs JSON on unknown/mismatched file extensions, reducing operator errors during manual and URL-based imports.
 85. GSM/LTE built-in decoder command resolution now injects explicit center-frequency args and non-RTL Soapy driver args, improving cross-hardware launch compatibility.
+86. ADS-B built-in command resolution now recognizes `dump1090-fa` as an additional RTL fallback, improving out-of-box decoder availability on feeder-focused installs.
 
 ### Bluetooth
 

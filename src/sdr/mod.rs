@@ -1342,6 +1342,8 @@ fn resolve_decoder_command_line(
                 Some("dump1090 --net --quiet".to_string())
             } else if hardware == SdrHardware::RtlSdr && command_exists("dump1090-mutability") {
                 Some("dump1090-mutability --net --quiet".to_string())
+            } else if hardware == SdrHardware::RtlSdr && command_exists("dump1090-fa") {
+                Some("dump1090-fa --net --quiet".to_string())
             } else if command_exists("readsb") {
                 if hardware == SdrHardware::RtlSdr {
                     Some("readsb --quiet --net --device-type rtlsdr".to_string())
@@ -3963,6 +3965,23 @@ mod tests {
         );
         if let Some(command) = command {
             assert!(command.contains("non-rtl acars pipeline active"));
+        }
+    }
+
+    #[test]
+    fn adsb_command_supports_dump1090_fa_fallback_when_primary_tools_absent() {
+        let command = resolve_decoder_command_line(
+            &SdrDecoderKind::Adsb,
+            1_090_000_000,
+            2_400_000,
+            SdrHardware::RtlSdr,
+            &[],
+        );
+        if command_exists("dump1090-fa")
+            && !command_exists("dump1090")
+            && !command_exists("dump1090-mutability")
+        {
+            assert_eq!(command.as_deref(), Some("dump1090-fa --net --quiet"));
         }
     }
 

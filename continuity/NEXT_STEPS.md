@@ -70,6 +70,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 29. Validate `Import SDR Bookmarks JSON URL` against stable/unstable endpoints and confirm retry/error messaging quality.
 30. Validate parser auto-detection when bookmark import file extensions do not match actual CSV/JSON content.
 31. Validate `gsm_lte` launch behavior across RTL-SDR/HackRF/bladeRF/B210 and verify command-line args include frequency + correct Soapy driver on non-RTL devices.
+32. Validate ADS-B resolver fallback order on RTL-only installs (`dump1090`, `dump1090-mutability`, `dump1090-fa`, `readsb`) and confirm status messaging clarity.
 
 ## Priority 4: requested SDR decoder backlog
 
