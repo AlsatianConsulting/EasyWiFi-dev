@@ -1534,6 +1534,31 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
             ],
         },
         ScannerPresetGroup {
+            label: "Public Safety Scans".to_string(),
+            entries: vec![
+                ScannerPresetEntry {
+                    id: "scan_p25_700_769_775".to_string(),
+                    label: "P25 700 MHz (769-775)".to_string(),
+                    start_hz: 769_000_000,
+                    end_hz: 775_000_000,
+                    sample_rate_hz: None,
+                    step_hz: 12_500,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -78.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_p25_800_851_869".to_string(),
+                    label: "P25 800 MHz (851-869)".to_string(),
+                    start_hz: 851_000_000,
+                    end_hz: 869_000_000,
+                    sample_rate_hz: None,
+                    step_hz: 12_500,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -78.0,
+                },
+            ],
+        },
+        ScannerPresetGroup {
             label: "IoT / ISM Scans".to_string(),
             entries: vec![
                 ScannerPresetEntry {
@@ -17858,6 +17883,12 @@ mod tests {
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_drone_rid_5725_5850"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id == "scan_p25_700_769_775"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id == "scan_p25_800_851_869"));
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_dect_1880_1900"));
