@@ -9,8 +9,9 @@ use crate::model::{
 };
 use crate::oui::OuiDatabase;
 use crate::sdr::{
-    self, SdrConfig, SdrDecodeRow, SdrDecoderKind, SdrDecoderTelemetry, SdrDependencyStatus,
-    SdrEvent, SdrHardware, SdrMapPoint, SdrRuntime, SdrSatcomObservation, SdrSpectrumFrame,
+    self, SdrAircraftCorrelation, SdrConfig, SdrDecodeRow, SdrDecoderKind, SdrDecoderTelemetry,
+    SdrDependencyStatus, SdrEvent, SdrHardware, SdrMapPoint, SdrRuntime, SdrSatcomObservation,
+    SdrSpectrumFrame,
 };
 use crate::settings::{
     default_ap_table_layout, default_assoc_client_table_layout, default_bluetooth_table_layout,
@@ -6297,6 +6298,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let sdr_export_map_btn = Button::with_label("Export Map JSON");
     let sdr_export_satcom_btn = Button::with_label("Export Satcom JSON");
     let sdr_export_satcom_filtered_btn = Button::with_label("Export Satcom (Filtered)");
+    let sdr_export_aircraft_correlation_btn = Button::with_label("Export Aircraft Correlation");
     let sdr_satcom_filter_all_btn = Button::with_label("Satcom Filter: All");
     let sdr_satcom_filter_parsed_btn = Button::with_label("Satcom Filter: Parsed");
     let sdr_satcom_filter_denied_btn = Button::with_label("Satcom Filter: Denied");
@@ -6423,6 +6425,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&sdr_export_map_btn, 9, 7, 1, 1);
     sdr_controls.attach(&sdr_export_satcom_btn, 10, 7, 1, 1);
     sdr_controls.attach(&sdr_export_satcom_filtered_btn, 9, 8, 2, 1);
+    sdr_controls.attach(&sdr_export_aircraft_correlation_btn, 9, 14, 2, 1);
     sdr_controls.attach(&sdr_center_geiger_rssi_label, 0, 8, 3, 1);
     sdr_controls.attach(&sdr_center_geiger_tone_label, 3, 8, 3, 1);
     sdr_controls.attach(&sdr_center_geiger_progress, 6, 8, 5, 1);
@@ -8100,6 +8103,54 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                         .borrow_mut()
                         .push_status(format!("SDR satcom filtered export failed: {err}"));
                 }
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_model = sdr_model.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        sdr_export_aircraft_correlation_btn.connect_clicked(move |_| {
+            let correlations = {
+                let model = sdr_model.borrow();
+                sdr::correlate_aircraft(&model.decode_rows)
+            };
+            if correlations.is_empty() {
+                state.borrow_mut().push_status(
+                    "SDR aircraft correlation export skipped: no ADS-B/ACARS correlated rows yet"
+                        .to_string(),
+                );
+                return;
+            }
+
+            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
+            let output_dir = if output_dir_text.is_empty() {
+                SdrConfig::default().log_output_dir
+            } else {
+                PathBuf::from(output_dir_text)
+            };
+            if let Err(err) = fs::create_dir_all(&output_dir) {
+                state.borrow_mut().push_status(format!(
+                    "SDR aircraft correlation export failed (create dir {}): {err}",
+                    output_dir.display()
+                ));
+                return;
+            }
+
+            let json_path = output_dir.join(format!(
+                "sdr_aircraft_correlation_{}.json",
+                Utc::now().format("%Y%m%dT%H%M%SZ")
+            ));
+            match export_sdr_aircraft_correlation_artifacts(&json_path, &correlations) {
+                Ok((json_path, csv_path)) => state.borrow_mut().push_status(format!(
+                    "exported SDR aircraft correlation artifacts: {}, {}",
+                    json_path.display(),
+                    csv_path.display()
+                )),
+                Err(err) => state
+                    .borrow_mut()
+                    .push_status(format!("SDR aircraft correlation export failed: {err}")),
             }
         });
     }
@@ -11587,6 +11638,49 @@ fn write_sdr_satcom_csv(path: &std::path::Path, rows: &[SdrSatcomObservation]) -
     }
     fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
     Ok(())
+}
+
+fn write_sdr_aircraft_correlation_csv(
+    path: &std::path::Path,
+    rows: &[SdrAircraftCorrelation],
+) -> Result<()> {
+    let mut out = String::from(
+        "key,icao_hex,callsign,adsb_rows,acars_rows,total_rows,first_seen,last_seen,frequencies_hz,decoders\n",
+    );
+    for row in rows {
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{}\n",
+            csv_escape(&row.key),
+            csv_escape(row.icao_hex.as_deref().unwrap_or("")),
+            csv_escape(row.callsign.as_deref().unwrap_or("")),
+            row.adsb_rows,
+            row.acars_rows,
+            row.total_rows,
+            csv_escape(&row.first_seen.to_rfc3339()),
+            csv_escape(&row.last_seen.to_rfc3339()),
+            csv_escape(
+                &row.frequencies_hz
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("|"),
+            ),
+            csv_escape(&row.decoders.join("|")),
+        ));
+    }
+    fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+fn export_sdr_aircraft_correlation_artifacts(
+    primary_json_path: &std::path::Path,
+    rows: &[SdrAircraftCorrelation],
+) -> Result<(PathBuf, PathBuf)> {
+    write_json_pretty(primary_json_path, rows)?;
+    let mut csv_path = primary_json_path.to_path_buf();
+    csv_path.set_extension("csv");
+    write_sdr_aircraft_correlation_csv(&csv_path, rows)?;
+    Ok((primary_json_path.to_path_buf(), csv_path))
 }
 
 fn export_sdr_satcom_artifacts(
@@ -18404,6 +18498,34 @@ mod tests {
         assert!(content.contains("fcc_imported"));
         assert!(content.contains("manual_or_default"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn export_sdr_aircraft_correlation_artifacts_writes_json_and_csv() {
+        let path = std::env::temp_dir().join(format!("sdr-aircraft-{}.json", Uuid::new_v4()));
+        let rows = vec![SdrAircraftCorrelation {
+            key: "icao:ABC123".to_string(),
+            icao_hex: Some("ABC123".to_string()),
+            callsign: Some("UAL123".to_string()),
+            adsb_rows: 3,
+            acars_rows: 1,
+            total_rows: 4,
+            first_seen: Utc::now(),
+            last_seen: Utc::now(),
+            frequencies_hz: vec![131_550_000, 1_090_000_000],
+            decoders: vec!["ACARS".to_string(), "ADS-B".to_string()],
+        }];
+
+        let (json_path, csv_path) =
+            export_sdr_aircraft_correlation_artifacts(&path, &rows).expect("export artifacts");
+        assert!(json_path.exists());
+        assert!(csv_path.exists());
+        let csv = std::fs::read_to_string(csv_path).expect("read csv");
+        assert!(csv.contains("key,icao_hex,callsign,adsb_rows,acars_rows,total_rows"));
+        assert!(csv.contains("icao:ABC123"));
+        assert!(csv.contains("131550000|1090000000"));
+        let _ = std::fs::remove_file(json_path);
+        let _ = std::fs::remove_file(path.with_extension("csv"));
     }
 
     #[test]

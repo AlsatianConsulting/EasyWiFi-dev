@@ -4,7 +4,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use rand::Rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 #[cfg(target_family = "unix")]
@@ -123,6 +123,20 @@ pub struct SdrDecodeRow {
     pub protocol: String,
     pub message: String,
     pub raw: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SdrAircraftCorrelation {
+    pub key: String,
+    pub icao_hex: Option<String>,
+    pub callsign: Option<String>,
+    pub adsb_rows: u64,
+    pub acars_rows: u64,
+    pub total_rows: u64,
+    pub first_seen: DateTime<Utc>,
+    pub last_seen: DateTime<Utc>,
+    pub frequencies_hz: Vec<u64>,
+    pub decoders: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2435,6 +2449,248 @@ fn decoder_autotune_for_plugin_id(id: &str) -> Option<u64> {
     }
 }
 
+#[derive(Debug, Clone)]
+struct AircraftIdentity {
+    icao_hex: Option<String>,
+    callsign: Option<String>,
+}
+
+impl AircraftIdentity {
+    fn tokens(&self) -> Vec<String> {
+        let mut tokens = Vec::new();
+        if let Some(icao) = &self.icao_hex {
+            tokens.push(format!("icao:{icao}"));
+        }
+        if let Some(callsign) = &self.callsign {
+            tokens.push(format!("callsign:{callsign}"));
+        }
+        tokens
+    }
+
+    fn primary_key(&self) -> String {
+        if let Some(icao) = &self.icao_hex {
+            return format!("icao:{icao}");
+        }
+        if let Some(callsign) = &self.callsign {
+            return format!("callsign:{callsign}");
+        }
+        "unknown".to_string()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AircraftAggregate {
+    key: String,
+    icao_hex: Option<String>,
+    callsign: Option<String>,
+    adsb_rows: u64,
+    acars_rows: u64,
+    total_rows: u64,
+    first_seen: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
+    frequencies_hz: BTreeSet<u64>,
+    decoders: BTreeSet<String>,
+}
+
+impl AircraftAggregate {
+    fn from_row(row: &SdrDecodeRow, identity: &AircraftIdentity) -> Self {
+        let mut frequencies_hz = BTreeSet::new();
+        frequencies_hz.insert(row.freq_hz);
+        let mut decoders = BTreeSet::new();
+        decoders.insert(row.decoder.clone());
+        let (adsb_rows, acars_rows) = row_aircraft_source_counts(row);
+        Self {
+            key: identity.primary_key(),
+            icao_hex: identity.icao_hex.clone(),
+            callsign: identity.callsign.clone(),
+            adsb_rows,
+            acars_rows,
+            total_rows: 1,
+            first_seen: row.timestamp,
+            last_seen: row.timestamp,
+            frequencies_hz,
+            decoders,
+        }
+    }
+
+    fn observe_row(&mut self, row: &SdrDecodeRow, identity: &AircraftIdentity) {
+        if self.icao_hex.is_none() && identity.icao_hex.is_some() {
+            self.icao_hex = identity.icao_hex.clone();
+        }
+        if self.callsign.is_none() && identity.callsign.is_some() {
+            self.callsign = identity.callsign.clone();
+        }
+        if let Some(icao) = &self.icao_hex {
+            self.key = format!("icao:{icao}");
+        } else if let Some(callsign) = &self.callsign {
+            self.key = format!("callsign:{callsign}");
+        }
+
+        let (adsb_rows, acars_rows) = row_aircraft_source_counts(row);
+        self.adsb_rows += adsb_rows;
+        self.acars_rows += acars_rows;
+        self.total_rows += 1;
+        if row.timestamp < self.first_seen {
+            self.first_seen = row.timestamp;
+        }
+        if row.timestamp > self.last_seen {
+            self.last_seen = row.timestamp;
+        }
+        self.frequencies_hz.insert(row.freq_hz);
+        self.decoders.insert(row.decoder.clone());
+    }
+
+    fn merge_from(&mut self, other: Self) {
+        if self.icao_hex.is_none() && other.icao_hex.is_some() {
+            self.icao_hex = other.icao_hex;
+        }
+        if self.callsign.is_none() && other.callsign.is_some() {
+            self.callsign = other.callsign;
+        }
+        if let Some(icao) = &self.icao_hex {
+            self.key = format!("icao:{icao}");
+        } else if let Some(callsign) = &self.callsign {
+            self.key = format!("callsign:{callsign}");
+        }
+        self.adsb_rows += other.adsb_rows;
+        self.acars_rows += other.acars_rows;
+        self.total_rows += other.total_rows;
+        if other.first_seen < self.first_seen {
+            self.first_seen = other.first_seen;
+        }
+        if other.last_seen > self.last_seen {
+            self.last_seen = other.last_seen;
+        }
+        self.frequencies_hz.extend(other.frequencies_hz);
+        self.decoders.extend(other.decoders);
+    }
+
+    fn into_public(self) -> SdrAircraftCorrelation {
+        SdrAircraftCorrelation {
+            key: self.key,
+            icao_hex: self.icao_hex,
+            callsign: self.callsign,
+            adsb_rows: self.adsb_rows,
+            acars_rows: self.acars_rows,
+            total_rows: self.total_rows,
+            first_seen: self.first_seen,
+            last_seen: self.last_seen,
+            frequencies_hz: self.frequencies_hz.into_iter().collect(),
+            decoders: self.decoders.into_iter().collect(),
+        }
+    }
+}
+
+fn row_aircraft_source_counts(row: &SdrDecodeRow) -> (u64, u64) {
+    let text = format!(
+        "{} {}",
+        row.protocol.to_ascii_lowercase(),
+        row.decoder.to_ascii_lowercase()
+    );
+    let adsb = text.contains("adsb") || text.contains("ads-b") || text.contains("1090");
+    let acars = text.contains("acars");
+    (u64::from(adsb), u64::from(acars))
+}
+
+fn extract_aircraft_identity(row: &SdrDecodeRow) -> Option<AircraftIdentity> {
+    let message = format!("{} {}", row.message, row.raw);
+    let icao = Regex::new(r"(?i)\b(?:icao(?:24)?|hex)\s*[:=]?\s*([0-9a-f]{6})\b")
+        .ok()
+        .and_then(|re| re.captures(&message))
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_ascii_uppercase());
+    let callsign = Regex::new(r"(?i)\b(?:callsign|flight|flt|cs)\s*[:=]?\s*([a-z0-9\-]{2,12})\b")
+        .ok()
+        .and_then(|re| re.captures(&message))
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_ascii_uppercase());
+    if icao.is_none() && callsign.is_none() {
+        return None;
+    }
+    Some(AircraftIdentity {
+        icao_hex: icao,
+        callsign,
+    })
+}
+
+pub fn correlate_aircraft(rows: &[SdrDecodeRow]) -> Vec<SdrAircraftCorrelation> {
+    let mut token_to_group: HashMap<String, usize> = HashMap::new();
+    let mut groups: HashMap<usize, AircraftAggregate> = HashMap::new();
+    let mut next_group_id: usize = 1;
+
+    for row in rows {
+        let identity = match extract_aircraft_identity(row) {
+            Some(identity) => identity,
+            None => continue,
+        };
+        let (adsb_rows, acars_rows) = row_aircraft_source_counts(row);
+        if adsb_rows == 0 && acars_rows == 0 {
+            continue;
+        }
+        let tokens = identity.tokens();
+        if tokens.is_empty() {
+            continue;
+        }
+
+        let mut matched_group_ids = tokens
+            .iter()
+            .filter_map(|token| token_to_group.get(token).copied())
+            .collect::<Vec<_>>();
+        matched_group_ids.sort_unstable();
+        matched_group_ids.dedup();
+
+        let target_group_id = if let Some(existing) = matched_group_ids.first().copied() {
+            existing
+        } else {
+            let id = next_group_id;
+            next_group_id += 1;
+            groups.insert(id, AircraftAggregate::from_row(row, &identity));
+            for token in &tokens {
+                token_to_group.insert(token.clone(), id);
+            }
+            continue;
+        };
+
+        for merge_id in matched_group_ids.into_iter().skip(1) {
+            if merge_id == target_group_id {
+                continue;
+            }
+            if let Some(other) = groups.remove(&merge_id) {
+                if let Some(target) = groups.get_mut(&target_group_id) {
+                    target.merge_from(other);
+                }
+                for value in token_to_group.values_mut() {
+                    if *value == merge_id {
+                        *value = target_group_id;
+                    }
+                }
+            }
+        }
+
+        if let Some(target) = groups.get_mut(&target_group_id) {
+            target.observe_row(row, &identity);
+        } else {
+            groups.insert(target_group_id, AircraftAggregate::from_row(row, &identity));
+        }
+        for token in &tokens {
+            token_to_group.insert(token.clone(), target_group_id);
+        }
+    }
+
+    let mut out = groups
+        .into_values()
+        .map(AircraftAggregate::into_public)
+        .collect::<Vec<_>>();
+    out.sort_by(|left, right| {
+        right
+            .total_rows
+            .cmp(&left.total_rows)
+            .then_with(|| right.last_seen.cmp(&left.last_seen))
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    out
+}
+
 fn normalize_scan_range(start_hz: u64, end_hz: u64, step_hz: u64) -> (u64, u64, u64) {
     let start = start_hz.max(100_000);
     let end = end_hz.max(start);
@@ -3672,6 +3928,49 @@ mod tests {
         if let Some(command) = command {
             assert!(command.contains("non-rtl acars pipeline active"));
         }
+    }
+
+    #[test]
+    fn correlate_aircraft_merges_adsb_and_acars_by_callsign_and_icao() {
+        let rows = vec![
+            SdrDecodeRow {
+                timestamp: Utc::now(),
+                decoder: "ADS-B".to_string(),
+                freq_hz: 1_090_000_000,
+                protocol: "adsb".to_string(),
+                message: "icao=abc123 callsign=UAL123".to_string(),
+                raw: "icao=abc123 callsign=UAL123".to_string(),
+            },
+            SdrDecodeRow {
+                timestamp: Utc::now(),
+                decoder: "ACARS".to_string(),
+                freq_hz: 131_550_000,
+                protocol: "acars".to_string(),
+                message: "flight=UAL123 msg=hello".to_string(),
+                raw: "flight=UAL123 msg=hello".to_string(),
+            },
+        ];
+
+        let correlations = correlate_aircraft(&rows);
+        assert_eq!(correlations.len(), 1);
+        let item = &correlations[0];
+        assert_eq!(item.icao_hex.as_deref(), Some("ABC123"));
+        assert_eq!(item.callsign.as_deref(), Some("UAL123"));
+        assert_eq!(item.adsb_rows, 1);
+        assert_eq!(item.acars_rows, 1);
+        assert_eq!(item.total_rows, 2);
+        assert!(item.frequencies_hz.contains(&1_090_000_000));
+        assert!(item.frequencies_hz.contains(&131_550_000));
+    }
+
+    #[test]
+    fn correlate_aircraft_ignores_non_aircraft_protocols() {
+        let rows = vec![sample_row(
+            162_025_000,
+            "ais",
+            "icao=abc123 callsign=UAL123 lat=35.0 lon=-79.0",
+        )];
+        assert!(correlate_aircraft(&rows).is_empty());
     }
 
     #[test]
