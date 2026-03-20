@@ -2690,6 +2690,36 @@ fn export_sdr_bookmarks_csv(path: &PathBuf, bookmarks: &[(String, u64)]) -> Resu
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+struct SdrBookmarkExportRow {
+    label: String,
+    frequency_hz: u64,
+    frequency_mhz: f64,
+    source: String,
+}
+
+fn export_sdr_bookmarks_json(path: &PathBuf, bookmarks: &[(String, u64)]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create bookmark export dir {}", parent.display())
+        })?;
+    }
+    let rows = bookmarks
+        .iter()
+        .map(|(label, freq_hz)| SdrBookmarkExportRow {
+            label: label.clone(),
+            frequency_hz: *freq_hz,
+            frequency_mhz: *freq_hz as f64 / 1_000_000.0,
+            source: if label.trim_start().starts_with("FCC |") {
+                "fcc_imported".to_string()
+            } else {
+                "manual_or_default".to_string()
+            },
+        })
+        .collect::<Vec<_>>();
+    write_json_pretty(path, &rows)
+}
+
 fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
     let mut reader = csv::Reader::from_path(path)
         .with_context(|| format!("failed to open bookmark CSV {}", path.display()))?;
@@ -4957,23 +4987,36 @@ fn build_menubar(
         let sdr_bookmarks = widgets.sdr_bookmarks.clone();
         presets_export_sdr_bookmarks_csv_action.connect_activate(move |_, _| {
             let bookmarks = sdr_bookmarks.borrow().clone();
-            let export_path = {
+            let (csv_export_path, json_export_path) = {
                 let s = state.borrow();
-                s.exporter
-                    .paths
-                    .session_dir
-                    .join("csv")
-                    .join("sdr_bookmarks.csv")
+                (
+                    s.exporter
+                        .paths
+                        .session_dir
+                        .join("csv")
+                        .join("sdr_bookmarks.csv"),
+                    s.exporter
+                        .paths
+                        .session_dir
+                        .join("json")
+                        .join("sdr_bookmarks.json"),
+                )
             };
-            let result = export_sdr_bookmarks_csv(&export_path, &bookmarks);
+            let csv_result = export_sdr_bookmarks_csv(&csv_export_path, &bookmarks);
+            let json_result = export_sdr_bookmarks_json(&json_export_path, &bookmarks);
             let mut s = state.borrow_mut();
-            match result {
-                Ok(()) => s.push_status(format!(
-                    "exported SDR bookmarks CSV ({} rows): {}",
+            match (csv_result, json_result) {
+                (Ok(()), Ok(())) => s.push_status(format!(
+                    "exported SDR bookmarks artifacts ({} rows): {}, {}",
                     bookmarks.len(),
-                    export_path.display()
+                    csv_export_path.display(),
+                    json_export_path.display()
                 )),
-                Err(err) => s.push_status(format!("SDR bookmark export failed: {err}")),
+                (csv, json) => s.push_status(format!(
+                    "SDR bookmark export incomplete: csv_ok={} json_ok={}",
+                    csv.is_ok(),
+                    json.is_ok()
+                )),
             }
         });
     }
@@ -19327,6 +19370,20 @@ mod tests {
         assert!(content.contains("label,frequency_hz,frequency_mhz,source"));
         assert!(content.contains("fcc_imported"));
         assert!(content.contains("manual_or_default"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn export_sdr_bookmarks_json_writes_rows_and_source_tag() {
+        let path = std::env::temp_dir().join(format!("sdr-bookmarks-{}.json", Uuid::new_v4()));
+        let rows = vec![
+            ("FCC | Public Safety | WQAB123".to_string(), 155_340_000u64),
+            ("APRS 144.390".to_string(), 144_390_000u64),
+        ];
+        export_sdr_bookmarks_json(&path, &rows).expect("export json");
+        let content = std::fs::read_to_string(&path).expect("read json");
+        assert!(content.contains("\"source\": \"fcc_imported\""));
+        assert!(content.contains("\"source\": \"manual_or_default\""));
         let _ = std::fs::remove_file(path);
     }
 

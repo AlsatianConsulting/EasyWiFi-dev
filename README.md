@@ -39,6 +39,7 @@ This repository contains an MVP implementation with:
   - FCC explorers support area token filtering (city/county/state/callsign) and optional signal/service-type filtering
   - FCC area explorers attempt decoder auto-selection from detected signal/service type when possible (for example public safety -> P25, maritime -> AIS)
   - FCC frequency imports now report added vs duplicate-skipped counts and keep bookmark data normalized/sorted
+  - Bookmark export now writes both CSV and JSON artifacts
   - One-click operator preset profiles for common bands/workflows
   - Save Current as Preset stores user-defined SDR presets in app settings
   - Rename/Delete/Move controls for saved user presets
