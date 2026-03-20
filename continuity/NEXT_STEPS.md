@@ -55,6 +55,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 14. Validate `FCC Area Explorer (CSV...)` workflow with real FCC assignment exports for multiple cities/states and tune parser header mappings where needed.
 15. Validate `FCC Frequency Explorer` bookmark import with large FCC assignment CSVs (label quality, dedup behavior, and SDR bookmark UI refresh persistence).
 16. Validate `FCC Area Explorer (CSV URL)` on multiple public FCC-compatible CSV endpoints and harden retry/error messaging for unstable upstream hosts.
+17. Validate `FCC Frequency Explorer (CSV URL -> Bookmarks)` with large regional exports and ensure bookmark label readability for long station/service strings.
 
 ## Priority 4: requested SDR decoder backlog
 
