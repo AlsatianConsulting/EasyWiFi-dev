@@ -82,6 +82,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 62. `Presets -> Frequencies` now includes a one-click `Remove FCC Bookmarks` action that prunes FCC-imported bookmark entries from runtime and persisted settings.
 63. `Scan Around Bookmark` now preserves the operator’s current scan speed and squelch settings instead of forcing fixed defaults.
 64. `Presets -> Frequencies` now includes `Export SDR Bookmarks CSV`, emitting labeled bookmark inventory with source tagging (`fcc_imported` vs `manual_or_default`).
+65. SDR controls now include `Export Aircraft Correlation`, which derives ADS-B/ACARS correlations (ICAO/callsign merged identity) from decode rows and exports JSON+CSV artifacts for downstream analysis.
 
 ### Bluetooth
 
@@ -134,7 +135,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 1. Multiple SDR devices running simultaneously in one session.
 2. Real wideband SDR spectrum scanning workflow matching the requested HAVOC/gqrx-style interaction level.
 3. Meshtastic / Meshcore decoding.
-4. ACARS/ADS-B aircraft correlation.
+4. ACARS/ADS-B aircraft correlation remains partial (artifact export implemented; live RF validation pending).
 5. GSMTAP export.
 6. Full GSM/LTE/CDMA metadata tooling integration.
 7. All requested SDR decoder families and mapping workflows.

@@ -50,12 +50,13 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 9. Validate map/satcom `message` + `raw` side-by-side logging in live decoder runs.
 10. Validate corrected ACARS runtime integration live.
 11. Validate expanded non-RTL AIS/ACARS fallback command paths on HackRF/bladeRF/B210 hosts.
-12. Validate ADS-B live and correlate with ACARS by aircraft identifier when possible.
+12. Validate ADS-B live and correlate with ACARS by aircraft identifier when possible (artifact workflow now implemented; live validation still pending).
 13. Validate newly added non-RTL POCSAG/DECT fallback chain quality and tune audio/FM pipeline parameters per hardware.
 14. Validate `FCC Area Explorer (CSV...)` workflow with real FCC assignment exports for multiple cities/states and tune parser header mappings where needed.
 15. Validate `FCC Frequency Explorer` bookmark import with large FCC assignment CSVs (label quality, dedup behavior, and SDR bookmark UI refresh persistence).
 16. Validate `FCC Area Explorer (CSV URL)` on multiple public FCC-compatible CSV endpoints and harden retry/error messaging for unstable upstream hosts.
 17. Validate `FCC Frequency Explorer (CSV URL -> Bookmarks)` with large regional exports and ensure bookmark label readability for long station/service strings.
+18. Validate `Export Aircraft Correlation` artifacts (JSON/CSV) during mixed ADS-B + ACARS live runs and confirm merged identity quality (`icao_hex`/`callsign`).
 
 ## Priority 4: requested SDR decoder backlog
 
