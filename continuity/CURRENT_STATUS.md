@@ -94,6 +94,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 74. SDR controls now include `Export Decode (Filtered)`, exporting only decode rows matching active decode-table column filters as JSON+CSV artifacts.
 75. `Presets -> Frequencies` now includes `Import SDR Bookmarks CSV URL`, allowing direct bookmark imports from remote CSV sources via existing retry/timeout fetch behavior.
 76. Channel status pane now includes a live `Runtime Activity` heartbeat line that updates once per second with current Wi-Fi/Bluetooth/SDR runtime states.
+77. Time display now defaults to local time across UI tables/status timestamps, with a Settings toggle to switch to Zulu (`UTC`) display mode.
 
 ### Bluetooth
 

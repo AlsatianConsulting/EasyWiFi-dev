@@ -67,6 +67,7 @@ This repository contains an MVP implementation with:
     - `<decoder_id>` (global built-in override)
 - Settings via File menu
   - Interface/channel mode settings (multi-adapter, hop/lock)
+  - Time display mode setting (Local default, optional Zulu/UTC)
   - GPS settings (`Interface`, `GPSD`, `Stream` TCP/UDP NMEA, `Static`)
   - View toggles include status/details/device panes, table column filters, and AP inline Channel Usage
 - Layout via File menu

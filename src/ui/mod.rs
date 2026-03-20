@@ -22,7 +22,7 @@ use crate::settings::{
 };
 use crate::storage::StorageEngine;
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{Local, Utc};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use gtk::cairo;
 use gtk::gdk;
@@ -100,6 +100,34 @@ const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 430;
 const DEFAULT_SDR_ROOT_POSITION: i32 = 420;
 const FAKE_GPS_LATITUDE: f64 = 35.145_395_7;
 const FAKE_GPS_LONGITUDE: f64 = -79.474_718_1;
+static USE_ZULU_TIME_DISPLAY: AtomicBool = AtomicBool::new(false);
+
+fn set_use_zulu_time_display(enabled: bool) {
+    USE_ZULU_TIME_DISPLAY.store(enabled, Ordering::Relaxed);
+}
+
+fn using_zulu_time_display() -> bool {
+    USE_ZULU_TIME_DISPLAY.load(Ordering::Relaxed)
+}
+
+fn format_display_timestamp(value: chrono::DateTime<Utc>) -> String {
+    if using_zulu_time_display() {
+        value.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+    } else {
+        value
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S %Z")
+            .to_string()
+    }
+}
+
+fn format_display_time_hms(value: chrono::DateTime<Utc>) -> String {
+    if using_zulu_time_display() {
+        value.format("%H:%M:%SZ").to_string()
+    } else {
+        value.with_timezone(&Local).format("%H:%M:%S").to_string()
+    }
+}
 
 fn static_output_gps_coordinates() -> (f64, f64) {
     (FAKE_GPS_LATITUDE, FAKE_GPS_LONGITUDE)
@@ -293,7 +321,7 @@ impl AppState {
         };
         let last_fix = status
             .last_fix_timestamp
-            .map(|ts| ts.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .map(format_display_timestamp)
             .unwrap_or_else(|| "No fix".to_string());
 
         format!(
@@ -3374,6 +3402,7 @@ fn build_ui(app: &Application) -> Result<()> {
     if !TABLE_PAGE_SIZE_OPTIONS.contains(&settings.default_rows_per_page) {
         settings.default_rows_per_page = DEFAULT_TABLE_PAGE_SIZE;
     }
+    set_use_zulu_time_display(settings.use_zulu_time);
     let watchlist_css_provider = install_ui_css();
     apply_watchlist_css(&watchlist_css_provider, &settings.watchlists);
 
@@ -10672,8 +10701,8 @@ fn bind_poll_loop(
         if last_runtime_activity_second.get() != now_second {
             last_runtime_activity_second.set(now_second);
             runtime_activity_label.set_text(&format!(
-                "tick {} UTC | wifi={} bt={} sdr={}",
-                now.format("%H:%M:%S"),
+                "tick {} | wifi={} bt={} sdr={}",
+                format_display_time_hms(now),
                 if wifi_running { "on" } else { "off" },
                 if bluetooth_running { "on" } else { "off" },
                 if sdr_running { "on" } else { "off" },
@@ -12530,7 +12559,7 @@ fn static_header_widget(label_text: &str, width_chars: i32) -> Label {
 
 fn sdr_decode_row_column_value(row: &SdrDecodeRow, column_id: &str) -> Option<String> {
     match column_id {
-        "time" => Some(row.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+        "time" => Some(format_display_timestamp(row.timestamp)),
         "decoder" => Some(row.decoder.clone()),
         "freq" => Some(format!("{}", row.freq_hz)),
         "protocol" => Some(row.protocol.clone()),
@@ -12542,7 +12571,7 @@ fn sdr_decode_row_column_value(row: &SdrDecodeRow, column_id: &str) -> Option<St
 
 fn sdr_satcom_row_column_value(row: &SdrSatcomObservation, column_id: &str) -> Option<String> {
     match column_id {
-        "time" => Some(row.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+        "time" => Some(format_display_timestamp(row.timestamp)),
         "decoder" => Some(row.decoder.clone()),
         "protocol" => Some(row.protocol.clone()),
         "freq" => Some(row.freq_hz.to_string()),
@@ -12586,10 +12615,7 @@ fn refresh_sdr_decode_list(list: &ListBox, rows: &[SdrDecodeRow], pagination: &T
     {
         let line = GtkBox::new(Orientation::Horizontal, 14);
         line.set_hexpand(true);
-        line.append(&label_cell(
-            row.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            20,
-        ));
+        line.append(&label_cell(format_display_timestamp(row.timestamp), 20));
         line.append(&label_cell(row.decoder, 14));
         line.append(&label_cell(row.freq_hz.to_string(), 13));
         line.append(&label_cell(row.protocol, 14));
@@ -12638,10 +12664,7 @@ fn refresh_sdr_satcom_list(
     {
         let line = GtkBox::new(Orientation::Horizontal, 14);
         line.set_hexpand(true);
-        line.append(&label_cell(
-            row.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            20,
-        ));
+        line.append(&label_cell(format_display_timestamp(row.timestamp), 20));
         line.append(&label_cell(row.decoder, 14));
         line.append(&label_cell(row.protocol, 14));
         line.append(&label_cell(row.freq_hz.to_string(), 13));
@@ -13363,8 +13386,8 @@ fn ap_column_value(ap: &AccessPointRecord, id: &str) -> Option<String> {
             }
         }
         "clients" => ap.number_of_clients.to_string(),
-        "first_seen" => ap.first_seen.format("%H:%M:%S").to_string(),
-        "last_seen" => ap.last_seen.format("%H:%M:%S").to_string(),
+        "first_seen" => format_display_time_hms(ap.first_seen),
+        "last_seen" => format_display_time_hms(ap.last_seen),
         "handshakes" => ap.handshake_count.to_string(),
         "band" => ap.band.label().to_string(),
         "frequency" => ap
@@ -13450,8 +13473,8 @@ fn client_column_value(
             }
         }
         "probes" => client.probes.join(","),
-        "first_heard" => client.first_seen.format("%H:%M:%S").to_string(),
-        "last_heard" => client.last_seen.format("%H:%M:%S").to_string(),
+        "first_heard" => format_display_time_hms(client.first_seen),
+        "last_heard" => format_display_time_hms(client.last_seen),
         "data_transferred" => client.data_transferred_bytes.to_string(),
         "probe_count" => client.probes.len().to_string(),
         "seen_ap_count" => client.seen_access_points.len().to_string(),
@@ -13542,8 +13565,8 @@ fn assoc_client_column_value(
         "oui" => client.oui_manufacturer.clone().unwrap_or_default(),
         "data_transferred" => client.data_transferred_bytes.to_string(),
         "rssi" => format_dbm(client.rssi_dbm),
-        "first_heard" => client.first_seen.format("%H:%M:%S").to_string(),
-        "last_heard" => client.last_seen.format("%H:%M:%S").to_string(),
+        "first_heard" => format_display_time_hms(client.first_seen),
+        "last_heard" => format_display_time_hms(client.last_seen),
         "wps" => {
             if client.wps.is_some() {
                 "True".to_string()
@@ -13583,8 +13606,8 @@ fn bluetooth_column_value(device: &BluetoothDeviceRecord, id: &str) -> Option<St
             .device_type
             .clone()
             .unwrap_or_else(|| "Unknown".to_string()),
-        "first_seen" => device.first_seen.format("%H:%M:%S").to_string(),
-        "last_seen" => device.last_seen.format("%H:%M:%S").to_string(),
+        "first_seen" => format_display_time_hms(device.first_seen),
+        "last_seen" => format_display_time_hms(device.last_seen),
         "rssi" => format_dbm(device.rssi_dbm),
         "advertised_name" => device.advertised_name.clone().unwrap_or_default(),
         "alias" => device.alias.clone().unwrap_or_default(),
@@ -14080,7 +14103,7 @@ fn format_bluetooth_active_summary(device: &BluetoothDeviceRecord) -> String {
         "Last Enumerated: {}\nConnected: {}\nPaired: {}\nTrusted: {}\nBlocked: {}\nServices Resolved: {}\nTx Power: {}\nBattery: {}\nAppearance: {}\nIcon: {}\nModalias: {}\nLast Error: {}",
         active
             .last_enumerated
-            .map(|value| value.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .map(format_display_timestamp)
             .unwrap_or_else(|| "Unknown".to_string()),
         bool_text(active.connected),
         bool_text(active.paired),
@@ -14269,7 +14292,7 @@ fn format_observation_location_time(obs: &GeoObservation) -> String {
         "{:.6}, {:.6} at {}",
         obs.latitude,
         obs.longitude,
-        obs.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+        format_display_timestamp(obs.timestamp)
     )
 }
 
@@ -17310,6 +17333,9 @@ fn open_preferences_window(
     rows_row.append(&rows_label);
     rows_row.append(&rows_combo);
     general_page.append(&rows_row);
+    let use_zulu_time_check = CheckButton::with_label("Use Zulu (UTC) time display");
+    use_zulu_time_check.set_active(settings_snapshot.use_zulu_time);
+    general_page.append(&use_zulu_time_check);
 
     let wifi_page = page(&stack, "wifi_capture", "Wi-Fi / Capture");
     wifi_page.append(&section_heading("Wi-Fi / Capture"));
@@ -17833,6 +17859,20 @@ fn open_preferences_window(
                         }
                         applied_messages
                             .push(format!("default rows per page set to {}", requested_rows));
+                    }
+
+                    if s.settings.use_zulu_time != use_zulu_time_check.is_active() {
+                        s.settings.use_zulu_time = use_zulu_time_check.is_active();
+                        set_use_zulu_time_display(s.settings.use_zulu_time);
+                        s.layout_dirty = true;
+                        applied_messages.push(format!(
+                            "time display set to {}",
+                            if s.settings.use_zulu_time {
+                                "Zulu (UTC)"
+                            } else {
+                                "local"
+                            }
+                        ));
                     }
 
                     if s.settings.gps != gps_settings {

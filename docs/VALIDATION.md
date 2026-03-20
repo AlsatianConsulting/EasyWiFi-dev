@@ -88,6 +88,11 @@ UI runtime status behavior now includes:
 - `Runtime Activity` heartbeat line in Channel status pane updates every second
 - heartbeat text includes Wi-Fi/Bluetooth/SDR runtime on/off state flags
 
+Time display behavior now includes:
+
+- local time as default display mode for UI timestamps
+- optional Zulu/UTC display mode toggle in Preferences -> General
+
 ## Multi-Adapter Status
 
 ### Implemented

@@ -111,6 +111,10 @@ pub fn default_sdr_satcom_payload_capture_enabled() -> bool {
     false
 }
 
+pub fn default_use_zulu_time() -> bool {
+    false
+}
+
 pub fn default_bluetooth_identity_expanded() -> bool {
     true
 }
@@ -901,6 +905,8 @@ pub struct AppSettings {
     pub sdr_satcom_payload_capture_enabled: bool,
     #[serde(default = "default_sdr_satcom_parse_denylist")]
     pub sdr_satcom_parse_denylist: Vec<String>,
+    #[serde(default = "default_use_zulu_time")]
+    pub use_zulu_time: bool,
 }
 
 impl Default for AppSettings {
@@ -940,6 +946,7 @@ impl Default for AppSettings {
             sdr_operator_presets: Vec::new(),
             sdr_satcom_payload_capture_enabled: default_sdr_satcom_payload_capture_enabled(),
             sdr_satcom_parse_denylist: default_sdr_satcom_parse_denylist(),
+            use_zulu_time: default_use_zulu_time(),
         }
     }
 }
@@ -1013,6 +1020,7 @@ mod tests {
         settings.default_rows_per_page = 100;
         settings.bluetooth_enabled = false;
         settings.enable_wifi_frame_parsing = true;
+        settings.use_zulu_time = true;
         settings.sdr_satcom_payload_capture_enabled = true;
         settings.sdr_satcom_parse_denylist = vec!["inmarsat".to_string(), "iridium".to_string()];
         settings.oui_source_path = PathBuf::from("/tmp/test-manuf");
@@ -1041,6 +1049,7 @@ mod tests {
         assert_eq!(loaded.default_rows_per_page, 100);
         assert!(!loaded.bluetooth_enabled);
         assert!(loaded.enable_wifi_frame_parsing);
+        assert!(loaded.use_zulu_time);
         assert!(loaded.sdr_satcom_payload_capture_enabled);
         assert_eq!(
             loaded.sdr_satcom_parse_denylist,
