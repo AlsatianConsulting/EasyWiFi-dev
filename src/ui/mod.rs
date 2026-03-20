@@ -2893,6 +2893,7 @@ struct UiWidgets {
     sdr_decoder_label: Label,
     sdr_dependency_label: Label,
     sdr_health_label: Label,
+    sdr_aircraft_correlation_label: Label,
     sdr_center_geiger_rssi_label: Label,
     sdr_center_geiger_tone_label: Label,
     sdr_center_geiger_progress: ProgressBar,
@@ -6156,6 +6157,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let sdr_health_label = Label::new(Some("Decoder Health: no telemetry"));
     sdr_health_label.set_xalign(0.0);
     sdr_health_label.set_wrap(true);
+    let sdr_aircraft_correlation_label =
+        Label::new(Some("Aircraft Correlation: no correlated targets"));
+    sdr_aircraft_correlation_label.set_xalign(0.0);
+    sdr_aircraft_correlation_label.set_wrap(true);
     let sdr_center_geiger_rssi_label = Label::new(Some("Center Geiger RSSI: -- dBm"));
     sdr_center_geiger_rssi_label.set_xalign(0.0);
     let sdr_center_geiger_tone_label = Label::new(Some("Center Geiger Tone: -- Hz"));
@@ -6558,6 +6563,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_top.append(&sdr_decoder_label);
     sdr_top.append(&sdr_dependency_label);
     sdr_top.append(&sdr_health_label);
+    sdr_top.append(&sdr_aircraft_correlation_label);
     sdr_top.append(&Label::new(Some("Spectrogram")));
     sdr_top.append(&sdr_spectrogram_draw);
     sdr_top.append(&Label::new(Some("FFT")));
@@ -8976,6 +8982,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             sdr_decoder_label,
             sdr_dependency_label,
             sdr_health_label,
+            sdr_aircraft_correlation_label,
             sdr_center_geiger_rssi_label,
             sdr_center_geiger_tone_label,
             sdr_center_geiger_progress,
@@ -9083,6 +9090,7 @@ fn bind_poll_loop(
         sdr_decoder_label,
         sdr_dependency_label,
         sdr_health_label,
+        sdr_aircraft_correlation_label,
         sdr_center_geiger_rssi_label,
         sdr_center_geiger_tone_label,
         sdr_center_geiger_progress,
@@ -9130,6 +9138,10 @@ fn bind_poll_loop(
     let pending_channel_refresh = Cell::new(true);
     let pending_sdr_refresh = Cell::new(true);
     let sdr_auto_squelch_last_apply = Rc::new(RefCell::new(None::<(Instant, f32)>));
+    let sdr_aircraft_correlation_cache = Rc::new(RefCell::new((
+        String::new(),
+        "Aircraft Correlation: no correlated targets".to_string(),
+    )));
 
     glib::timeout_add_local(Duration::from_millis(UI_POLL_INTERVAL_MS), move || {
         let mut refresh = UiRefreshHint::none();
@@ -9996,6 +10008,27 @@ fn bind_poll_loop(
                 &model.decoder_telemetry,
                 &model.decoder_telemetry_rates,
             ));
+            let correlation_signature = model
+                .decode_rows
+                .last()
+                .map(|row| {
+                    format!(
+                        "{}:{}:{}",
+                        model.decode_rows.len(),
+                        row.timestamp.timestamp_micros(),
+                        row.freq_hz
+                    )
+                })
+                .unwrap_or_else(|| "0".to_string());
+            let correlation_text = {
+                let mut cache = sdr_aircraft_correlation_cache.borrow_mut();
+                if cache.0 != correlation_signature {
+                    cache.0 = correlation_signature;
+                    cache.1 = format_sdr_aircraft_correlation_summary(&model.decode_rows);
+                }
+                cache.1.clone()
+            };
+            sdr_aircraft_correlation_label.set_text(&correlation_text);
             if let Some((center_dbm, tone_hz, fraction)) = center_geiger {
                 sdr_center_geiger_rssi_label
                     .set_text(&format!("Center Geiger RSSI: {:.1} dBm", center_dbm));
@@ -12125,6 +12158,32 @@ fn format_sdr_decoder_telemetry(
     } else {
         "Decoder Health: no telemetry".to_string()
     }
+}
+
+fn format_sdr_aircraft_correlation_summary(rows: &[SdrDecodeRow]) -> String {
+    let correlations = sdr::correlate_aircraft(rows);
+    if correlations.is_empty() {
+        return "Aircraft Correlation: no correlated targets".to_string();
+    }
+    let mixed = correlations
+        .iter()
+        .filter(|entry| entry.adsb_rows > 0 && entry.acars_rows > 0)
+        .count();
+    let adsb_only = correlations
+        .iter()
+        .filter(|entry| entry.adsb_rows > 0 && entry.acars_rows == 0)
+        .count();
+    let acars_only = correlations
+        .iter()
+        .filter(|entry| entry.acars_rows > 0 && entry.adsb_rows == 0)
+        .count();
+    format!(
+        "Aircraft Correlation: {} targets (mixed={} adsb_only={} acars_only={})",
+        correlations.len(),
+        mixed,
+        adsb_only,
+        acars_only
+    )
 }
 
 fn prioritized_decoder_ids_for_protocol(
@@ -18646,6 +18705,30 @@ mod tests {
             path.file_stem().and_then(|s| s.to_str()).unwrap_or_default()
         )));
         let _ = std::fs::remove_file(summary_path);
+    }
+
+    #[test]
+    fn sdr_aircraft_correlation_summary_reports_mixed_counts() {
+        let rows = vec![
+            SdrDecodeRow {
+                timestamp: Utc::now(),
+                decoder: "ADS-B".to_string(),
+                freq_hz: 1_090_000_000,
+                protocol: "adsb".to_string(),
+                message: "icao=abc123 callsign=UAL123".to_string(),
+                raw: "icao=abc123 callsign=UAL123".to_string(),
+            },
+            SdrDecodeRow {
+                timestamp: Utc::now(),
+                decoder: "ACARS".to_string(),
+                freq_hz: 131_550_000,
+                protocol: "acars".to_string(),
+                message: "flight=UAL123".to_string(),
+                raw: "flight=UAL123".to_string(),
+            },
+        ];
+        let summary = format_sdr_aircraft_correlation_summary(&rows);
+        assert!(summary.contains("targets (mixed=1"));
     }
 
     #[test]

@@ -84,6 +84,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 64. `Presets -> Frequencies` now includes `Export SDR Bookmarks CSV`, emitting labeled bookmark inventory with source tagging (`fcc_imported` vs `manual_or_default`).
 65. SDR controls now include `Export Aircraft Correlation`, which derives ADS-B/ACARS correlations (ICAO/callsign merged identity) from decode rows and exports JSON+CSV artifacts for downstream analysis.
 66. SDR satcom export now emits an additional summary JSON artifact with aggregate metadata counters (protocol/decoder/band/posture/payload-parse/capture state plus coordinate and identifier-hint rollups).
+67. SDR pane now surfaces a live aircraft-correlation status line showing correlated target counts and mixed ADS-B+ACARS linkage counts from current decode rows.
 
 ### Bluetooth
 
