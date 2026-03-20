@@ -10744,8 +10744,13 @@ fn bind_poll_loop(
         if last_runtime_activity_second.get() != now_second {
             last_runtime_activity_second.set(now_second);
             runtime_activity_label.set_text(&format!(
-                "tick {} | wifi={} bt={} sdr={}",
+                "tick {} [{}] | wifi={} bt={} sdr={}",
                 format_display_time_hms(now),
+                if using_zulu_time_display() {
+                    "ZULU"
+                } else {
+                    "LOCAL"
+                },
                 if wifi_running { "on" } else { "off" },
                 if bluetooth_running { "on" } else { "off" },
                 if sdr_running { "on" } else { "off" },
