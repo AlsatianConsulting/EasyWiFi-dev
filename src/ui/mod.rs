@@ -1188,6 +1188,216 @@ struct SdrOperatorPreset {
     squelch_dbm: f32,
 }
 
+#[derive(Clone)]
+struct FrequencyPresetEntry {
+    id: String,
+    label: String,
+    freq_hz: u64,
+}
+
+#[derive(Clone)]
+struct FrequencyPresetGroup {
+    label: String,
+    entries: Vec<FrequencyPresetEntry>,
+}
+
+fn default_frequency_preset_groups() -> Vec<FrequencyPresetGroup> {
+    vec![
+        FrequencyPresetGroup {
+            label: "Wi-Fi Channels".to_string(),
+            entries: wifi_channel_frequency_presets(),
+        },
+        FrequencyPresetGroup {
+            label: "Bluetooth Frequencies".to_string(),
+            entries: bluetooth_frequency_presets(),
+        },
+        FrequencyPresetGroup {
+            label: "Pager Frequencies".to_string(),
+            entries: pager_frequency_presets(),
+        },
+        FrequencyPresetGroup {
+            label: "Satellite Frequencies".to_string(),
+            entries: satellite_frequency_presets(),
+        },
+    ]
+}
+
+fn wifi_channel_frequency_presets() -> Vec<FrequencyPresetEntry> {
+    let mut out = Vec::new();
+    for channel in 1u64..=13u64 {
+        out.push(FrequencyPresetEntry {
+            id: format!("wifi24_ch{channel:02}"),
+            label: format!("Wi-Fi 2.4 Ch {channel:02}"),
+            freq_hz: (2407 + (channel * 5)) * 1_000_000,
+        });
+    }
+    out.push(FrequencyPresetEntry {
+        id: "wifi24_ch14".to_string(),
+        label: "Wi-Fi 2.4 Ch 14".to_string(),
+        freq_hz: 2_484_000_000,
+    });
+
+    for channel in [
+        36u64, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140,
+        144, 149, 153, 157, 161, 165, 169, 173,
+    ] {
+        out.push(FrequencyPresetEntry {
+            id: format!("wifi5_ch{channel}"),
+            label: format!("Wi-Fi 5 Ch {channel}"),
+            freq_hz: (5000 + (channel * 5)) * 1_000_000,
+        });
+    }
+
+    for channel in (1u64..=233u64).step_by(4) {
+        out.push(FrequencyPresetEntry {
+            id: format!("wifi6_ch{channel}"),
+            label: format!("Wi-Fi 6E Ch {channel}"),
+            freq_hz: (5950 + (channel * 5)) * 1_000_000,
+        });
+    }
+
+    out
+}
+
+fn bluetooth_frequency_presets() -> Vec<FrequencyPresetEntry> {
+    let mut out = Vec::new();
+    for channel in 0u64..=78u64 {
+        out.push(FrequencyPresetEntry {
+            id: format!("bt_classic_ch{channel:02}"),
+            label: format!("Bluetooth Classic Ch {channel:02}"),
+            freq_hz: (2402 + channel) * 1_000_000,
+        });
+    }
+
+    out.push(FrequencyPresetEntry {
+        id: "ble_adv_ch37".to_string(),
+        label: "BLE Adv Ch 37".to_string(),
+        freq_hz: 2_402_000_000,
+    });
+    out.push(FrequencyPresetEntry {
+        id: "ble_adv_ch38".to_string(),
+        label: "BLE Adv Ch 38".to_string(),
+        freq_hz: 2_426_000_000,
+    });
+    out.push(FrequencyPresetEntry {
+        id: "ble_adv_ch39".to_string(),
+        label: "BLE Adv Ch 39".to_string(),
+        freq_hz: 2_480_000_000,
+    });
+
+    out
+}
+
+fn pager_frequency_presets() -> Vec<FrequencyPresetEntry> {
+    vec![
+        FrequencyPresetEntry {
+            id: "pager_1520075".to_string(),
+            label: "Pager 152.0075".to_string(),
+            freq_hz: 152_007_500,
+        },
+        FrequencyPresetEntry {
+            id: "pager_1522400".to_string(),
+            label: "Pager 152.2400".to_string(),
+            freq_hz: 152_240_000,
+        },
+        FrequencyPresetEntry {
+            id: "pager_1524800".to_string(),
+            label: "Pager 152.4800".to_string(),
+            freq_hz: 152_480_000,
+        },
+        FrequencyPresetEntry {
+            id: "pager_1574500".to_string(),
+            label: "Pager 157.4500".to_string(),
+            freq_hz: 157_450_000,
+        },
+        FrequencyPresetEntry {
+            id: "pager_1581000".to_string(),
+            label: "Pager 158.1000".to_string(),
+            freq_hz: 158_100_000,
+        },
+        FrequencyPresetEntry {
+            id: "pager_4540250".to_string(),
+            label: "Pager 454.0250".to_string(),
+            freq_hz: 454_025_000,
+        },
+        FrequencyPresetEntry {
+            id: "pager_4540750".to_string(),
+            label: "Pager 454.0750".to_string(),
+            freq_hz: 454_075_000,
+        },
+        FrequencyPresetEntry {
+            id: "pager_9296125".to_string(),
+            label: "Pager 929.6125".to_string(),
+            freq_hz: 929_612_500,
+        },
+        FrequencyPresetEntry {
+            id: "pager_9310625".to_string(),
+            label: "Pager 931.0625".to_string(),
+            freq_hz: 931_062_500,
+        },
+    ]
+}
+
+fn satellite_frequency_presets() -> Vec<FrequencyPresetEntry> {
+    vec![
+        FrequencyPresetEntry {
+            id: "sat_noaa15_137620".to_string(),
+            label: "NOAA-15 APT".to_string(),
+            freq_hz: 137_620_000,
+        },
+        FrequencyPresetEntry {
+            id: "sat_noaa18_1379125".to_string(),
+            label: "NOAA-18 APT".to_string(),
+            freq_hz: 137_912_500,
+        },
+        FrequencyPresetEntry {
+            id: "sat_noaa19_137100".to_string(),
+            label: "NOAA-19 APT".to_string(),
+            freq_hz: 137_100_000,
+        },
+        FrequencyPresetEntry {
+            id: "sat_meteor_137900".to_string(),
+            label: "METEOR-M2 LRPT".to_string(),
+            freq_hz: 137_900_000,
+        },
+        FrequencyPresetEntry {
+            id: "sat_orbcomm_137500".to_string(),
+            label: "Orbcomm".to_string(),
+            freq_hz: 137_500_000,
+        },
+        FrequencyPresetEntry {
+            id: "sat_iss_vhf_145800".to_string(),
+            label: "ISS VHF".to_string(),
+            freq_hz: 145_800_000,
+        },
+        FrequencyPresetEntry {
+            id: "sat_goes_lrit_1694100".to_string(),
+            label: "GOES LRIT".to_string(),
+            freq_hz: 1_694_100_000,
+        },
+        FrequencyPresetEntry {
+            id: "sat_goes_hrit_1694200".to_string(),
+            label: "GOES HRIT".to_string(),
+            freq_hz: 1_694_200_000,
+        },
+        FrequencyPresetEntry {
+            id: "sat_inmarsat_stdc_1541450".to_string(),
+            label: "Inmarsat STD-C".to_string(),
+            freq_hz: 1_541_450_000,
+        },
+        FrequencyPresetEntry {
+            id: "sat_inmarsat_aero_1545000".to_string(),
+            label: "Inmarsat Aero".to_string(),
+            freq_hz: 1_545_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "sat_iridium_1626000".to_string(),
+            label: "Iridium".to_string(),
+            freq_hz: 1_626_000_000,
+        },
+    ]
+}
+
 fn sdr_operator_presets() -> Vec<SdrOperatorPreset> {
     vec![
         SdrOperatorPreset {
@@ -1496,6 +1706,7 @@ struct UiWidgets {
     bluetooth_geiger_state: Rc<RefCell<BluetoothGeigerUiState>>,
     channel_draw: DrawingArea,
     ap_inline_channel_draw: DrawingArea,
+    sdr_center_freq_entry: Entry,
     sdr_frequency_label: Label,
     sdr_decoder_label: Label,
     sdr_dependency_label: Label,
@@ -2670,6 +2881,40 @@ fn build_menubar(
     }
     app.add_action(&quit_action);
 
+    let presets_root_menu = gio::Menu::new();
+    for group in default_frequency_preset_groups() {
+        let group_menu = gio::Menu::new();
+        for entry in group.entries {
+            let action_name = format!("preset_freq_{}", entry.id);
+            let action_target = format!("app.{}", action_name);
+            let label = format!(
+                "{} ({:.4} MHz)",
+                entry.label,
+                entry.freq_hz as f64 / 1_000_000.0
+            );
+            let state = state.clone();
+            let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
+            let entry_label = entry.label.clone();
+            let freq_hz = entry.freq_hz;
+            let action = gio::SimpleAction::new(&action_name, None);
+            action.connect_activate(move |_, _| {
+                sdr_center_freq_entry.set_text(&freq_hz.to_string());
+                let mut s = state.borrow_mut();
+                if let Some(runtime) = s.sdr_runtime.as_ref() {
+                    runtime.set_center_freq(freq_hz);
+                }
+                s.push_status(format!(
+                    "preset frequency selected: {} ({:.4} MHz)",
+                    entry_label,
+                    freq_hz as f64 / 1_000_000.0
+                ));
+            });
+            app.add_action(&action);
+            group_menu.append(Some(&label), Some(&action_target));
+        }
+        presets_root_menu.append_submenu(Some(&group.label), &group_menu);
+    }
+
     let file_menu = gio::Menu::new();
     file_menu.append(
         Some("Export CSV + Summary JSON + Consolidated PCAP"),
@@ -2701,6 +2946,7 @@ fn build_menubar(
 
     let root = gio::Menu::new();
     root.append_submenu(Some("File"), &file_menu);
+    root.append_submenu(Some("Presets"), &presets_root_menu);
     root.append_submenu(Some("Settings"), &settings_menu);
 
     gtk::PopoverMenuBar::from_model(Some(&root))
@@ -6576,6 +6822,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             bluetooth_geiger_state,
             channel_draw,
             ap_inline_channel_draw,
+            sdr_center_freq_entry,
             sdr_frequency_label,
             sdr_decoder_label,
             sdr_dependency_label,
@@ -6673,6 +6920,7 @@ fn bind_poll_loop(
         bluetooth_geiger_state,
         channel_draw,
         ap_inline_channel_draw,
+        sdr_center_freq_entry: _sdr_center_freq_entry,
         sdr_frequency_label,
         sdr_decoder_label,
         sdr_dependency_label,
