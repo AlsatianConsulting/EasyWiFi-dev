@@ -1284,6 +1284,26 @@ fn protocol_scan_macros() -> Vec<ProtocolScanMacro> {
             squelch_dbm: -78.0,
         },
         ProtocolScanMacro {
+            id: "macro_iridium_lband".to_string(),
+            label: "Iridium L-Band Sweep".to_string(),
+            decoder_id: "iridium".to_string(),
+            start_hz: 1_616_000_000,
+            end_hz: 1_626_500_000,
+            step_hz: 20_000,
+            steps_per_sec: 5.0,
+            squelch_dbm: -80.0,
+        },
+        ProtocolScanMacro {
+            id: "macro_gsm_lte_meta".to_string(),
+            label: "GSM/LTE Metadata Sweep".to_string(),
+            decoder_id: "gsm_lte".to_string(),
+            start_hz: 935_000_000,
+            end_hz: 960_000_000,
+            step_hz: 200_000,
+            steps_per_sec: 6.0,
+            squelch_dbm: -82.0,
+        },
+        ProtocolScanMacro {
             id: "macro_adsb_1090".to_string(),
             label: "ADS-B 1090 Window".to_string(),
             decoder_id: "ads_b".to_string(),
@@ -18062,6 +18082,8 @@ mod tests {
         assert!(ids.contains("macro_p25_800"));
         assert!(ids.contains("macro_dect"));
         assert!(ids.contains("macro_satcom_lband"));
+        assert!(ids.contains("macro_iridium_lband"));
+        assert!(ids.contains("macro_gsm_lte_meta"));
         assert!(ids.contains("macro_adsb_1090"));
         assert!(ids.contains("macro_acars_vhf"));
         assert!(ids.contains("macro_ais_marine"));
