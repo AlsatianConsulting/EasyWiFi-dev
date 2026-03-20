@@ -1282,6 +1282,29 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
             ],
         },
         ScannerPresetGroup {
+            label: "Wi-Fi High-Band Scans".to_string(),
+            entries: vec![
+                ScannerPresetEntry {
+                    id: "scan_wifi5_full".to_string(),
+                    label: "Wi-Fi 5 Full".to_string(),
+                    start_hz: 5_170_000_000,
+                    end_hz: 5_835_000_000,
+                    step_hz: 5_000_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_wifi6e_full".to_string(),
+                    label: "Wi-Fi 6E Full".to_string(),
+                    start_hz: 5_925_000_000,
+                    end_hz: 7_125_000_000,
+                    step_hz: 5_000_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -80.0,
+                },
+            ],
+        },
+        ScannerPresetGroup {
             label: "IoT / ISM Scans".to_string(),
             entries: vec![
                 ScannerPresetEntry {
@@ -1310,6 +1333,47 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     step_hz: 200_000,
                     steps_per_sec: 6.0,
                     squelch_dbm: -80.0,
+                },
+            ],
+        },
+        ScannerPresetGroup {
+            label: "DECT / Pager / Satcom Scans".to_string(),
+            entries: vec![
+                ScannerPresetEntry {
+                    id: "scan_dect_1880_1900".to_string(),
+                    label: "DECT 1880-1900".to_string(),
+                    start_hz: 1_880_000_000,
+                    end_hz: 1_900_000_000,
+                    step_hz: 1_728_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -76.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_pager_vhf_152_159".to_string(),
+                    label: "Pager VHF 152-159".to_string(),
+                    start_hz: 152_000_000,
+                    end_hz: 159_000_000,
+                    step_hz: 12_500,
+                    steps_per_sec: 8.0,
+                    squelch_dbm: -84.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_pager_uhf_454_460".to_string(),
+                    label: "Pager UHF 454-460".to_string(),
+                    start_hz: 454_000_000,
+                    end_hz: 460_000_000,
+                    step_hz: 12_500,
+                    steps_per_sec: 8.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_sat_lband_1525_1660".to_string(),
+                    label: "Satellite L-Band 1525-1660".to_string(),
+                    start_hz: 1_525_000_000,
+                    end_hz: 1_660_000_000,
+                    step_hz: 10_000,
+                    steps_per_sec: 5.0,
+                    squelch_dbm: -78.0,
                 },
             ],
         },
@@ -16286,6 +16350,39 @@ mod tests {
         let added = merge_sdr_operator_presets(&mut existing, imported);
         assert_eq!(added, 1);
         assert_eq!(existing.len(), 2);
+    }
+
+    #[test]
+    fn frequency_presets_include_requested_common_targets() {
+        let groups = default_frequency_preset_groups();
+        let ids = groups
+            .iter()
+            .flat_map(|group| group.entries.iter().map(|entry| entry.id.as_str()))
+            .collect::<std::collections::HashSet<_>>();
+        assert!(ids.contains("dect_1886400"));
+        assert!(ids.contains("dmr_446075"));
+        assert!(ids.contains("ism_915000"));
+        assert!(ids.contains("ism_433920"));
+        assert!(ids.contains("ism_315000"));
+    }
+
+    #[test]
+    fn scanner_presets_include_24ghz_and_configurable_ranges() {
+        let groups = default_scanner_preset_groups();
+        let entries = groups
+            .iter()
+            .flat_map(|group| group.entries.iter())
+            .collect::<Vec<_>>();
+        assert!(entries.iter().any(|entry| entry.id == "scan_2400_24835"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id == "scan_dect_1880_1900"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id == "scan_sat_lband_1525_1660"));
+        assert!(entries
+            .iter()
+            .all(|entry| entry.start_hz < entry.end_hz && entry.step_hz > 0));
     }
 
     #[test]
