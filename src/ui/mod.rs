@@ -1579,6 +1579,31 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
             ],
         },
         ScannerPresetGroup {
+            label: "Cellular / Sat Metadata Scans".to_string(),
+            entries: vec![
+                ScannerPresetEntry {
+                    id: "scan_gsm_lte_935_960".to_string(),
+                    label: "GSM/LTE Metadata 935-960".to_string(),
+                    start_hz: 935_000_000,
+                    end_hz: 960_000_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_iridium_1616_16265".to_string(),
+                    label: "Iridium L-Band 1616-1626.5".to_string(),
+                    start_hz: 1_616_000_000,
+                    end_hz: 1_626_500_000,
+                    sample_rate_hz: None,
+                    step_hz: 20_000,
+                    steps_per_sec: 5.0,
+                    squelch_dbm: -80.0,
+                },
+            ],
+        },
+        ScannerPresetGroup {
             label: "IoT / ISM Scans".to_string(),
             entries: vec![
                 ScannerPresetEntry {
@@ -18017,6 +18042,12 @@ mod tests {
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_p25_800_851_869"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id == "scan_gsm_lte_935_960"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id == "scan_iridium_1616_16265"));
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_dect_1880_1900"));
