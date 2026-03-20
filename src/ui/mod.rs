@@ -9863,7 +9863,7 @@ fn apply_sdr_runtime_controls(runtime: &SdrRuntime, config: &SdrConfig) {
     runtime.set_squelch(config.squelch_dbm);
     runtime.set_auto_tune(config.auto_tune_decoders);
     runtime.set_bias_tee(config.bias_tee_enabled);
-    runtime.set_no_payload_satcom(config.no_payload_satcom);
+    runtime.set_satcom_payload_capture(!config.no_payload_satcom);
     runtime.set_satcom_parse_denylist(config.satcom_parse_denylist.clone());
 }
 

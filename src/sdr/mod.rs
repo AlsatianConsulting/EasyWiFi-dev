@@ -308,7 +308,7 @@ enum SdrCommand {
     SetSquelch(f32),
     SetAutoTune(bool),
     SetBiasTee(bool),
-    SetNoPayloadSatcom(bool),
+    SetSatcomPayloadCapture(bool),
     SetSatcomParseDenylist(Vec<String>),
     CaptureSample {
         duration_secs: u32,
@@ -389,9 +389,13 @@ impl SdrRuntime {
     }
 
     pub fn set_no_payload_satcom(&self, enabled: bool) {
+        self.set_satcom_payload_capture(!enabled);
+    }
+
+    pub fn set_satcom_payload_capture(&self, enabled: bool) {
         let _ = self
             .command_tx
-            .send(SdrCommand::SetNoPayloadSatcom(enabled));
+            .send(SdrCommand::SetSatcomPayloadCapture(enabled));
     }
 
     pub fn set_satcom_parse_denylist(&self, denylist: Vec<String>) {
@@ -573,7 +577,7 @@ fn run_sdr_loop(
     let mut squelch_dbm = config.squelch_dbm.clamp(-130.0, -10.0);
     let mut auto_tune_decoders = config.auto_tune_decoders;
     let mut bias_tee_enabled = config.bias_tee_enabled;
-    let mut no_payload_satcom = config.no_payload_satcom;
+    let mut payload_capture_enabled = !config.no_payload_satcom;
     let mut satcom_parse_denylist = if config.satcom_parse_denylist.is_empty() {
         satcom_parse_denylist_from_env()
     } else {
@@ -600,10 +604,10 @@ fn run_sdr_loop(
         squelch_dbm,
         if auto_tune_decoders { "on" } else { "off" },
         if bias_tee_enabled { "on" } else { "off" },
-        if no_payload_satcom {
-            "disabled"
-        } else {
+        if payload_capture_enabled {
             "enabled"
+        } else {
+            "disabled"
         }
     )));
     if !satcom_parse_denylist.is_empty() {
@@ -721,11 +725,11 @@ fn run_sdr_loop(
                     bias_tee_enabled = enabled;
                     let _ = try_set_bias_tee(hardware, bias_tee_enabled, &sender);
                 }
-                SdrCommand::SetNoPayloadSatcom(enabled) => {
-                    no_payload_satcom = enabled;
+                SdrCommand::SetSatcomPayloadCapture(enabled) => {
+                    payload_capture_enabled = enabled;
                     let _ = sender.send(SdrEvent::Log(format!(
                         "satcom payload capture {}",
-                        if enabled { "disabled" } else { "enabled" }
+                        if enabled { "enabled" } else { "disabled" }
                     )));
                 }
                 SdrCommand::SetSatcomParseDenylist(denylist) => {
@@ -817,7 +821,7 @@ fn run_sdr_loop(
                         sender.clone(),
                         log_output_enabled,
                         log_output_dir.clone(),
-                        no_payload_satcom,
+                        payload_capture_enabled,
                         satcom_parse_denylist.clone(),
                     ) {
                         Ok(decoder) => {
@@ -1681,7 +1685,7 @@ fn spawn_decoder(
     sender: Sender<SdrEvent>,
     log_output_enabled: bool,
     log_output_dir: PathBuf,
-    no_payload_satcom: bool,
+    payload_capture_enabled: bool,
     satcom_parse_denylist: Vec<String>,
 ) -> Result<RunningDecoder> {
     let mut command = Command::new("bash");
@@ -1789,7 +1793,7 @@ fn spawn_decoder(
     let log_stdout = log_file.clone();
     let map_log_stdout = map_log_file.clone();
     let satcom_log_stdout = satcom_log_file.clone();
-    let no_payload_satcom_stdout = no_payload_satcom;
+    let payload_capture_enabled_stdout = payload_capture_enabled;
     let decoded_rows_counter = Arc::new(AtomicU64::new(0));
     let map_points_counter = Arc::new(AtomicU64::new(0));
     let satcom_rows_counter = Arc::new(AtomicU64::new(0));
@@ -1825,12 +1829,12 @@ fn spawn_decoder(
             let satcom_detected = derive_satcom_observation(
                 &row,
                 map_point.as_ref(),
-                !no_payload_satcom_stdout,
+                payload_capture_enabled_stdout,
                 &satcom_parse_denylist,
             )
             .is_some();
 
-            if no_payload_satcom_stdout && satcom_detected {
+            if !payload_capture_enabled_stdout && satcom_detected {
                 redact_satcom_decode_row(&mut row);
                 if let Some(point) = map_point.as_mut() {
                     sync_map_point_payload_from_row(point, &row);
@@ -1839,7 +1843,7 @@ fn spawn_decoder(
             let satcom_observation = derive_satcom_observation(
                 &row,
                 map_point.as_ref(),
-                !no_payload_satcom_stdout,
+                payload_capture_enabled_stdout,
                 &satcom_parse_denylist,
             );
 
