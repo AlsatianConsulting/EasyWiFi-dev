@@ -1929,10 +1929,122 @@ fn parse_fcc_frequency_hz(raw: &str) -> Option<u64> {
     }
 }
 
+fn fcc_record_value(
+    record: &csv::StringRecord,
+    header_index: &HashMap<String, usize>,
+    names: &[&str],
+) -> Option<String> {
+    names
+        .iter()
+        .find_map(|name| {
+            header_index
+                .get(&name.to_ascii_lowercase())
+                .and_then(|idx| record.get(*idx))
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
 struct FccAreaScanPreset {
     preset: SdrOperatorPresetSetting,
     matched_rows: usize,
     signal_type: Option<String>,
+}
+
+fn build_fcc_frequency_bookmarks_from_csv(
+    csv_path: &PathBuf,
+    area_filter: &str,
+    max_entries: usize,
+) -> Result<Vec<SdrBookmarkSetting>> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_path(csv_path)
+        .with_context(|| format!("failed to open FCC CSV {}", csv_path.display()))?;
+    let headers = reader
+        .headers()
+        .with_context(|| format!("failed to read FCC CSV headers {}", csv_path.display()))?
+        .clone();
+    let header_index = headers
+        .iter()
+        .enumerate()
+        .map(|(idx, key)| (key.trim().to_ascii_lowercase(), idx))
+        .collect::<HashMap<_, _>>();
+    let filter = area_filter.trim().to_ascii_lowercase();
+    let mut out = Vec::<SdrBookmarkSetting>::new();
+    let mut seen_freqs = HashSet::<u64>::new();
+    for row in reader.records() {
+        let record = match row {
+            Ok(row) => row,
+            Err(_) => continue,
+        };
+        let city = fcc_record_value(&record, &header_index, &["city", "location_city"])
+            .unwrap_or_default();
+        let county = fcc_record_value(&record, &header_index, &["county", "location_county"])
+            .unwrap_or_default();
+        let state = fcc_record_value(&record, &header_index, &["state", "location_state"])
+            .unwrap_or_default();
+        let callsign = fcc_record_value(&record, &header_index, &["callsign", "call_sign"])
+            .unwrap_or_default();
+        if !filter.is_empty() {
+            let haystack = format!("{city} {county} {state} {callsign}").to_ascii_lowercase();
+            if !haystack.contains(&filter) {
+                continue;
+            }
+        }
+        let signal_type = fcc_record_value(
+            &record,
+            &header_index,
+            &[
+                "radio_service_desc",
+                "radio_service",
+                "service_desc",
+                "service",
+                "station_class",
+                "station_class_code",
+                "station_type",
+            ],
+        )
+        .unwrap_or_else(|| "Unknown".to_string());
+        let assigned_hz = fcc_record_value(
+            &record,
+            &header_index,
+            &[
+                "frequency_assigned",
+                "freq_assigned",
+                "assigned_frequency",
+                "frequency",
+            ],
+        )
+        .and_then(|value| parse_fcc_frequency_hz(&value));
+        let Some(freq_hz) = assigned_hz else {
+            continue;
+        };
+        if freq_hz < 100_000 || freq_hz > 8_000_000_000 || seen_freqs.contains(&freq_hz) {
+            continue;
+        }
+        seen_freqs.insert(freq_hz);
+        let mut label_parts = Vec::new();
+        label_parts.push("FCC".to_string());
+        label_parts.push(signal_type);
+        if !callsign.is_empty() {
+            label_parts.push(callsign);
+        }
+        if !city.is_empty() {
+            label_parts.push(city);
+        } else if !county.is_empty() {
+            label_parts.push(county);
+        }
+        out.push(SdrBookmarkSetting {
+            label: label_parts.join(" | "),
+            frequency_hz: freq_hz,
+        });
+        if out.len() >= max_entries.max(1) {
+            break;
+        }
+    }
+    Ok(out)
 }
 
 fn build_fcc_area_scan_preset_from_csv(
@@ -1953,19 +2065,6 @@ fn build_fcc_area_scan_preset_from_csv(
         .enumerate()
         .map(|(idx, key)| (key.trim().to_ascii_lowercase(), idx))
         .collect::<HashMap<_, _>>();
-    let get_value = |record: &csv::StringRecord, names: &[&str]| -> Option<String> {
-        names
-            .iter()
-            .find_map(|name| {
-                header_index
-                    .get(&name.to_ascii_lowercase())
-                    .and_then(|idx| record.get(*idx))
-            })
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-    };
-
     let filter = area_filter.trim().to_ascii_lowercase();
     let mut ranges = Vec::<(u64, u64)>::new();
     let mut matched_rows = 0usize;
@@ -1975,10 +2074,14 @@ fn build_fcc_area_scan_preset_from_csv(
             Ok(row) => row,
             Err(_) => continue,
         };
-        let city = get_value(&record, &["city", "location_city"]).unwrap_or_default();
-        let county = get_value(&record, &["county", "location_county"]).unwrap_or_default();
-        let state = get_value(&record, &["state", "location_state"]).unwrap_or_default();
-        let callsign = get_value(&record, &["callsign", "call_sign"]).unwrap_or_default();
+        let city = fcc_record_value(&record, &header_index, &["city", "location_city"])
+            .unwrap_or_default();
+        let county = fcc_record_value(&record, &header_index, &["county", "location_county"])
+            .unwrap_or_default();
+        let state = fcc_record_value(&record, &header_index, &["state", "location_state"])
+            .unwrap_or_default();
+        let callsign = fcc_record_value(&record, &header_index, &["callsign", "call_sign"])
+            .unwrap_or_default();
         if !filter.is_empty() {
             let haystack = format!("{city} {county} {state} {callsign}").to_ascii_lowercase();
             if !haystack.contains(&filter) {
@@ -1987,8 +2090,9 @@ fn build_fcc_area_scan_preset_from_csv(
         }
         matched_rows = matched_rows.saturating_add(1);
 
-        if let Some(signal_type) = get_value(
+        if let Some(signal_type) = fcc_record_value(
             &record,
+            &header_index,
             &[
                 "radio_service_desc",
                 "radio_service",
@@ -2007,8 +2111,9 @@ fn build_fcc_area_scan_preset_from_csv(
             }
         }
 
-        let assigned_hz = get_value(
+        let assigned_hz = fcc_record_value(
             &record,
+            &header_index,
             &[
                 "frequency_assigned",
                 "freq_assigned",
@@ -2017,8 +2122,9 @@ fn build_fcc_area_scan_preset_from_csv(
             ],
         )
         .and_then(|value| parse_fcc_frequency_hz(&value));
-        let lower_hz = get_value(
+        let lower_hz = fcc_record_value(
             &record,
+            &header_index,
             &[
                 "lower_frequency",
                 "freq_lower",
@@ -2027,8 +2133,9 @@ fn build_fcc_area_scan_preset_from_csv(
             ],
         )
         .and_then(|value| parse_fcc_frequency_hz(&value));
-        let upper_hz = get_value(
+        let upper_hz = fcc_record_value(
             &record,
+            &header_index,
             &[
                 "upper_frequency",
                 "freq_upper",
@@ -2417,6 +2524,7 @@ struct UiWidgets {
     ap_inline_channel_draw: DrawingArea,
     sdr_center_freq_entry: Entry,
     sdr_sample_rate_entry: Entry,
+    sdr_bookmark_combo: ComboBoxText,
     sdr_decoder_combo: ComboBoxText,
     sdr_scan_enable_check: CheckButton,
     sdr_scan_start_entry: Entry,
@@ -3635,6 +3743,10 @@ fn build_menubar(
         Some("FCC Area Explorer (CSV, with Signal Type)"),
         Some("app.preset_fcc_area_explorer"),
     );
+    frequency_menu.append(
+        Some("FCC Frequency Explorer (CSV -> Bookmarks)"),
+        Some("app.preset_fcc_frequency_explorer"),
+    );
     presets_root_menu.append_submenu(Some("Frequencies"), &frequency_menu);
 
     let scanner_menu = gio::Menu::new();
@@ -3918,6 +4030,114 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_fcc_area_action);
+
+    let presets_fcc_frequency_action =
+        gio::SimpleAction::new("preset_fcc_frequency_explorer", None);
+    {
+        let window = window.clone();
+        let state = state.clone();
+        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
+        presets_fcc_frequency_action.connect_activate(move |_, _| {
+            let dialog = Dialog::builder()
+                .transient_for(&window)
+                .modal(true)
+                .title("FCC Frequency Explorer")
+                .build();
+            dialog.add_button("Cancel", ResponseType::Cancel);
+            dialog.add_button("Load CSV", ResponseType::Accept);
+            let content = dialog.content_area();
+            content.set_spacing(8);
+            let note = Label::new(Some(
+                "Area filter (city/county/state/callsign token). Leave blank for full CSV.",
+            ));
+            note.set_xalign(0.0);
+            let area_entry = Entry::new();
+            area_entry.set_placeholder_text(Some("Example: Raleigh or NC"));
+            let max_label = Label::new(Some("Max bookmarks to import"));
+            max_label.set_xalign(0.0);
+            let max_entry = Entry::new();
+            max_entry.set_text("200");
+            content.append(&note);
+            content.append(&area_entry);
+            content.append(&max_label);
+            content.append(&max_entry);
+
+            let window = window.clone();
+            let state = state.clone();
+            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+            dialog.connect_response(move |d, response| {
+                if response != ResponseType::Accept {
+                    d.close();
+                    return;
+                }
+                let area = area_entry.text().to_string();
+                let max_entries = max_entry
+                    .text()
+                    .parse::<usize>()
+                    .unwrap_or(200)
+                    .clamp(1, 5000);
+                d.close();
+                choose_file_path(&window, "Select FCC Assignments CSV", PathBuf::from("."), {
+                    let state = state.clone();
+                    let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+                    move |selected| {
+                        let Some(csv_path) = selected else {
+                            return;
+                        };
+                        let imported = match build_fcc_frequency_bookmarks_from_csv(
+                            &csv_path,
+                            &area,
+                            max_entries,
+                        ) {
+                            Ok(rows) => rows,
+                            Err(err) => {
+                                state.borrow_mut().push_status(format!(
+                                    "FCC frequency explorer import failed: {err}"
+                                ));
+                                return;
+                            }
+                        };
+                        if imported.is_empty() {
+                            state.borrow_mut().push_status(format!(
+                                "FCC frequency explorer: no matching frequencies found in {}",
+                                csv_path.display()
+                            ));
+                            return;
+                        }
+
+                        let mut s = state.borrow_mut();
+                        let mut added = 0usize;
+                        for bookmark in imported {
+                            if s.settings
+                                .sdr_bookmarks
+                                .iter()
+                                .any(|current| current.frequency_hz == bookmark.frequency_hz)
+                            {
+                                continue;
+                            }
+                            sdr_bookmark_combo
+                                .append(Some(&bookmark.frequency_hz.to_string()), &bookmark.label);
+                            s.settings.sdr_bookmarks.push(bookmark);
+                            added = added.saturating_add(1);
+                        }
+                        s.save_settings_to_disk();
+                        s.push_status(format!(
+                            "FCC frequency explorer loaded from {} [{}] new bookmarks added: {}",
+                            csv_path.display(),
+                            if area.trim().is_empty() {
+                                "all rows".to_string()
+                            } else {
+                                area.trim().to_string()
+                            },
+                            added
+                        ));
+                    }
+                });
+            });
+            dialog.present();
+        });
+    }
+    app.add_action(&presets_fcc_frequency_action);
 
     let file_menu = gio::Menu::new();
     file_menu.append(
@@ -7880,6 +8100,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_inline_channel_draw,
             sdr_center_freq_entry,
             sdr_sample_rate_entry,
+            sdr_bookmark_combo,
             sdr_decoder_combo,
             sdr_scan_enable_check,
             sdr_scan_start_entry,
@@ -7985,6 +8206,7 @@ fn bind_poll_loop(
         ap_inline_channel_draw,
         sdr_center_freq_entry: _sdr_center_freq_entry,
         sdr_sample_rate_entry: _sdr_sample_rate_entry,
+        sdr_bookmark_combo: _sdr_bookmark_combo,
         sdr_decoder_combo: _sdr_decoder_combo,
         sdr_scan_enable_check: _sdr_scan_enable_check,
         sdr_scan_start_entry: _sdr_scan_start_entry,
@@ -17223,6 +17445,30 @@ mod tests {
         std::fs::write(&path, csv).expect("write csv");
         let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh").expect("parse ok");
         assert!(scan.is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn fcc_frequency_bookmark_builder_emits_signal_typed_labels() {
+        let path = std::env::temp_dir().join(format!("fcc-freq-{}.csv", Uuid::new_v4()));
+        let csv = "city,state,callsign,frequency_assigned,radio_service_desc\nRaleigh,NC,WQAB123,155.340,Public Safety\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let out = build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", 10).expect("parse ok");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].frequency_hz, 155_340_000);
+        assert!(out[0].label.contains("Public Safety"));
+        assert!(out[0].label.contains("WQAB123"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn fcc_frequency_bookmark_builder_respects_area_filter_and_limit() {
+        let path = std::env::temp_dir().join(format!("fcc-freq-limit-{}.csv", Uuid::new_v4()));
+        let csv = "city,state,frequency_assigned,radio_service_desc\nRaleigh,NC,155.340,Public Safety\nRaleigh,NC,460.125,Public Safety\nAustin,TX,453.500,Business\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let out = build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", 1).expect("parse ok");
+        assert_eq!(out.len(), 1);
+        assert!(out[0].frequency_hz == 155_340_000 || out[0].frequency_hz == 460_125_000);
         let _ = std::fs::remove_file(path);
     }
 
