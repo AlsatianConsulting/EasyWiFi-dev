@@ -7417,6 +7417,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             } else {
                 50_000
             };
+            let steps_per_sec = sdr_scan_speed_entry
+                .text()
+                .trim()
+                .parse::<f64>()
+                .unwrap_or(8.0)
+                .max(0.1);
+            let squelch_dbm = sdr_squelch_scale.value() as f32;
             let sample_rate_hz = (((span_hz.saturating_mul(12)) / 10)
                 .max(2_000_000)
                 .min(20_000_000)) as u32;
@@ -7426,21 +7433,22 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             sdr_scan_start_entry.set_text(&start_hz.to_string());
             sdr_scan_end_entry.set_text(&end_hz.to_string());
             sdr_scan_step_entry.set_text(&step_hz.to_string());
-            sdr_scan_speed_entry.set_text("8.00");
-            sdr_squelch_scale.set_value(-82.0);
+            sdr_scan_speed_entry.set_text(&format!("{steps_per_sec:.2}"));
 
             let mut s = state.borrow_mut();
             if let Some(runtime) = s.sdr_runtime.as_ref() {
                 runtime.set_center_freq(center_hz);
-                runtime.set_scan_range(true, start_hz, end_hz, step_hz, 8.0);
-                runtime.set_squelch(-82.0);
+                runtime.set_scan_range(true, start_hz, end_hz, step_hz, steps_per_sec);
+                runtime.set_squelch(squelch_dbm);
             }
             s.push_status(format!(
-                "bookmark scan applied: center {:.3} MHz ±{} kHz (range {:.3}-{:.3} MHz)",
+                "bookmark scan applied: center {:.3} MHz ±{} kHz (range {:.3}-{:.3} MHz, speed {:.2}/s, squelch {:.0} dBm)",
                 center_hz as f64 / 1_000_000.0,
                 window_khz,
                 start_hz as f64 / 1_000_000.0,
-                end_hz as f64 / 1_000_000.0
+                end_hz as f64 / 1_000_000.0,
+                steps_per_sec,
+                squelch_dbm
             ));
         });
     }
