@@ -66,6 +66,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 46. Presets `Frequencies` submenu now includes FCC explorer workflows for both area scan profile generation and per-frequency bookmark import, with signal/station type labeling where present in source data.
 47. FCC area explorer now also supports direct CSV URL ingestion from within the app (no pre-download required), then applies/persists the generated scan profile.
 48. FCC URL ingestion now uses retry+timeout handling, and frequency-bookmark explorer also supports direct CSV URL import under `Presets -> Frequencies`.
+49. FCC frequency-bookmark import status now reports added vs skipped-duplicate counts to improve large-import auditability.
 
 ### Bluetooth
 
