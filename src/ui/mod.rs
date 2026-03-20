@@ -6439,6 +6439,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let sdr_capture_sample_btn = Button::with_label("Capture IQ Sample");
     let sdr_export_map_btn = Button::with_label("Export Map JSON");
     let sdr_export_decode_btn = Button::with_label("Export Decode JSON");
+    let sdr_export_decode_filtered_btn = Button::with_label("Export Decode (Filtered)");
     let sdr_export_health_btn = Button::with_label("Export SDR Health JSON");
     let sdr_export_satcom_btn = Button::with_label("Export Satcom JSON");
     let sdr_export_satcom_filtered_btn = Button::with_label("Export Satcom (Filtered)");
@@ -6574,6 +6575,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&sdr_export_satcom_filtered_btn, 9, 8, 2, 1);
     sdr_controls.attach(&sdr_export_decode_btn, 7, 14, 2, 1);
     sdr_controls.attach(&sdr_export_aircraft_correlation_btn, 9, 14, 2, 1);
+    sdr_controls.attach(&sdr_export_decode_filtered_btn, 7, 16, 2, 1);
     sdr_controls.attach(&sdr_export_health_btn, 7, 15, 4, 1);
     sdr_controls.attach(&sdr_center_geiger_rssi_label, 0, 8, 3, 1);
     sdr_controls.attach(&sdr_center_geiger_tone_label, 3, 8, 3, 1);
@@ -8304,6 +8306,59 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 Err(err) => state
                     .borrow_mut()
                     .push_status(format!("SDR decode export failed: {err}")),
+            }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_model = sdr_model.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_decode_pagination = sdr_decode_pagination.clone();
+        sdr_export_decode_filtered_btn.connect_clicked(move |_| {
+            let all_rows = sdr_model.borrow().decode_rows.clone();
+            let filters = pagination_filter_terms(&sdr_decode_pagination);
+            let filtered = all_rows
+                .into_iter()
+                .filter(|row| {
+                    row_matches_column_filters(&filters, |column_id| {
+                        sdr_decode_row_column_value(row, column_id)
+                    })
+                })
+                .collect::<Vec<_>>();
+            if filtered.is_empty() {
+                state.borrow_mut().push_status(
+                    "SDR decode filtered export skipped: no rows match active filters".to_string(),
+                );
+                return;
+            }
+            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
+            let output_dir = if output_dir_text.is_empty() {
+                SdrConfig::default().log_output_dir
+            } else {
+                PathBuf::from(output_dir_text)
+            };
+            if let Err(err) = fs::create_dir_all(&output_dir) {
+                state.borrow_mut().push_status(format!(
+                    "SDR decode filtered export failed (create dir {}): {err}",
+                    output_dir.display()
+                ));
+                return;
+            }
+            let json_path = output_dir.join(format!(
+                "sdr_decode_filtered_{}.json",
+                Utc::now().format("%Y%m%dT%H%M%SZ")
+            ));
+            match export_sdr_decode_artifacts(&json_path, &filtered) {
+                Ok((json_path, csv_path)) => state.borrow_mut().push_status(format!(
+                    "exported filtered SDR decode artifacts: {}, {} | filters={}",
+                    json_path.display(),
+                    csv_path.display(),
+                    pagination_filter_signature(&filters)
+                )),
+                Err(err) => state
+                    .borrow_mut()
+                    .push_status(format!("SDR decode filtered export failed: {err}")),
             }
         });
     }

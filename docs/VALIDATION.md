@@ -29,6 +29,7 @@ Current SDR logging can also emit:
 - optional satcom parser denylist control via `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST` (protocol/decoder token match)
 - satcom export action now emits companion CSV + parsed-only JSON + denied-only JSON + summary JSON artifacts
 - decode export action emits decode-row JSON + CSV artifacts
+- decode export now also supports filtered JSON + CSV artifacts based on active decode-table filters
 - bookmark management now includes `Import SDR Bookmarks CSV` (`frequency_hz` or `frequency_mhz` columns)
 - bookmark workflow now includes one-click tune + decoder start (`Decode Bookmark`)
 - aircraft correlation export action emits ADS-B/ACARS correlation JSON + CSV artifacts (`icao_hex`/`callsign` merged identities)

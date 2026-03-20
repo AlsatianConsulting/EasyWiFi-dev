@@ -91,6 +91,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 71. `Presets -> Frequencies` now includes `Import SDR Bookmarks CSV`, supporting `frequency_hz` or `frequency_mhz` columns with dedupe/normalization and live bookmark refresh.
 72. SDR bookmark controls now include `Decode Bookmark`, which tunes to the selected bookmark and starts the selected decoder in one action (with existing hardware/dependency guardrails).
 73. SDR controls now include `Export SDR Health JSON`, capturing decoder telemetry/rates plus satcom and aircraft-correlation summaries as a lightweight runtime snapshot artifact.
+74. SDR controls now include `Export Decode (Filtered)`, exporting only decode rows matching active decode-table column filters as JSON+CSV artifacts.
 
 ### Bluetooth
 

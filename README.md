@@ -48,6 +48,7 @@ This repository contains an MVP implementation with:
   - Satcom parser denylist is configurable in SDR controls (persisted in settings), with env fallback `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST`
   - Satcom export now writes full audit JSON plus companion CSV/parsed-only JSON/denied-only JSON/summary JSON artifacts
   - Decode export writes full decode-row JSON + CSV artifacts
+  - Decode export now also supports filtered JSON + CSV output using active decode-table filters
   - `Validate Decoder` button performs a dry-run command/dependency readiness check for the selected decoder/hardware profile
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks CSV` (`frequency_hz` or `frequency_mhz` input columns)
   - Bookmark controls include `Decode Bookmark` for one-click tune + decoder start on the selected bookmark
