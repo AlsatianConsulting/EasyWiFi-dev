@@ -1207,6 +1207,7 @@ struct ScannerPresetEntry {
     label: String,
     start_hz: u64,
     end_hz: u64,
+    sample_rate_hz: Option<u32>,
     step_hz: u64,
     steps_per_sec: f64,
     squelch_dbm: f32,
@@ -1216,6 +1217,39 @@ struct ScannerPresetEntry {
 struct ScannerPresetGroup {
     label: String,
     entries: Vec<ScannerPresetEntry>,
+}
+
+fn scanner_presets_from_settings(settings: &AppSettings) -> Option<ScannerPresetGroup> {
+    let entries = settings
+        .sdr_operator_presets
+        .iter()
+        .enumerate()
+        .filter(|(_, preset)| preset.scan_enabled && preset.scan_start_hz < preset.scan_end_hz)
+        .map(|(index, preset)| ScannerPresetEntry {
+            id: format!("saved_user_{}", user_sdr_preset_id(index)),
+            label: normalized_sdr_preset_label(&preset.label, preset.center_freq_hz),
+            start_hz: preset.scan_start_hz,
+            end_hz: preset.scan_end_hz,
+            sample_rate_hz: Some(preset.sample_rate_hz),
+            step_hz: preset.scan_step_hz.max(1),
+            steps_per_sec: if preset.scan_steps_per_sec.is_finite()
+                && preset.scan_steps_per_sec > 0.0
+            {
+                preset.scan_steps_per_sec
+            } else {
+                6.0
+            },
+            squelch_dbm: preset.squelch_dbm.clamp(-130.0, -10.0),
+        })
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        None
+    } else {
+        Some(ScannerPresetGroup {
+            label: "Saved Scanner Presets".to_string(),
+            entries,
+        })
+    }
 }
 
 fn default_frequency_preset_groups() -> Vec<FrequencyPresetGroup> {
@@ -1257,6 +1291,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "2.4 GHz Full Band".to_string(),
                     start_hz: 2_400_000_000,
                     end_hz: 2_483_500_000,
+                    sample_rate_hz: None,
                     step_hz: 1_000_000,
                     steps_per_sec: 8.0,
                     squelch_dbm: -82.0,
@@ -1266,6 +1301,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "Wi-Fi 2.4 Channels".to_string(),
                     start_hz: 2_412_000_000,
                     end_hz: 2_472_000_000,
+                    sample_rate_hz: None,
                     step_hz: 5_000_000,
                     steps_per_sec: 8.0,
                     squelch_dbm: -80.0,
@@ -1275,6 +1311,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "Bluetooth 2.4 Band".to_string(),
                     start_hz: 2_402_000_000,
                     end_hz: 2_480_000_000,
+                    sample_rate_hz: None,
                     step_hz: 1_000_000,
                     steps_per_sec: 10.0,
                     squelch_dbm: -84.0,
@@ -1289,6 +1326,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "Wi-Fi 5 Full".to_string(),
                     start_hz: 5_170_000_000,
                     end_hz: 5_835_000_000,
+                    sample_rate_hz: None,
                     step_hz: 5_000_000,
                     steps_per_sec: 7.0,
                     squelch_dbm: -80.0,
@@ -1298,6 +1336,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "Wi-Fi 6E Full".to_string(),
                     start_hz: 5_925_000_000,
                     end_hz: 7_125_000_000,
+                    sample_rate_hz: None,
                     step_hz: 5_000_000,
                     steps_per_sec: 7.0,
                     squelch_dbm: -80.0,
@@ -1312,6 +1351,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "315 MHz ISM Window".to_string(),
                     start_hz: 314_000_000,
                     end_hz: 316_000_000,
+                    sample_rate_hz: None,
                     step_hz: 25_000,
                     steps_per_sec: 8.0,
                     squelch_dbm: -84.0,
@@ -1321,6 +1361,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "433 MHz ISM Window".to_string(),
                     start_hz: 433_000_000,
                     end_hz: 435_000_000,
+                    sample_rate_hz: None,
                     step_hz: 25_000,
                     steps_per_sec: 8.0,
                     squelch_dbm: -82.0,
@@ -1330,6 +1371,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "902-928 MHz ISM".to_string(),
                     start_hz: 902_000_000,
                     end_hz: 928_000_000,
+                    sample_rate_hz: None,
                     step_hz: 200_000,
                     steps_per_sec: 6.0,
                     squelch_dbm: -80.0,
@@ -1344,6 +1386,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "DECT 1880-1900".to_string(),
                     start_hz: 1_880_000_000,
                     end_hz: 1_900_000_000,
+                    sample_rate_hz: None,
                     step_hz: 1_728_000,
                     steps_per_sec: 6.0,
                     squelch_dbm: -76.0,
@@ -1353,6 +1396,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "Pager VHF 152-159".to_string(),
                     start_hz: 152_000_000,
                     end_hz: 159_000_000,
+                    sample_rate_hz: None,
                     step_hz: 12_500,
                     steps_per_sec: 8.0,
                     squelch_dbm: -84.0,
@@ -1362,6 +1406,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "Pager UHF 454-460".to_string(),
                     start_hz: 454_000_000,
                     end_hz: 460_000_000,
+                    sample_rate_hz: None,
                     step_hz: 12_500,
                     steps_per_sec: 8.0,
                     squelch_dbm: -82.0,
@@ -1371,6 +1416,7 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     label: "Satellite L-Band 1525-1660".to_string(),
                     start_hz: 1_525_000_000,
                     end_hz: 1_660_000_000,
+                    sample_rate_hz: None,
                     step_hz: 10_000,
                     steps_per_sec: 5.0,
                     squelch_dbm: -78.0,
@@ -3182,7 +3228,11 @@ fn build_menubar(
     presets_root_menu.append_submenu(Some("Frequencies"), &frequency_menu);
 
     let scanner_menu = gio::Menu::new();
-    for group in default_scanner_preset_groups() {
+    let mut scanner_groups = default_scanner_preset_groups();
+    if let Some(saved_scanners) = scanner_presets_from_settings(&state.borrow().settings) {
+        scanner_groups.push(saved_scanners);
+    }
+    for group in scanner_groups {
         let group_menu = gio::Menu::new();
         for entry in group.entries {
             let action_name = format!("preset_scan_{}", entry.id);
@@ -3205,14 +3255,19 @@ fn build_menubar(
             let entry_label = entry.label.clone();
             let start_hz = entry.start_hz;
             let end_hz = entry.end_hz;
+            let sample_rate_override = entry.sample_rate_hz;
             let step_hz = entry.step_hz;
             let steps_per_sec = entry.steps_per_sec;
             let squelch_dbm = entry.squelch_dbm;
             let action = gio::SimpleAction::new(&action_name, None);
             action.connect_activate(move |_, _| {
                 let center_hz = start_hz + (end_hz.saturating_sub(start_hz) / 2);
-                let mut sample_rate_hz =
-                    ((end_hz.saturating_sub(start_hz)).saturating_mul(12) / 10).max(2_000_000);
+                let mut sample_rate_hz = sample_rate_override.unwrap_or(
+                    ((end_hz.saturating_sub(start_hz)).saturating_mul(12) / 10)
+                        .max(2_000_000)
+                        .min(20_000_000) as u32,
+                );
+                sample_rate_hz = sample_rate_hz.clamp(200_000, 20_000_000);
                 sample_rate_hz = sample_rate_hz.min(20_000_000);
                 sdr_center_freq_entry.set_text(&center_hz.to_string());
                 sdr_sample_rate_entry.set_text(&sample_rate_hz.to_string());
@@ -16383,6 +16438,42 @@ mod tests {
         assert!(entries
             .iter()
             .all(|entry| entry.start_hz < entry.end_hz && entry.step_hz > 0));
+    }
+
+    #[test]
+    fn scanner_presets_include_saved_operator_scan_profiles() {
+        let settings = AppSettings {
+            sdr_operator_presets: vec![
+                SdrOperatorPresetSetting {
+                    label: "Custom IoT".to_string(),
+                    center_freq_hz: 915_000_000,
+                    sample_rate_hz: 2_400_000,
+                    scan_enabled: true,
+                    scan_start_hz: 902_000_000,
+                    scan_end_hz: 928_000_000,
+                    scan_step_hz: 250_000,
+                    scan_steps_per_sec: 6.0,
+                    squelch_dbm: -79.0,
+                },
+                SdrOperatorPresetSetting {
+                    label: "Not Scanner".to_string(),
+                    center_freq_hz: 433_920_000,
+                    sample_rate_hz: 2_400_000,
+                    scan_enabled: false,
+                    scan_start_hz: 433_000_000,
+                    scan_end_hz: 435_000_000,
+                    scan_step_hz: 25_000,
+                    scan_steps_per_sec: 8.0,
+                    squelch_dbm: -82.0,
+                },
+            ],
+            ..AppSettings::default()
+        };
+        let group = scanner_presets_from_settings(&settings).expect("saved scanner group");
+        assert_eq!(group.label, "Saved Scanner Presets");
+        assert_eq!(group.entries.len(), 1);
+        assert_eq!(group.entries[0].label, "Custom IoT");
+        assert_eq!(group.entries[0].sample_rate_hz, Some(2_400_000));
     }
 
     #[test]

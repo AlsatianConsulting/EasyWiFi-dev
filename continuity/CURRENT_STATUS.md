@@ -54,6 +54,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 34. Top-level `Presets` menu now provides grouped default frequency selections for Wi-Fi channels, Bluetooth frequencies, pager bands, and satellite targets; selection updates/tunes SDR center frequency.
 35. Presets now include additional DECT/DMR/IoT/ISM defaults and scanner profiles that auto-configure center/sample-rate/range/step/squelch and enable scan mode from the menu.
 36. Scanner preset catalog now covers 2.4 GHz, Wi-Fi 5/6E, DECT, pager VHF/UHF, and satellite L-band ranges with sane scan-step defaults.
+37. Scanner menu now includes user-saved scan profiles (from the existing editable SDR preset system), so custom range/squelch workflows are accessible directly under `Presets`.
 
 ### Bluetooth
 
