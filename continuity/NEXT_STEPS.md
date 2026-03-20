@@ -66,7 +66,7 @@ Highest practical decoder backlog in the order requested:
 7. Meshcore metadata support (plugin preset implemented; prioritize live RF/toolchain validation)
 8. radiosonde
 9. APRS / AX.25 (implemented; prioritize live RF validation)
-10. weather satellite APT
+10. weather satellite APT (implemented in presets/macros + plugin path; prioritize live RF/toolchain validation)
 11. P25 metadata/audio path
 12. DECT metadata/audio path
 13. GSM/LTE safe metadata path where policy permits
