@@ -3084,6 +3084,10 @@ fn plugin_dependency_descriptors(plugin_defs: &[SdrPluginDefinition]) -> Vec<Dep
                 tool: "Meshcore metadata CLI".to_string(),
                 package_hint: "meshcore".to_string(),
             }],
+            "radiosonde_rs41" => vec![DependencyDescriptor {
+                tool: "Radiosonde RS41 decoder".to_string(),
+                package_hint: "rtl-433".to_string(),
+            }],
             "inmarsat_aero" => vec![DependencyDescriptor {
                 tool: "JAERO".to_string(),
                 package_hint: "jaero".to_string(),
@@ -3773,6 +3777,12 @@ mod tests {
                 command_template: "satdump live noaa_apt /tmp/out -".to_string(),
                 protocol: Some("weather_sat".to_string()),
             },
+            SdrPluginDefinition {
+                id: "radiosonde_rs41".to_string(),
+                label: "Radiosonde RS41".to_string(),
+                command_template: "rtl_433 -R 149".to_string(),
+                protocol: Some("radiosonde".to_string()),
+            },
         ];
         let descriptors = dependency_descriptors_with_plugins(&plugin_defs);
         assert!(descriptors.iter().any(|descriptor| {
@@ -3793,6 +3803,9 @@ mod tests {
         assert!(descriptors.iter().any(|descriptor| {
             descriptor.tool == "Weather satellite APT decoder"
                 && descriptor.package_hint == "satdump"
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.tool == "Radiosonde RS41 decoder" && descriptor.package_hint == "rtl-433"
         }));
     }
 
