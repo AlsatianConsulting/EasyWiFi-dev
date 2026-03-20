@@ -6155,6 +6155,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_bookmark_combo.set_active(Some(0));
     let sdr_bookmark_add_btn = Button::with_label("Add Bookmark");
     let sdr_bookmark_jump_btn = Button::with_label("Jump");
+    let sdr_bookmark_scan_window_entry = Entry::new();
+    sdr_bookmark_scan_window_entry.set_width_chars(7);
+    sdr_bookmark_scan_window_entry.set_text("100");
+    let sdr_bookmark_scan_btn = Button::with_label("Scan Around Bookmark");
     let sdr_preset_defs = Rc::new(RefCell::new(sdr_presets_from_settings(
         &state.borrow().settings,
     )));
@@ -6216,6 +6220,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&sdr_bookmark_combo, 1, 6, 2, 1);
     sdr_controls.attach(&sdr_bookmark_jump_btn, 3, 6, 1, 1);
     sdr_controls.attach(&sdr_bookmark_add_btn, 4, 6, 1, 1);
+    sdr_controls.attach(&Label::new(Some("Scan ±kHz")), 0, 7, 1, 1);
+    sdr_controls.attach(&sdr_bookmark_scan_window_entry, 1, 7, 1, 1);
+    sdr_controls.attach(&sdr_bookmark_scan_btn, 2, 7, 3, 1);
     sdr_controls.attach(&Label::new(Some("Sample (s)")), 5, 6, 1, 1);
     sdr_controls.attach(&sdr_sample_duration_spin, 6, 6, 1, 1);
     sdr_controls.attach(&Label::new(Some("IQ Dir")), 7, 6, 1, 1);
@@ -7247,6 +7254,70 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 }
             }
             refresh_sdr_bookmark_combo(&sdr_bookmarks, &sdr_bookmark_combo, Some(freq_hz));
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_bookmark_scan_window_entry = sdr_bookmark_scan_window_entry.clone();
+        sdr_bookmark_scan_btn.connect_clicked(move |_| {
+            let Some(active_id) = sdr_bookmark_combo.active_id() else {
+                return;
+            };
+            let Ok(center_hz) = active_id.as_str().parse::<u64>() else {
+                return;
+            };
+            let window_khz = sdr_bookmark_scan_window_entry
+                .text()
+                .trim()
+                .parse::<u64>()
+                .unwrap_or(100)
+                .clamp(1, 50_000);
+            let half_window_hz = window_khz.saturating_mul(1_000);
+            let start_hz = center_hz.saturating_sub(half_window_hz).max(100_000);
+            let end_hz = center_hz.saturating_add(half_window_hz).max(start_hz + 1);
+            let span_hz = end_hz.saturating_sub(start_hz);
+            let step_hz = if span_hz <= 2_000_000 {
+                12_500
+            } else if span_hz <= 20_000_000 {
+                25_000
+            } else {
+                50_000
+            };
+            let sample_rate_hz = (((span_hz.saturating_mul(12)) / 10)
+                .max(2_000_000)
+                .min(20_000_000)) as u32;
+            sdr_center_freq_entry.set_text(&center_hz.to_string());
+            sdr_sample_rate_entry.set_text(&sample_rate_hz.to_string());
+            sdr_scan_enable_check.set_active(true);
+            sdr_scan_start_entry.set_text(&start_hz.to_string());
+            sdr_scan_end_entry.set_text(&end_hz.to_string());
+            sdr_scan_step_entry.set_text(&step_hz.to_string());
+            sdr_scan_speed_entry.set_text("8.00");
+            sdr_squelch_scale.set_value(-82.0);
+
+            let mut s = state.borrow_mut();
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                runtime.set_center_freq(center_hz);
+                runtime.set_scan_range(true, start_hz, end_hz, step_hz, 8.0);
+                runtime.set_squelch(-82.0);
+            }
+            s.push_status(format!(
+                "bookmark scan applied: center {:.3} MHz ±{} kHz (range {:.3}-{:.3} MHz)",
+                center_hz as f64 / 1_000_000.0,
+                window_khz,
+                start_hz as f64 / 1_000_000.0,
+                end_hz as f64 / 1_000_000.0
+            ));
         });
     }
 
