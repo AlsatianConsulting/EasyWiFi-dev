@@ -1929,6 +1929,29 @@ fn parse_fcc_frequency_hz(raw: &str) -> Option<u64> {
     }
 }
 
+fn fetch_csv_from_url(url: &str) -> Result<PathBuf> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("empty URL");
+    }
+    let response = ureq::get(trimmed)
+        .call()
+        .with_context(|| format!("failed to fetch {trimmed}"))?;
+    let mut reader = response.into_reader();
+    let mut body = String::new();
+    use std::io::Read;
+    reader
+        .read_to_string(&mut body)
+        .with_context(|| format!("failed to read response body from {trimmed}"))?;
+    if body.trim().is_empty() {
+        anyhow::bail!("downloaded CSV is empty");
+    }
+    let path = std::env::temp_dir().join(format!("wirelessexplorer-fcc-{}.csv", Uuid::new_v4()));
+    fs::write(&path, body)
+        .with_context(|| format!("failed to write downloaded FCC CSV {}", path.display()))?;
+    Ok(path)
+}
+
 fn fcc_record_value(
     record: &csv::StringRecord,
     header_index: &HashMap<String, usize>,
@@ -3744,6 +3767,10 @@ fn build_menubar(
         Some("app.preset_fcc_area_explorer"),
     );
     frequency_menu.append(
+        Some("FCC Area Explorer (CSV URL)"),
+        Some("app.preset_fcc_area_url_explorer"),
+    );
+    frequency_menu.append(
         Some("FCC Frequency Explorer (CSV -> Bookmarks)"),
         Some("app.preset_fcc_frequency_explorer"),
     );
@@ -4030,6 +4057,138 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_fcc_area_action);
+
+    let presets_fcc_area_url_action = gio::SimpleAction::new("preset_fcc_area_url_explorer", None);
+    {
+        let window = window.clone();
+        let state = state.clone();
+        let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = widgets.sdr_sample_rate_entry.clone();
+        let sdr_scan_enable_check = widgets.sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = widgets.sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = widgets.sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = widgets.sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = widgets.sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = widgets.sdr_squelch_scale.clone();
+        presets_fcc_area_url_action.connect_activate(move |_, _| {
+            let dialog = Dialog::builder()
+                .transient_for(&window)
+                .modal(true)
+                .title("FCC Area Explorer (CSV URL)")
+                .build();
+            dialog.add_button("Cancel", ResponseType::Cancel);
+            dialog.add_button("Load URL", ResponseType::Accept);
+            let content = dialog.content_area();
+            content.set_spacing(8);
+            let area_label = Label::new(Some(
+                "Area filter (city/county/state/callsign token). Leave blank for full CSV.",
+            ));
+            area_label.set_xalign(0.0);
+            let area_entry = Entry::new();
+            area_entry.set_placeholder_text(Some("Example: Raleigh or NC"));
+            let url_label = Label::new(Some("CSV URL"));
+            url_label.set_xalign(0.0);
+            let url_entry = Entry::new();
+            url_entry.set_placeholder_text(Some("https://.../fcc-assignments.csv"));
+            content.append(&area_label);
+            content.append(&area_entry);
+            content.append(&url_label);
+            content.append(&url_entry);
+
+            let state = state.clone();
+            let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+            let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+            let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+            let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+            let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+            let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+            let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+            let sdr_squelch_scale = sdr_squelch_scale.clone();
+            dialog.connect_response(move |d, response| {
+                if response != ResponseType::Accept {
+                    d.close();
+                    return;
+                }
+                let area = area_entry.text().to_string();
+                let url = url_entry.text().to_string();
+                d.close();
+
+                let csv_path = match fetch_csv_from_url(&url) {
+                    Ok(path) => path,
+                    Err(err) => {
+                        state
+                            .borrow_mut()
+                            .push_status(format!("FCC area explorer URL fetch failed: {err}"));
+                        return;
+                    }
+                };
+
+                let fcc_scan = match build_fcc_area_scan_preset_from_csv(&csv_path, &area) {
+                    Ok(Some(preset)) => preset,
+                    Ok(None) => {
+                        state.borrow_mut().push_status(format!(
+                            "FCC area explorer: no matching frequency assignments found in {}",
+                            csv_path.display()
+                        ));
+                        let _ = fs::remove_file(&csv_path);
+                        return;
+                    }
+                    Err(err) => {
+                        state
+                            .borrow_mut()
+                            .push_status(format!("FCC area explorer import failed: {err}"));
+                        let _ = fs::remove_file(&csv_path);
+                        return;
+                    }
+                };
+                let preset = fcc_scan.preset;
+                let signal_type = fcc_scan.signal_type;
+                let matched_rows = fcc_scan.matched_rows;
+                sdr_center_freq_entry.set_text(&preset.center_freq_hz.to_string());
+                sdr_sample_rate_entry.set_text(&preset.sample_rate_hz.to_string());
+                sdr_scan_enable_check.set_active(true);
+                sdr_scan_start_entry.set_text(&preset.scan_start_hz.to_string());
+                sdr_scan_end_entry.set_text(&preset.scan_end_hz.to_string());
+                sdr_scan_step_entry.set_text(&preset.scan_step_hz.to_string());
+                sdr_scan_speed_entry.set_text(&format!("{:.2}", preset.scan_steps_per_sec));
+                sdr_squelch_scale.set_value(preset.squelch_dbm as f64);
+
+                let mut s = state.borrow_mut();
+                let added = merge_sdr_operator_presets(
+                    &mut s.settings.sdr_operator_presets,
+                    vec![preset.clone()],
+                );
+                s.save_settings_to_disk();
+                if let Some(runtime) = s.sdr_runtime.as_ref() {
+                    runtime.set_center_freq(preset.center_freq_hz);
+                    runtime.set_scan_range(
+                        true,
+                        preset.scan_start_hz,
+                        preset.scan_end_hz,
+                        preset.scan_step_hz,
+                        preset.scan_steps_per_sec,
+                    );
+                    runtime.set_squelch(preset.squelch_dbm);
+                }
+                s.push_status(format!(
+                    "FCC area explorer URL loaded [{}] type={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
+                    if area.trim().is_empty() {
+                        "all rows".to_string()
+                    } else {
+                        area.trim().to_string()
+                    },
+                    signal_type.unwrap_or_else(|| "unknown".to_string()),
+                    matched_rows,
+                    preset.scan_start_hz as f64 / 1_000_000.0,
+                    preset.scan_end_hz as f64 / 1_000_000.0,
+                    added
+                ));
+                let _ = fs::remove_file(csv_path);
+            });
+            dialog.present();
+        });
+    }
+    app.add_action(&presets_fcc_area_url_action);
 
     let presets_fcc_frequency_action =
         gio::SimpleAction::new("preset_fcc_frequency_explorer", None);
