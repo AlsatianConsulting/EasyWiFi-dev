@@ -45,7 +45,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 4. Validate satcom no-payload redaction in live decoder runs (decode/map/satcom logs).
 5. Validate live `inmarsat_stdc` built-in decoder path and parsed satcom payload-field extraction quality on-air.
 6. Validate persisted satcom parser denylist behavior from SDR controls and env fallback interaction.
-7. Validate new satcom export artifacts (CSV/parsed-only/denied-only JSON) in downstream tooling.
+7. Validate new satcom export artifacts (CSV/parsed-only/denied-only/summary JSON) in downstream tooling.
 8. Validate decoder telemetry counters against expected decode/log rates during long SDR runs.
 9. Validate map/satcom `message` + `raw` side-by-side logging in live decoder runs.
 10. Validate corrected ACARS runtime integration live.

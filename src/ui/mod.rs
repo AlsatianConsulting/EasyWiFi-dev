@@ -8012,17 +8012,18 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 Utc::now().format("%Y%m%dT%H%M%SZ")
             ));
             match export_sdr_satcom_artifacts(&file_path, &observations) {
-                Ok((json_path, csv_path, parsed_path, denied_path)) => {
+                Ok((json_path, csv_path, parsed_path, denied_path, summary_path)) => {
                     let payload_capture_mode = observations
                         .first()
                         .map(|row| row.payload_capture_mode.as_str())
                         .unwrap_or("unknown");
                     state.borrow_mut().push_status(format!(
-                        "exported SDR satcom artifacts: {}, {}, {}, {} | payload_capture={}",
+                        "exported SDR satcom artifacts: {}, {}, {}, {}, {} | payload_capture={}",
                         json_path.display(),
                         csv_path.display(),
                         parsed_path.display(),
                         denied_path.display(),
+                        summary_path.display(),
                         payload_capture_mode
                     ));
                 }
@@ -8083,17 +8084,18 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 Utc::now().format("%Y%m%dT%H%M%SZ")
             ));
             match export_sdr_satcom_artifacts(&file_path, &filtered) {
-                Ok((json_path, csv_path, parsed_path, denied_path)) => {
+                Ok((json_path, csv_path, parsed_path, denied_path, summary_path)) => {
                     let payload_capture_mode = filtered
                         .first()
                         .map(|row| row.payload_capture_mode.as_str())
                         .unwrap_or("unknown");
                     state.borrow_mut().push_status(format!(
-                        "exported filtered SDR satcom artifacts: {}, {}, {}, {} | payload_capture={} | filters={}",
+                        "exported filtered SDR satcom artifacts: {}, {}, {}, {}, {} | payload_capture={} | filters={}",
                         json_path.display(),
                         csv_path.display(),
                         parsed_path.display(),
                         denied_path.display(),
+                        summary_path.display(),
                         payload_capture_mode,
                         pagination_filter_signature(&filters)
                     ));
@@ -11686,7 +11688,7 @@ fn export_sdr_aircraft_correlation_artifacts(
 fn export_sdr_satcom_artifacts(
     primary_json_path: &std::path::Path,
     rows: &[SdrSatcomObservation],
-) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
+) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf, PathBuf)> {
     write_json_pretty(primary_json_path, rows)?;
 
     let mut csv_path = primary_json_path.to_path_buf();
@@ -11718,15 +11720,72 @@ fn export_sdr_satcom_artifacts(
 
     let parsed_path = parent.join(format!("{stem}_parsed.{extension}"));
     let denied_path = parent.join(format!("{stem}_denied.{extension}"));
+    let summary_path = parent.join(format!("{stem}_summary.{extension}"));
     write_json_pretty(&parsed_path, &parsed_rows)?;
     write_json_pretty(&denied_path, &denied_rows)?;
+    write_json_pretty(&summary_path, &build_sdr_satcom_summary(rows))?;
 
     Ok((
         primary_json_path.to_path_buf(),
         csv_path,
         parsed_path,
         denied_path,
+        summary_path,
     ))
+}
+
+fn build_sdr_satcom_summary(rows: &[SdrSatcomObservation]) -> serde_json::Value {
+    fn bump(map: &mut HashMap<String, u64>, key: &str) {
+        *map.entry(key.to_string()).or_insert(0) += 1;
+    }
+
+    let mut by_protocol = HashMap::<String, u64>::new();
+    let mut by_decoder = HashMap::<String, u64>::new();
+    let mut by_band = HashMap::<String, u64>::new();
+    let mut by_posture = HashMap::<String, u64>::new();
+    let mut by_payload_capture = HashMap::<String, u64>::new();
+    let mut by_payload_parse = HashMap::<String, u64>::new();
+    let mut with_coordinates: u64 = 0;
+    let mut without_coordinates: u64 = 0;
+    let mut identifier_hint_types = HashSet::<String>::new();
+
+    for row in rows {
+        bump(&mut by_protocol, &row.protocol);
+        bump(&mut by_decoder, &row.decoder);
+        bump(&mut by_band, &row.band);
+        bump(&mut by_posture, &row.encryption_posture);
+        bump(&mut by_payload_capture, &row.payload_capture_mode);
+        bump(&mut by_payload_parse, &row.payload_parse_state);
+        if row.has_coordinates {
+            with_coordinates += 1;
+        } else {
+            without_coordinates += 1;
+        }
+        for hint in &row.identifier_hints {
+            identifier_hint_types.insert(hint.clone());
+        }
+    }
+
+    let first_seen = rows.iter().map(|row| row.timestamp).min();
+    let last_seen = rows.iter().map(|row| row.timestamp).max();
+    let mut identifier_hint_types = identifier_hint_types.into_iter().collect::<Vec<_>>();
+    identifier_hint_types.sort();
+
+    serde_json::json!({
+        "generated_at": Utc::now().to_rfc3339(),
+        "total_rows": rows.len(),
+        "first_seen": first_seen.map(|ts| ts.to_rfc3339()),
+        "last_seen": last_seen.map(|ts| ts.to_rfc3339()),
+        "with_coordinates": with_coordinates,
+        "without_coordinates": without_coordinates,
+        "identifier_hint_types": identifier_hint_types,
+        "by_protocol": by_protocol,
+        "by_decoder": by_decoder,
+        "by_band": by_band,
+        "by_encryption_posture": by_posture,
+        "by_payload_capture_mode": by_payload_capture,
+        "by_payload_parse_state": by_payload_parse,
+    })
 }
 
 fn csv_escape(value: &str) -> String {
@@ -18526,6 +18585,67 @@ mod tests {
         assert!(csv.contains("131550000|1090000000"));
         let _ = std::fs::remove_file(json_path);
         let _ = std::fs::remove_file(path.with_extension("csv"));
+    }
+
+    #[test]
+    fn export_sdr_satcom_artifacts_writes_summary_counts() {
+        let path = std::env::temp_dir().join(format!("sdr-satcom-{}.json", Uuid::new_v4()));
+        let rows = vec![
+            SdrSatcomObservation {
+                timestamp: Utc::now(),
+                decoder: "inmarsat_stdc".to_string(),
+                protocol: "inmarsat_c".to_string(),
+                freq_hz: 1_541_450_000,
+                band: "L-Band".to_string(),
+                encryption_posture: "unencrypted".to_string(),
+                payload_capture_mode: "enabled".to_string(),
+                has_coordinates: true,
+                identifier_hints: vec!["mmsi".to_string()],
+                payload_parse_state: "parsed".to_string(),
+                payload_fields: HashMap::new(),
+                summary: "sample".to_string(),
+                message: "clear mmsi=123456789".to_string(),
+                raw: "clear mmsi=123456789".to_string(),
+            },
+            SdrSatcomObservation {
+                timestamp: Utc::now(),
+                decoder: "iridium".to_string(),
+                protocol: "iridium".to_string(),
+                freq_hz: 1_626_000_000,
+                band: "L-Band".to_string(),
+                encryption_posture: "unknown".to_string(),
+                payload_capture_mode: "enabled".to_string(),
+                has_coordinates: false,
+                identifier_hints: vec!["icao_hex".to_string()],
+                payload_parse_state: "denied_by_policy".to_string(),
+                payload_fields: HashMap::new(),
+                summary: "sample2".to_string(),
+                message: "payload".to_string(),
+                raw: "payload".to_string(),
+            },
+        ];
+        let (_, _, _, _, summary_path) =
+            export_sdr_satcom_artifacts(&path, &rows).expect("export satcom artifacts");
+        let summary_raw = std::fs::read_to_string(&summary_path).expect("read summary");
+        let summary: serde_json::Value =
+            serde_json::from_str(&summary_raw).expect("parse summary json");
+        assert_eq!(summary["total_rows"], 2);
+        assert_eq!(summary["by_band"]["L-Band"], 2);
+        assert_eq!(summary["by_payload_parse_state"]["parsed"], 1);
+        assert_eq!(summary["by_payload_parse_state"]["denied_by_policy"], 1);
+        assert_eq!(summary["with_coordinates"], 1);
+        assert_eq!(summary["without_coordinates"], 1);
+        let _ = std::fs::remove_file(path.with_extension("csv"));
+        let _ = std::fs::remove_file(path.clone());
+        let _ = std::fs::remove_file(path.with_file_name(format!(
+            "{}_parsed.json",
+            path.file_stem().and_then(|s| s.to_str()).unwrap_or_default()
+        )));
+        let _ = std::fs::remove_file(path.with_file_name(format!(
+            "{}_denied.json",
+            path.file_stem().and_then(|s| s.to_str()).unwrap_or_default()
+        )));
+        let _ = std::fs::remove_file(summary_path);
     }
 
     #[test]
