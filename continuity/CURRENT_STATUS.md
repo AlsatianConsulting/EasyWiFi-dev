@@ -97,6 +97,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 77. Time display now defaults to local time across UI tables/status timestamps, with a Settings toggle to switch to Zulu (`UTC`) display mode.
 78. `Export SDR Bookmarks CSV` now also emits a JSON companion artifact (`sdr_bookmarks.json`) with source tagging for downstream automation.
 79. SDR CSV exports that include timestamp fields (decode/satcom/aircraft-correlation) now honor the local-vs-Zulu time display setting.
+80. SDR decoder text log timestamp rendering now follows the same local-vs-Zulu mode selected in settings.
 
 ### Bluetooth
 

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use rand::Rng;
 use regex::Regex;
@@ -80,6 +80,7 @@ pub struct SdrConfig {
     pub bias_tee_enabled: bool,
     pub no_payload_satcom: bool,
     pub satcom_parse_denylist: Vec<String>,
+    pub use_zulu_time: bool,
 }
 
 impl Default for SdrConfig {
@@ -103,6 +104,7 @@ impl Default for SdrConfig {
             bias_tee_enabled: false,
             no_payload_satcom: true,
             satcom_parse_denylist: Vec::new(),
+            use_zulu_time: false,
         }
     }
 }
@@ -613,6 +615,7 @@ fn run_sdr_loop(
     let mut auto_tune_decoders = config.auto_tune_decoders;
     let mut bias_tee_enabled = config.bias_tee_enabled;
     let mut payload_capture_enabled = !config.no_payload_satcom;
+    let use_zulu_time = config.use_zulu_time;
     let mut satcom_parse_denylist = if config.satcom_parse_denylist.is_empty() {
         satcom_parse_denylist_from_env()
     } else {
@@ -857,6 +860,7 @@ fn run_sdr_loop(
                         log_output_enabled,
                         log_output_dir.clone(),
                         payload_capture_enabled,
+                        use_zulu_time,
                         satcom_parse_denylist.clone(),
                     ) {
                         Ok(decoder) => {
@@ -1721,6 +1725,7 @@ fn spawn_decoder(
     log_output_enabled: bool,
     log_output_dir: PathBuf,
     payload_capture_enabled: bool,
+    use_zulu_time: bool,
     satcom_parse_denylist: Vec<String>,
 ) -> Result<RunningDecoder> {
     let mut command = Command::new("bash");
@@ -1885,7 +1890,7 @@ fn spawn_decoder(
             let _ = sender_stdout.send(SdrEvent::DecodeRow(row.clone()));
             decoded_rows_counter_stdout.fetch_add(1, Ordering::Relaxed);
             if let Some(log_file) = &log_stdout {
-                append_decode_log(log_file, &row);
+                append_decode_log(log_file, &row, use_zulu_time);
             }
 
             if let Some(point) = map_point {
@@ -1992,17 +1997,20 @@ fn build_decode_log_path(output_dir: &Path, decoder_name: &str) -> PathBuf {
     ))
 }
 
-fn append_decode_log(log_file: &Arc<Mutex<File>>, row: &SdrDecodeRow) {
+fn append_decode_log(log_file: &Arc<Mutex<File>>, row: &SdrDecodeRow, use_zulu_time: bool) {
     if let Ok(mut file) = log_file.lock() {
+        let rendered_time = if use_zulu_time {
+            row.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+        } else {
+            row.timestamp
+                .with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M:%S %Z")
+                .to_string()
+        };
         let _ = writeln!(
             file,
             "{}\t{}\t{}\t{}\t{}\t{}",
-            row.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
-            row.decoder,
-            row.freq_hz,
-            row.protocol,
-            row.message,
-            row.raw
+            rendered_time, row.decoder, row.freq_hz, row.protocol, row.message, row.raw
         );
     }
 }

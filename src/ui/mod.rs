@@ -12267,6 +12267,7 @@ fn sdr_config_from_inputs(
         satcom_parse_denylist: parse_satcom_parse_denylist_input(
             satcom_parse_denylist_entry.text().as_str(),
         ),
+        use_zulu_time: using_zulu_time_display(),
     }
 }
 
