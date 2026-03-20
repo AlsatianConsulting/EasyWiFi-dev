@@ -1274,6 +1274,16 @@ fn protocol_scan_macros() -> Vec<ProtocolScanMacro> {
             squelch_dbm: -78.0,
         },
         ProtocolScanMacro {
+            id: "macro_weather_apt".to_string(),
+            label: "Weather Sat APT Sweep".to_string(),
+            decoder_id: "weather_noaa_apt".to_string(),
+            start_hz: 137_000_000,
+            end_hz: 138_000_000,
+            step_hz: 25_000,
+            steps_per_sec: 6.0,
+            squelch_dbm: -86.0,
+        },
+        ProtocolScanMacro {
             id: "macro_iot_915".to_string(),
             label: "915 MHz IoT Sweep".to_string(),
             decoder_id: "rtl_433".to_string(),
@@ -1457,6 +1467,16 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     step_hz: 1_728_000,
                     steps_per_sec: 6.0,
                     squelch_dbm: -76.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_weather_apt_137_138".to_string(),
+                    label: "Weather Sat APT 137-138".to_string(),
+                    start_hz: 137_000_000,
+                    end_hz: 138_000_000,
+                    sample_rate_hz: None,
+                    step_hz: 25_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -86.0,
                 },
                 ScannerPresetEntry {
                     id: "scan_pager_vhf_152_159".to_string(),
@@ -16621,6 +16641,9 @@ mod tests {
             .any(|entry| entry.id == "scan_dect_1880_1900"));
         assert!(entries
             .iter()
+            .any(|entry| entry.id == "scan_weather_apt_137_138"));
+        assert!(entries
+            .iter()
             .any(|entry| entry.id == "scan_sat_lband_1525_1660"));
         assert!(entries
             .iter()
@@ -16674,6 +16697,7 @@ mod tests {
         assert!(ids.contains("macro_dmr_uhf"));
         assert!(ids.contains("macro_dect"));
         assert!(ids.contains("macro_satcom_lband"));
+        assert!(ids.contains("macro_weather_apt"));
         assert!(ids.contains("macro_iot_915"));
     }
 
