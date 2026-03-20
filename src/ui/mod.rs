@@ -4246,7 +4246,7 @@ fn build_menubar(
         Some("app.preset_fcc_bookmarks_remove"),
     );
     frequency_menu.append(
-        Some("Export SDR Bookmarks CSV"),
+        Some("Export SDR Bookmarks (CSV + JSON)"),
         Some("app.preset_export_sdr_bookmarks_csv"),
     );
     frequency_menu.append(
