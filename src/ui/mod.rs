@@ -1324,6 +1324,26 @@ fn protocol_scan_macros() -> Vec<ProtocolScanMacro> {
             squelch_dbm: -82.0,
         },
         ProtocolScanMacro {
+            id: "macro_drone_dji_24".to_string(),
+            label: "Drone DJI/RID 2.4 GHz".to_string(),
+            decoder_id: "drone_dji_droneid".to_string(),
+            start_hz: 2_400_000_000,
+            end_hz: 2_483_500_000,
+            step_hz: 2_000_000,
+            steps_per_sec: 7.0,
+            squelch_dbm: -80.0,
+        },
+        ProtocolScanMacro {
+            id: "macro_drone_rid_58".to_string(),
+            label: "Drone RID 5.8 GHz".to_string(),
+            decoder_id: "drone_opendroneid".to_string(),
+            start_hz: 5_725_000_000,
+            end_hz: 5_850_000_000,
+            step_hz: 2_000_000,
+            steps_per_sec: 7.0,
+            squelch_dbm: -80.0,
+        },
+        ProtocolScanMacro {
             id: "macro_weather_apt".to_string(),
             label: "Weather Sat APT Sweep".to_string(),
             decoder_id: "weather_noaa_apt".to_string(),
@@ -1405,6 +1425,10 @@ fn default_frequency_preset_groups() -> Vec<FrequencyPresetGroup> {
             label: "IoT / ISM".to_string(),
             entries: iot_ism_frequency_presets(),
         },
+        FrequencyPresetGroup {
+            label: "Drone / RID".to_string(),
+            entries: drone_rid_frequency_presets(),
+        },
     ]
 }
 
@@ -1465,6 +1489,31 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     end_hz: 7_125_000_000,
                     sample_rate_hz: None,
                     step_hz: 5_000_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -80.0,
+                },
+            ],
+        },
+        ScannerPresetGroup {
+            label: "Drone / RID Scans".to_string(),
+            entries: vec![
+                ScannerPresetEntry {
+                    id: "scan_drone_rid_2400_24835".to_string(),
+                    label: "Drone RID 2.4 GHz".to_string(),
+                    start_hz: 2_400_000_000,
+                    end_hz: 2_483_500_000,
+                    sample_rate_hz: None,
+                    step_hz: 2_000_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_drone_rid_5725_5850".to_string(),
+                    label: "Drone RID 5.8 GHz".to_string(),
+                    start_hz: 5_725_000_000,
+                    end_hz: 5_850_000_000,
+                    sample_rate_hz: None,
+                    step_hz: 2_000_000,
                     steps_per_sec: 7.0,
                     squelch_dbm: -80.0,
                 },
@@ -1835,6 +1884,31 @@ fn iot_ism_frequency_presets() -> Vec<FrequencyPresetEntry> {
             id: "zigbee_ch26".to_string(),
             label: "Zigbee Ch 26".to_string(),
             freq_hz: 2_480_000_000,
+        },
+    ]
+}
+
+fn drone_rid_frequency_presets() -> Vec<FrequencyPresetEntry> {
+    vec![
+        FrequencyPresetEntry {
+            id: "drone_rid_2437000".to_string(),
+            label: "Drone RID 2.437 GHz".to_string(),
+            freq_hz: 2_437_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "drone_rid_2457000".to_string(),
+            label: "Drone RID 2.457 GHz".to_string(),
+            freq_hz: 2_457_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "drone_rid_5745000".to_string(),
+            label: "Drone RID 5.745 GHz".to_string(),
+            freq_hz: 5_745_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "drone_rid_5805000".to_string(),
+            label: "Drone RID 5.805 GHz".to_string(),
+            freq_hz: 5_805_000_000,
         },
     ]
 }
@@ -16688,6 +16762,8 @@ mod tests {
         assert!(ids.contains("ism_915000"));
         assert!(ids.contains("ism_433920"));
         assert!(ids.contains("ism_315000"));
+        assert!(ids.contains("drone_rid_2437000"));
+        assert!(ids.contains("drone_rid_5745000"));
     }
 
     #[test]
@@ -16698,6 +16774,12 @@ mod tests {
             .flat_map(|group| group.entries.iter())
             .collect::<Vec<_>>();
         assert!(entries.iter().any(|entry| entry.id == "scan_2400_24835"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id == "scan_drone_rid_2400_24835"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.id == "scan_drone_rid_5725_5850"));
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_dect_1880_1900"));
@@ -16764,6 +16846,8 @@ mod tests {
         assert!(ids.contains("macro_acars_vhf"));
         assert!(ids.contains("macro_ais_marine"));
         assert!(ids.contains("macro_aprs_144390"));
+        assert!(ids.contains("macro_drone_dji_24"));
+        assert!(ids.contains("macro_drone_rid_58"));
         assert!(ids.contains("macro_weather_apt"));
         assert!(ids.contains("macro_iot_915"));
     }
