@@ -83,6 +83,11 @@ CSV regression coverage now also verifies:
 
 - `bluetooth_locations.csv` includes normalized `Transport Class` (`ble` / `classic` / `unknown`)
 
+UI runtime status behavior now includes:
+
+- `Runtime Activity` heartbeat line in Channel status pane updates every second
+- heartbeat text includes Wi-Fi/Bluetooth/SDR runtime on/off state flags
+
 ## Multi-Adapter Status
 
 ### Implemented

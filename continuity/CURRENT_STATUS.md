@@ -93,6 +93,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 73. SDR controls now include `Export SDR Health JSON`, capturing decoder telemetry/rates plus satcom and aircraft-correlation summaries as a lightweight runtime snapshot artifact.
 74. SDR controls now include `Export Decode (Filtered)`, exporting only decode rows matching active decode-table column filters as JSON+CSV artifacts.
 75. `Presets -> Frequencies` now includes `Import SDR Bookmarks CSV URL`, allowing direct bookmark imports from remote CSV sources via existing retry/timeout fetch behavior.
+76. Channel status pane now includes a live `Runtime Activity` heartbeat line that updates once per second with current Wi-Fi/Bluetooth/SDR runtime states.
 
 ### Bluetooth
 

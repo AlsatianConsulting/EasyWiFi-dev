@@ -23,6 +23,7 @@ This repository contains an MVP implementation with:
 - Channel Usage tab
   - Channel utilization chart with spectrum dropdown filter
   - Optional inline Channel Usage panel in Access Points tab (toggleable)
+  - Status area includes a live runtime heartbeat (`wifi/bt/sdr`) updated every second
 - SDR tab
   - FFT + spectrogram + decode tables
   - Center-frequency geiger indicators (RSSI/tone estimate/activity bar from center FFT bins)
