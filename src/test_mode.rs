@@ -1008,6 +1008,7 @@ fn apply_sdr_test_event(event: SdrEvent, summary: &mut SdrTestSummary, logs_prin
             summary.missing_dependencies = missing;
         }
         SdrEvent::SquelchChanged(_) => {}
+        SdrEvent::DecoderTelemetry(_) => {}
     }
 }
 

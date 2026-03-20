@@ -44,13 +44,14 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 3. Validate preset save/rename/delete/reorder/import/export workflow end-to-end on a fresh machine profile.
 4. Validate satcom no-payload redaction in live decoder runs (decode/map/satcom logs).
 5. Validate live `inmarsat_stdc` built-in decoder path and parsed satcom payload-field extraction quality on-air.
-6. Validate satcom parser denylist behavior (`WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST`) and ensure `denied_by_policy` state is preserved in UI/export logs.
-7. Add map plotting for coordinate-bearing decoders.
-8. Validate map/satcom `message` + `raw` side-by-side logging in live decoder runs.
-9. Validate corrected ACARS runtime integration live.
-10. Validate ADS-B live and correlate with ACARS by aircraft identifier when possible.
-11. Expand non-RTL command pipelines for RTL-bound demodulators (AIS/POCSAG/DECT classes) so right-click demod selection has broader cross-hardware execution parity.
-12. Validate newly added non-RTL POCSAG/DECT fallback chain quality and tune audio/FM pipeline parameters per hardware.
+6. Validate persisted satcom parser denylist behavior from SDR controls and env fallback interaction.
+7. Validate new satcom export artifacts (CSV/parsed-only/denied-only JSON) in downstream tooling.
+8. Validate decoder telemetry counters against expected decode/log rates during long SDR runs.
+9. Validate map/satcom `message` + `raw` side-by-side logging in live decoder runs.
+10. Validate corrected ACARS runtime integration live.
+11. Validate expanded non-RTL AIS/ACARS fallback command paths on HackRF/bladeRF/B210 hosts.
+12. Validate ADS-B live and correlate with ACARS by aircraft identifier when possible.
+13. Validate newly added non-RTL POCSAG/DECT fallback chain quality and tune audio/FM pipeline parameters per hardware.
 
 ## Priority 4: requested SDR decoder backlog
 

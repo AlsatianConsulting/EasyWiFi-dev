@@ -27,6 +27,8 @@ Current SDR logging can also emit:
 - per-decoder satcom audit logs (including `message` + `raw` fields; redacted in no-payload mode)
 - satcom audit records now include `payload_parse_state` and normalized `payload_fields` for unencrypted frames
 - optional satcom parser denylist control via `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST` (protocol/decoder token match)
+- satcom export action now emits companion CSV + parsed-only JSON + denied-only JSON artifacts
+- SDR pane now surfaces decoder telemetry counters (`rows`, `map`, `satcom`, `stderr`)
 - IQ sample files captured on demand
 - user SDR preset exchange file at config path: `wirelessexplorer-sdr-presets.json` (via SDR preset import/export controls)
 

@@ -35,7 +35,9 @@ This repository contains an MVP implementation with:
   - Map and satcom audit entries now carry both parsed `message` and `raw` decoder text (redacted when no-payload mode is enabled)
   - Satcom audit includes parsed unencrypted payload metadata (`payload_parse_state`, normalized `payload_fields`)
   - Built-in `Inmarsat STD-C` decoder (`inmarsat_stdc`) is available when `stdc_decoder`/`stdc-decoder`/`inmarsatc-decoder` is installed
-  - Optional satcom parser denylist via env var `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST` (comma-separated protocol/decoder tokens)
+  - Satcom parser denylist is configurable in SDR controls (persisted in settings), with env fallback `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST`
+  - Satcom export now writes full audit JSON plus companion CSV/parsed-only JSON/denied-only JSON artifacts
+  - Decoder health telemetry is surfaced in SDR pane (`rows/map/satcom/stderr` counters)
   - FFT right-click supports direct per-signal decoder launch
   - Decoder launch availability checks now gate right-click/start actions with explicit hardware/toolchain status
   - Built-in decoder command path supports optional hardware-specific plugin overrides via `sdr-plugins.json` IDs:

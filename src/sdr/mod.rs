@@ -11,7 +11,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -79,6 +79,7 @@ pub struct SdrConfig {
     pub auto_tune_decoders: bool,
     pub bias_tee_enabled: bool,
     pub no_payload_satcom: bool,
+    pub satcom_parse_denylist: Vec<String>,
 }
 
 impl Default for SdrConfig {
@@ -101,6 +102,7 @@ impl Default for SdrConfig {
             auto_tune_decoders: true,
             bias_tee_enabled: false,
             no_payload_satcom: true,
+            satcom_parse_denylist: Vec::new(),
         }
     }
 }
@@ -154,6 +156,16 @@ pub struct SdrSatcomObservation {
     pub raw: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SdrDecoderTelemetry {
+    pub timestamp: DateTime<Utc>,
+    pub decoder: String,
+    pub decoded_rows: u64,
+    pub map_points: u64,
+    pub satcom_rows: u64,
+    pub stderr_lines: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct SdrDependencyStatus {
     pub tool: String,
@@ -175,6 +187,7 @@ pub enum SdrEvent {
     MapPoint(SdrMapPoint),
     SatcomObservation(SdrSatcomObservation),
     SquelchChanged(f32),
+    DecoderTelemetry(SdrDecoderTelemetry),
 }
 
 #[derive(Debug, Clone)]
@@ -291,6 +304,7 @@ enum SdrCommand {
     SetAutoTune(bool),
     SetBiasTee(bool),
     SetNoPayloadSatcom(bool),
+    SetSatcomParseDenylist(Vec<String>),
     CaptureSample {
         duration_secs: u32,
         output_dir: PathBuf,
@@ -373,6 +387,12 @@ impl SdrRuntime {
         let _ = self
             .command_tx
             .send(SdrCommand::SetNoPayloadSatcom(enabled));
+    }
+
+    pub fn set_satcom_parse_denylist(&self, denylist: Vec<String>) {
+        let _ = self
+            .command_tx
+            .send(SdrCommand::SetSatcomParseDenylist(denylist));
     }
 
     pub fn capture_sample(&self, duration_secs: u32, output_dir: PathBuf) {
@@ -548,7 +568,11 @@ fn run_sdr_loop(
     let mut auto_tune_decoders = config.auto_tune_decoders;
     let mut bias_tee_enabled = config.bias_tee_enabled;
     let mut no_payload_satcom = config.no_payload_satcom;
-    let satcom_parse_denylist = satcom_parse_denylist_from_env();
+    let mut satcom_parse_denylist = if config.satcom_parse_denylist.is_empty() {
+        satcom_parse_denylist_from_env()
+    } else {
+        sanitize_satcom_parse_denylist(config.satcom_parse_denylist)
+    };
     let plugin_defs = load_plugin_definitions(config.plugin_config_path.as_deref());
 
     let _ = sender.send(SdrEvent::Log(format!(
@@ -696,6 +720,17 @@ fn run_sdr_loop(
                     let _ = sender.send(SdrEvent::Log(format!(
                         "satcom payload capture {}",
                         if enabled { "disabled" } else { "enabled" }
+                    )));
+                }
+                SdrCommand::SetSatcomParseDenylist(denylist) => {
+                    satcom_parse_denylist = sanitize_satcom_parse_denylist(denylist);
+                    let _ = sender.send(SdrEvent::Log(format!(
+                        "satcom parse denylist updated: {}",
+                        if satcom_parse_denylist.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            satcom_parse_denylist.join(", ")
+                        }
                     )));
                 }
                 SdrCommand::CaptureSample {
@@ -1283,6 +1318,8 @@ fn resolve_decoder_command_line(
                 Some("rtl_ais".to_string())
             } else if hardware == SdrHardware::RtlSdr && command_exists("aisdecoder") {
                 Some("aisdecoder".to_string())
+            } else if hardware != SdrHardware::RtlSdr {
+                resolve_ais_non_rtl_command(hardware, freq_hz)
             } else {
                 None
             }
@@ -1416,7 +1453,11 @@ fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -
             }
         }
         SdrDecoderKind::Ais if hardware != SdrHardware::RtlSdr => Some(
-            "AIS built-in decoder currently requires RTL-SDR tools in this runtime".to_string(),
+            if resolve_ais_non_rtl_command(hardware, 162_025_000).is_none() {
+                "AIS on non-RTL hardware requires csdr + sox + aisdecoder and a compatible capture tool".to_string()
+            } else {
+                return None;
+            },
         ),
         SdrDecoderKind::Pocsag if hardware != SdrHardware::RtlSdr => Some(
             if resolve_multimon_non_rtl_command(hardware, 169_650_000, "pocsag").is_none() {
@@ -1521,8 +1562,75 @@ fn resolve_acarsdec_command_line(freq_hz: u64, hardware: SdrHardware) -> Option<
     let freq_mhz = (freq_hz as f64) / 1_000_000.0;
     match hardware {
         SdrHardware::RtlSdr => Some(format!("acarsdec -o 4 -r 0 {freq_mhz:.3}")),
-        _ => None,
+        _ => {
+            if !command_exists("multimon-ng") {
+                None
+            } else {
+                resolve_non_rtl_audio_pipeline_command(
+                    hardware,
+                    freq_hz,
+                    "acars",
+                    "csdr amdemod_cf | csdr limit_ff | csdr old_fractional_decimator_ff 4",
+                    "sox -t raw -r 60000 -e signed -b 16 -c 1 - -t raw -r 12000 -e signed -b 16 -c 1 - | multimon-ng -t raw -a AFSK2400 -",
+                )
+            }
+        }
     }
+}
+
+fn resolve_ais_non_rtl_command(hardware: SdrHardware, freq_hz: u64) -> Option<String> {
+    if !command_exists("aisdecoder") {
+        return None;
+    }
+    resolve_non_rtl_audio_pipeline_command(
+        hardware,
+        freq_hz,
+        "ais",
+        "csdr fmdemod_quadri_cf | csdr limit_ff | csdr old_fractional_decimator_ff 4",
+        "sox -t raw -r 60000 -e signed -b 16 -c 1 - -t raw -r 48000 -e signed -b 16 -c 1 - | aisdecoder",
+    )
+}
+
+fn resolve_non_rtl_audio_pipeline_command(
+    hardware: SdrHardware,
+    freq_hz: u64,
+    mode: &str,
+    demod_chain: &str,
+    consumer_command: &str,
+) -> Option<String> {
+    if !(command_exists("csdr") && command_exists("sox")) {
+        return None;
+    }
+    let sample_rate_hz = 240_000u32;
+    let capture_samples = sample_rate_hz as u64 * 2;
+    let capture_command = match hardware {
+        SdrHardware::HackRf if command_exists("hackrf_transfer") => format!(
+            "hackrf_transfer -f {} -s {} -n {} -r \"$tmp_iq\" >/dev/null 2>&1",
+            freq_hz, sample_rate_hz, capture_samples
+        ),
+        SdrHardware::BladeRf if command_exists("bladeRF-cli") => format!(
+            "bladeRF-cli -e \"set frequency rx {}; set samplerate rx {}; rx config file=$tmp_iq format=bin n={}; rx start; rx wait\" >/dev/null 2>&1",
+            freq_hz, sample_rate_hz, capture_samples
+        ),
+        SdrHardware::EttusB210 if command_exists("uhd_rx_cfile") => format!(
+            "uhd_rx_cfile -f {} -r {} -N {} --type short \"$tmp_iq\" >/dev/null 2>&1",
+            freq_hz, sample_rate_hz, capture_samples
+        ),
+        _ => return None,
+    };
+    let csdr_convert = match hardware {
+        SdrHardware::HackRf => "convert_i8_f",
+        SdrHardware::BladeRf | SdrHardware::EttusB210 => "convert_s16_f",
+        SdrHardware::RtlSdr => return None,
+    };
+    Some(format!(
+        "tmp_iq=\"$(mktemp)\"; trap 'rm -f \"$tmp_iq\"' EXIT; while true; do {capture}; csdr {convert} < \"$tmp_iq\" | {demod_chain} | csdr convert_f_s16 | {consumer}; done",
+        capture = capture_command,
+        convert = csdr_convert,
+        demod_chain = demod_chain,
+        consumer = consumer_command
+    ))
+    .map(|cmd| format!("echo \"non-rtl {} pipeline active\" 1>&2; {}", mode, cmd))
 }
 
 fn spawn_decoder(
@@ -1641,8 +1749,17 @@ fn spawn_decoder(
     let map_log_stdout = map_log_file.clone();
     let satcom_log_stdout = satcom_log_file.clone();
     let no_payload_satcom_stdout = no_payload_satcom;
+    let decoded_rows_counter = Arc::new(AtomicU64::new(0));
+    let map_points_counter = Arc::new(AtomicU64::new(0));
+    let satcom_rows_counter = Arc::new(AtomicU64::new(0));
+    let stderr_lines_counter = Arc::new(AtomicU64::new(0));
+    let decoded_rows_counter_stdout = Arc::clone(&decoded_rows_counter);
+    let map_points_counter_stdout = Arc::clone(&map_points_counter);
+    let satcom_rows_counter_stdout = Arc::clone(&satcom_rows_counter);
+    let stderr_lines_counter_stdout = Arc::clone(&stderr_lines_counter);
     let stdout_handle = thread::spawn(move || {
         let reader = BufReader::new(stdout);
+        let mut last_telemetry_at = Instant::now();
         for line in reader.lines() {
             if stop_stdout.load(Ordering::Relaxed) {
                 break;
@@ -1678,12 +1795,14 @@ fn spawn_decoder(
                 derive_satcom_observation(&row, map_point.as_ref(), &satcom_parse_denylist);
 
             let _ = sender_stdout.send(SdrEvent::DecodeRow(row.clone()));
+            decoded_rows_counter_stdout.fetch_add(1, Ordering::Relaxed);
             if let Some(log_file) = &log_stdout {
                 append_decode_log(log_file, &row);
             }
 
             if let Some(point) = map_point {
                 let _ = sender_stdout.send(SdrEvent::MapPoint(point.clone()));
+                map_points_counter_stdout.fetch_add(1, Ordering::Relaxed);
                 if let Some(map_log_file) = &map_log_stdout {
                     append_map_point_log(map_log_file, &point);
                 }
@@ -1691,17 +1810,43 @@ fn spawn_decoder(
 
             if let Some(satcom) = satcom_observation {
                 let _ = sender_stdout.send(SdrEvent::SatcomObservation(satcom.clone()));
+                satcom_rows_counter_stdout.fetch_add(1, Ordering::Relaxed);
                 if let Some(satcom_log_file) = &satcom_log_stdout {
                     append_satcom_observation_log(satcom_log_file, &satcom);
                 }
             }
+
+            if last_telemetry_at.elapsed() >= Duration::from_secs(2) {
+                let _ = sender_stdout.send(SdrEvent::DecoderTelemetry(SdrDecoderTelemetry {
+                    timestamp: Utc::now(),
+                    decoder: decoder_name_stdout.clone(),
+                    decoded_rows: decoded_rows_counter_stdout.load(Ordering::Relaxed),
+                    map_points: map_points_counter_stdout.load(Ordering::Relaxed),
+                    satcom_rows: satcom_rows_counter_stdout.load(Ordering::Relaxed),
+                    stderr_lines: stderr_lines_counter_stdout.load(Ordering::Relaxed),
+                }));
+                last_telemetry_at = Instant::now();
+            }
         }
+        let _ = sender_stdout.send(SdrEvent::DecoderTelemetry(SdrDecoderTelemetry {
+            timestamp: Utc::now(),
+            decoder: decoder_name_stdout.clone(),
+            decoded_rows: decoded_rows_counter_stdout.load(Ordering::Relaxed),
+            map_points: map_points_counter_stdout.load(Ordering::Relaxed),
+            satcom_rows: satcom_rows_counter_stdout.load(Ordering::Relaxed),
+            stderr_lines: stderr_lines_counter_stdout.load(Ordering::Relaxed),
+        }));
     });
 
     let sender_stderr = sender.clone();
     let decoder_name_stderr = decoder_name.clone();
+    let decoded_rows_counter_stderr = Arc::clone(&decoded_rows_counter);
+    let map_points_counter_stderr = Arc::clone(&map_points_counter);
+    let satcom_rows_counter_stderr = Arc::clone(&satcom_rows_counter);
+    let stderr_lines_counter_stderr = Arc::clone(&stderr_lines_counter);
     let stderr_handle = thread::spawn(move || {
         let reader = BufReader::new(stderr);
+        let mut last_telemetry_at = Instant::now();
         for line in reader.lines() {
             if stop_stderr.load(Ordering::Relaxed) {
                 break;
@@ -1713,12 +1858,32 @@ fn spawn_decoder(
             if trimmed.is_empty() {
                 continue;
             }
+            stderr_lines_counter_stderr.fetch_add(1, Ordering::Relaxed);
             let _ = sender_stderr.send(SdrEvent::Log(format!(
                 "{}: {}",
                 decoder_name_stderr,
                 clamp_line(trimmed)
             )));
+            if last_telemetry_at.elapsed() >= Duration::from_secs(2) {
+                let _ = sender_stderr.send(SdrEvent::DecoderTelemetry(SdrDecoderTelemetry {
+                    timestamp: Utc::now(),
+                    decoder: decoder_name_stderr.clone(),
+                    decoded_rows: decoded_rows_counter_stderr.load(Ordering::Relaxed),
+                    map_points: map_points_counter_stderr.load(Ordering::Relaxed),
+                    satcom_rows: satcom_rows_counter_stderr.load(Ordering::Relaxed),
+                    stderr_lines: stderr_lines_counter_stderr.load(Ordering::Relaxed),
+                }));
+                last_telemetry_at = Instant::now();
+            }
         }
+        let _ = sender_stderr.send(SdrEvent::DecoderTelemetry(SdrDecoderTelemetry {
+            timestamp: Utc::now(),
+            decoder: decoder_name_stderr.clone(),
+            decoded_rows: decoded_rows_counter_stderr.load(Ordering::Relaxed),
+            map_points: map_points_counter_stderr.load(Ordering::Relaxed),
+            satcom_rows: satcom_rows_counter_stderr.load(Ordering::Relaxed),
+            stderr_lines: stderr_lines_counter_stderr.load(Ordering::Relaxed),
+        }));
     });
 
     Ok(RunningDecoder {
@@ -1929,7 +2094,7 @@ fn satcom_parse_blocked_by_denylist(row: &SdrDecodeRow, denylist: &[String]) -> 
 }
 
 fn satcom_parse_denylist_from_env() -> Vec<String> {
-    std::env::var("WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST")
+    let parsed = std::env::var("WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST")
         .ok()
         .map(|raw| {
             raw.split(',')
@@ -1938,7 +2103,20 @@ fn satcom_parse_denylist_from_env() -> Vec<String> {
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    sanitize_satcom_parse_denylist(parsed)
+}
+
+fn sanitize_satcom_parse_denylist(values: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for value in values {
+        let token = normalize_decoder_token(&value);
+        if token.is_empty() || out.iter().any(|existing| existing == &token) {
+            continue;
+        }
+        out.push(token);
+    }
+    out
 }
 
 fn normalize_decoder_token(value: &str) -> String {
@@ -3365,7 +3543,10 @@ mod tests {
 
     #[test]
     fn acarsdec_command_line_is_not_assumed_for_non_rtl_hardware() {
-        assert!(resolve_acarsdec_command_line(131_550_000, SdrHardware::HackRf).is_none());
+        let command = resolve_acarsdec_command_line(131_550_000, SdrHardware::HackRf);
+        if let Some(command) = command {
+            assert!(command.contains("non-rtl acars pipeline active"));
+        }
     }
 
     #[test]
@@ -3377,12 +3558,19 @@ mod tests {
             SdrHardware::HackRf,
             &[],
         );
-        assert!(command.is_none());
+        if let Some(command) = command {
+            assert!(command.contains("non-rtl acars pipeline active"));
+        }
     }
 
     #[test]
     fn decoder_unavailability_reason_flags_known_non_rtl_constraints() {
-        assert!(decoder_unavailability_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf).is_some());
+        let reason = decoder_unavailability_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf);
+        if resolve_ais_non_rtl_command(SdrHardware::HackRf, 162_025_000).is_some() {
+            assert!(reason.is_none());
+        } else {
+            assert!(reason.is_some());
+        }
     }
 
     #[test]
@@ -3575,9 +3763,13 @@ mod tests {
 
     #[test]
     fn hardware_constraint_reason_flags_known_rtl_only_decoders() {
-        assert!(
-            decoder_hardware_constraint_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf).is_some()
-        );
+        let ais_reason =
+            decoder_hardware_constraint_reason(&SdrDecoderKind::Ais, SdrHardware::HackRf);
+        if resolve_ais_non_rtl_command(SdrHardware::HackRf, 162_025_000).is_some() {
+            assert!(ais_reason.is_none());
+        } else {
+            assert!(ais_reason.is_some());
+        }
         let pocsag_reason =
             decoder_hardware_constraint_reason(&SdrDecoderKind::Pocsag, SdrHardware::BladeRf);
         if resolve_multimon_non_rtl_command(SdrHardware::BladeRf, 169_650_000, "pocsag").is_some() {
@@ -3608,7 +3800,11 @@ mod tests {
             SdrHardware::HackRf,
             &[],
         );
-        assert!(reason.is_some());
+        if resolve_ais_non_rtl_command(SdrHardware::HackRf, 162_000_000).is_some() {
+            assert!(reason.is_none());
+        } else {
+            assert!(reason.is_some());
+        }
     }
 
     #[test]

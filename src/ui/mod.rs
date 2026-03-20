@@ -9,8 +9,8 @@ use crate::model::{
 };
 use crate::oui::OuiDatabase;
 use crate::sdr::{
-    self, SdrConfig, SdrDecodeRow, SdrDecoderKind, SdrDependencyStatus, SdrEvent, SdrHardware,
-    SdrMapPoint, SdrRuntime, SdrSatcomObservation, SdrSpectrumFrame,
+    self, SdrConfig, SdrDecodeRow, SdrDecoderKind, SdrDecoderTelemetry, SdrDependencyStatus,
+    SdrEvent, SdrHardware, SdrMapPoint, SdrRuntime, SdrSatcomObservation, SdrSpectrumFrame,
 };
 use crate::settings::{
     default_ap_table_layout, default_assoc_client_table_layout, default_bluetooth_table_layout,
@@ -1425,6 +1425,7 @@ struct SdrUiModel {
     map_points: Vec<SdrMapPoint>,
     satcom_observations: Vec<SdrSatcomObservation>,
     dependency_status: Vec<SdrDependencyStatus>,
+    decoder_telemetry: HashMap<String, SdrDecoderTelemetry>,
 }
 
 #[derive(Clone)]
@@ -1489,6 +1490,7 @@ struct UiWidgets {
     sdr_frequency_label: Label,
     sdr_decoder_label: Label,
     sdr_dependency_label: Label,
+    sdr_health_label: Label,
     sdr_center_geiger_rssi_label: Label,
     sdr_center_geiger_tone_label: Label,
     sdr_center_geiger_progress: ProgressBar,
@@ -3938,6 +3940,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let sdr_dependency_label = Label::new(Some("Dependencies: not checked"));
     sdr_dependency_label.set_xalign(0.0);
     sdr_dependency_label.set_wrap(true);
+    let sdr_health_label = Label::new(Some("Decoder Health: no telemetry"));
+    sdr_health_label.set_xalign(0.0);
+    sdr_health_label.set_wrap(true);
     let sdr_center_geiger_rssi_label = Label::new(Some("Center Geiger RSSI: -- dBm"));
     sdr_center_geiger_rssi_label.set_xalign(0.0);
     let sdr_center_geiger_tone_label = Label::new(Some("Center Geiger Tone: -- Hz"));
@@ -4045,17 +4050,24 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_bias_tee_check.set_active(SdrConfig::default().bias_tee_enabled);
     let sdr_no_payload_satcom_check = CheckButton::with_label("No payload for satcom decoders");
     sdr_no_payload_satcom_check.set_active(SdrConfig::default().no_payload_satcom);
-    let satcom_parse_denylist_value = std::env::var("WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "(none)".to_string());
-    let sdr_satcom_denylist_label = Label::new(Some(&format!(
-        "Satcom Parse Denylist (env): {}",
-        satcom_parse_denylist_value
-    )));
-    sdr_satcom_denylist_label.set_xalign(0.0);
-    sdr_satcom_denylist_label.set_wrap(true);
+    let sdr_satcom_denylist_entry = Entry::new();
+    sdr_satcom_denylist_entry.set_width_chars(28);
+    sdr_satcom_denylist_entry
+        .set_placeholder_text(Some("protocol/decoder tokens, comma-separated"));
+    let sdr_satcom_denylist_apply_btn = Button::with_label("Apply");
+    let satcom_parse_denylist_value = {
+        let settings_value = state.borrow().settings.sdr_satcom_parse_denylist.join(",");
+        if !settings_value.trim().is_empty() {
+            settings_value
+        } else {
+            std::env::var("WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_default()
+        }
+    };
+    sdr_satcom_denylist_entry.set_text(&satcom_parse_denylist_value);
     let sdr_sample_duration_spin = SpinButton::with_range(1.0, 600.0, 1.0);
     sdr_sample_duration_spin.set_value(10.0);
     let sdr_sample_dir_entry = Entry::new();
@@ -4168,7 +4180,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&sdr_autotune_check, 0, 5, 2, 1);
     sdr_controls.attach(&sdr_bias_tee_check, 2, 5, 3, 1);
     sdr_controls.attach(&sdr_no_payload_satcom_check, 5, 5, 3, 1);
-    sdr_controls.attach(&sdr_satcom_denylist_label, 8, 5, 3, 1);
+    sdr_controls.attach(&Label::new(Some("Satcom Parse Denylist")), 8, 5, 1, 1);
+    sdr_controls.attach(&sdr_satcom_denylist_entry, 9, 5, 1, 1);
+    sdr_controls.attach(&sdr_satcom_denylist_apply_btn, 10, 5, 1, 1);
     sdr_controls.attach(&Label::new(Some("Bookmarks")), 0, 6, 1, 1);
     sdr_controls.attach(&sdr_bookmark_combo, 1, 6, 2, 1);
     sdr_controls.attach(&sdr_bookmark_jump_btn, 3, 6, 1, 1);
@@ -4306,6 +4320,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_top.append(&sdr_frequency_label);
     sdr_top.append(&sdr_decoder_label);
     sdr_top.append(&sdr_dependency_label);
+    sdr_top.append(&sdr_health_label);
     sdr_top.append(&Label::new(Some("Spectrogram")));
     sdr_top.append(&sdr_spectrogram_draw);
     sdr_top.append(&Label::new(Some("FFT")));
@@ -4881,6 +4896,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check = sdr_autotune_check.clone();
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         sdr_start_btn.connect_clicked(move |_| {
             let config = sdr_config_from_inputs(
                 &sdr_hardware_combo,
@@ -4897,6 +4914,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 &sdr_autotune_check,
                 &sdr_bias_tee_check,
                 &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
             );
             let mut s = state.borrow_mut();
             s.start_sdr_runtime(config.clone());
@@ -4930,6 +4948,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check = sdr_autotune_check.clone();
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         sdr_set_frequency_btn.connect_clicked(move |_| {
             let config = sdr_config_from_inputs(
                 &sdr_hardware_combo,
@@ -4946,6 +4965,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 &sdr_autotune_check,
                 &sdr_bias_tee_check,
                 &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
             );
             let mut s = state.borrow_mut();
             if s.sdr_runtime.is_none() {
@@ -4991,6 +5011,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check_for_apply = sdr_autotune_check.clone();
         let sdr_bias_tee_check_for_apply = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check_for_apply = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry_for_apply = sdr_satcom_denylist_entry.clone();
 
         let apply_scan: Rc<dyn Fn()> = Rc::new(move || {
             if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
@@ -5009,6 +5030,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     &sdr_autotune_check_for_apply,
                     &sdr_bias_tee_check_for_apply,
                     &sdr_no_payload_satcom_check_for_apply,
+                    &sdr_satcom_denylist_entry_for_apply,
                 );
                 runtime.set_scan_range(
                     config.scan_range_enabled,
@@ -5051,6 +5073,31 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
                 runtime.set_squelch(squelch);
             }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
+        sdr_satcom_denylist_apply_btn.connect_clicked(move |_| {
+            let denylist =
+                parse_satcom_parse_denylist_input(sdr_satcom_denylist_entry.text().as_str());
+            let mut s = state.borrow_mut();
+            if s.settings.sdr_satcom_parse_denylist != denylist {
+                s.settings.sdr_satcom_parse_denylist = denylist.clone();
+                s.save_settings_to_disk();
+            }
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                runtime.set_satcom_parse_denylist(denylist.clone());
+            }
+            s.push_status(format!(
+                "satcom parse denylist {}",
+                if denylist.is_empty() {
+                    "cleared".to_string()
+                } else {
+                    format!("applied: {}", denylist.join(", "))
+                }
+            ));
         });
     }
 
@@ -5161,6 +5208,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check = sdr_autotune_check.clone();
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         sdr_preset_apply_btn.connect_clicked(move |_| {
             let Some(active_id) = sdr_preset_combo.active_id() else {
                 return;
@@ -5198,6 +5246,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 &sdr_autotune_check,
                 &sdr_bias_tee_check,
                 &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
             );
 
             let mut s = state.borrow_mut();
@@ -5228,6 +5277,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check = sdr_autotune_check.clone();
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         sdr_preset_save_btn.connect_clicked(move |_| {
             let config = sdr_config_from_inputs(
                 &sdr_hardware_combo,
@@ -5244,6 +5294,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 &sdr_autotune_check,
                 &sdr_bias_tee_check,
                 &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
             );
 
             let mut s = state.borrow_mut();
@@ -5494,6 +5545,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check = sdr_autotune_check.clone();
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         let sdr_sample_duration_spin = sdr_sample_duration_spin.clone();
         let sdr_sample_dir_entry = sdr_sample_dir_entry.clone();
         sdr_capture_sample_btn.connect_clicked(move |_| {
@@ -5512,6 +5564,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 &sdr_autotune_check,
                 &sdr_bias_tee_check,
                 &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
             );
             let duration_secs = sdr_sample_duration_spin.value_as_int().max(1) as u32;
             let output_dir_text = sdr_sample_dir_entry.text().trim().to_string();
@@ -5626,26 +5679,59 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 "sdr_satcom_audit_{}.json",
                 Utc::now().format("%Y%m%dT%H%M%SZ")
             ));
-            match serde_json::to_vec_pretty(&observations) {
-                Ok(data) => {
-                    if let Err(err) = fs::write(&file_path, data) {
-                        state.borrow_mut().push_status(format!(
-                            "SDR satcom export failed (write {}): {err}",
-                            file_path.display()
-                        ));
-                    } else {
-                        state.borrow_mut().push_status(format!(
-                            "exported SDR satcom audit: {}",
-                            file_path.display()
-                        ));
-                    }
-                }
-                Err(err) => {
-                    state
-                        .borrow_mut()
-                        .push_status(format!("SDR satcom export serialization failed: {err}"));
-                }
+            let csv_path = file_path.with_extension("csv");
+            let parsed_path = file_path
+                .with_file_name(file_path.file_name().unwrap_or_default())
+                .with_extension("parsed.json");
+            let denied_path = file_path
+                .with_file_name(file_path.file_name().unwrap_or_default())
+                .with_extension("denied.json");
+            let parsed = observations
+                .iter()
+                .filter(|row| row.payload_parse_state == "parsed")
+                .cloned()
+                .collect::<Vec<_>>();
+            let denied = observations
+                .iter()
+                .filter(|row| row.payload_parse_state == "denied_by_policy")
+                .cloned()
+                .collect::<Vec<_>>();
+
+            if let Err(err) = write_json_pretty(&file_path, &observations) {
+                state.borrow_mut().push_status(format!(
+                    "SDR satcom export failed (write {}): {err}",
+                    file_path.display()
+                ));
+                return;
             }
+            if let Err(err) = write_sdr_satcom_csv(&csv_path, &observations) {
+                state.borrow_mut().push_status(format!(
+                    "SDR satcom CSV export failed (write {}): {err}",
+                    csv_path.display()
+                ));
+                return;
+            }
+            if let Err(err) = write_json_pretty(&parsed_path, &parsed) {
+                state.borrow_mut().push_status(format!(
+                    "SDR satcom parsed export failed (write {}): {err}",
+                    parsed_path.display()
+                ));
+                return;
+            }
+            if let Err(err) = write_json_pretty(&denied_path, &denied) {
+                state.borrow_mut().push_status(format!(
+                    "SDR satcom denied export failed (write {}): {err}",
+                    denied_path.display()
+                ));
+                return;
+            }
+            state.borrow_mut().push_status(format!(
+                "exported SDR satcom artifacts: {}, {}, {}, {}",
+                file_path.display(),
+                csv_path.display(),
+                parsed_path.display(),
+                denied_path.display()
+            ));
         });
     }
 
@@ -5665,6 +5751,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check = sdr_autotune_check.clone();
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         sdr_dep_refresh_btn.connect_clicked(move |_| {
             let config = sdr_config_from_inputs(
                 &sdr_hardware_combo,
@@ -5681,6 +5768,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 &sdr_autotune_check,
                 &sdr_bias_tee_check,
                 &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
             );
             let mut s = state.borrow_mut();
             if s.sdr_runtime.is_none() {
@@ -5709,6 +5797,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check = sdr_autotune_check.clone();
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         sdr_dep_install_btn.connect_clicked(move |_| {
             let config = sdr_config_from_inputs(
                 &sdr_hardware_combo,
@@ -5725,6 +5814,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 &sdr_autotune_check,
                 &sdr_bias_tee_check,
                 &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
             );
             let mut s = state.borrow_mut();
             if s.sdr_runtime.is_none() {
@@ -5753,6 +5843,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check = sdr_autotune_check.clone();
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         let sdr_decoder_combo = sdr_decoder_combo.clone();
         let sdr_decoder_lookup = sdr_decoder_lookup.clone();
         let sdr_plugin_defs = sdr_plugin_defs.clone();
@@ -5772,6 +5863,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 &sdr_autotune_check,
                 &sdr_bias_tee_check,
                 &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
             );
             let Some(decoder_id) = sdr_decoder_combo.active_id() else {
                 return;
@@ -5841,6 +5933,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_autotune_check = sdr_autotune_check.clone();
         let sdr_bias_tee_check = sdr_bias_tee_check.clone();
         let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         let sdr_plugin_defs = sdr_plugin_defs.clone();
         let right_click = GestureClick::new();
         right_click.set_button(3);
@@ -5879,6 +5972,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 &sdr_autotune_check,
                 &sdr_bias_tee_check,
                 &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
             );
             for decoder_id in sdr_decoder_order.iter() {
                 let Some(decoder) = sdr_decoder_lookup.borrow().get(decoder_id).cloned() else {
@@ -5913,6 +6007,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 let sdr_autotune_check = sdr_autotune_check.clone();
                 let sdr_bias_tee_check = sdr_bias_tee_check.clone();
                 let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+                let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
                 let popover = popover.clone();
                 let sdr_plugin_defs = sdr_plugin_defs.clone();
                 button.connect_clicked(move |_| {
@@ -5931,6 +6026,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                         &sdr_autotune_check,
                         &sdr_bias_tee_check,
                         &sdr_no_payload_satcom_check,
+                        &sdr_satcom_denylist_entry,
                     );
                     let mut s = state.borrow_mut();
                     if s.sdr_runtime.is_none() {
@@ -6030,6 +6126,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             sdr_frequency_label,
             sdr_decoder_label,
             sdr_dependency_label,
+            sdr_health_label,
             sdr_center_geiger_rssi_label,
             sdr_center_geiger_tone_label,
             sdr_center_geiger_progress,
@@ -6126,6 +6223,7 @@ fn bind_poll_loop(
         sdr_frequency_label,
         sdr_decoder_label,
         sdr_dependency_label,
+        sdr_health_label,
         sdr_center_geiger_rssi_label,
         sdr_center_geiger_tone_label,
         sdr_center_geiger_progress,
@@ -6268,6 +6366,13 @@ fn bind_poll_loop(
                 SdrEvent::SquelchChanged(squelch_dbm) => {
                     let mut model = sdr_model.borrow_mut();
                     model.squelch_dbm = squelch_dbm;
+                    pending_sdr_refresh.set(true);
+                }
+                SdrEvent::DecoderTelemetry(telemetry) => {
+                    let mut model = sdr_model.borrow_mut();
+                    model
+                        .decoder_telemetry
+                        .insert(telemetry.decoder.clone(), telemetry);
                     pending_sdr_refresh.set(true);
                 }
             }
@@ -6976,6 +7081,10 @@ fn bind_poll_loop(
                     .unwrap_or_else(|| "Decoder: idle".to_string()),
             );
             sdr_dependency_label.set_text(&format_sdr_dependency_status(&model.dependency_status));
+            sdr_health_label.set_text(&format_sdr_decoder_telemetry(
+                model.decoder_running.as_deref(),
+                &model.decoder_telemetry,
+            ));
             if let Some((center_dbm, tone_hz, fraction)) = center_geiger {
                 sdr_center_geiger_rssi_label
                     .set_text(&format!("Center Geiger RSSI: {:.1} dBm", center_dbm));
@@ -7973,6 +8082,7 @@ fn drain_sdr_events_batch(receiver: &Receiver<SdrEvent>, limit: usize) -> Vec<Sd
     let mut decode_rows: Vec<SdrDecodeRow> = Vec::new();
     let mut map_points: Vec<SdrMapPoint> = Vec::new();
     let mut satcom_observations: Vec<SdrSatcomObservation> = Vec::new();
+    let mut latest_decoder_telemetry: HashMap<String, SdrDecoderTelemetry> = HashMap::new();
     let mut latest_decoder_state: Option<(bool, Option<String>)> = None;
     let mut latest_dependencies: Option<Vec<SdrDependencyStatus>> = None;
     let mut latest_squelch: Option<f32> = None;
@@ -7993,6 +8103,9 @@ fn drain_sdr_events_batch(receiver: &Receiver<SdrEvent>, limit: usize) -> Vec<Sd
             SdrEvent::MapPoint(point) => map_points.push(point),
             SdrEvent::SatcomObservation(observation) => satcom_observations.push(observation),
             SdrEvent::SquelchChanged(value) => latest_squelch = Some(value),
+            SdrEvent::DecoderTelemetry(telemetry) => {
+                latest_decoder_telemetry.insert(telemetry.decoder.clone(), telemetry);
+            }
         }
     }
 
@@ -8005,7 +8118,8 @@ fn drain_sdr_events_batch(receiver: &Receiver<SdrEvent>, limit: usize) -> Vec<Sd
             + usize::from(latest_spectrum.is_some())
             + usize::from(latest_decoder_state.is_some())
             + usize::from(latest_dependencies.is_some())
-            + usize::from(latest_squelch.is_some()),
+            + usize::from(latest_squelch.is_some())
+            + latest_decoder_telemetry.len(),
     );
 
     events.extend(logs.into_iter().map(SdrEvent::Log));
@@ -8031,6 +8145,11 @@ fn drain_sdr_events_batch(receiver: &Receiver<SdrEvent>, limit: usize) -> Vec<Sd
     if let Some(value) = latest_squelch {
         events.push(SdrEvent::SquelchChanged(value));
     }
+    events.extend(
+        latest_decoder_telemetry
+            .into_values()
+            .map(SdrEvent::DecoderTelemetry),
+    );
 
     events
 }
@@ -8443,6 +8562,7 @@ fn sdr_config_from_inputs(
     autotune_check: &CheckButton,
     bias_tee_check: &CheckButton,
     no_payload_satcom_check: &CheckButton,
+    satcom_parse_denylist_entry: &Entry,
 ) -> SdrConfig {
     let defaults = SdrConfig::default();
     let center_freq_hz = center_freq_entry
@@ -8520,6 +8640,9 @@ fn sdr_config_from_inputs(
         auto_tune_decoders: autotune_check.is_active(),
         bias_tee_enabled: bias_tee_check.is_active(),
         no_payload_satcom: no_payload_satcom_check.is_active(),
+        satcom_parse_denylist: parse_satcom_parse_denylist_input(
+            satcom_parse_denylist_entry.text().as_str(),
+        ),
     }
 }
 
@@ -8536,6 +8659,61 @@ fn apply_sdr_runtime_controls(runtime: &SdrRuntime, config: &SdrConfig) {
     runtime.set_auto_tune(config.auto_tune_decoders);
     runtime.set_bias_tee(config.bias_tee_enabled);
     runtime.set_no_payload_satcom(config.no_payload_satcom);
+    runtime.set_satcom_parse_denylist(config.satcom_parse_denylist.clone());
+}
+
+fn parse_satcom_parse_denylist_input(value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for token in value.split(',') {
+        let normalized = token
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric())
+            .map(|ch| ch.to_ascii_lowercase())
+            .collect::<String>();
+        if normalized.is_empty() || out.iter().any(|existing| existing == &normalized) {
+            continue;
+        }
+        out.push(normalized);
+    }
+    out
+}
+
+fn write_json_pretty<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<()> {
+    let encoded = serde_json::to_vec_pretty(value)
+        .with_context(|| format!("serialize json payload for {}", path.display()))?;
+    fs::write(path, encoded).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+fn write_sdr_satcom_csv(path: &std::path::Path, rows: &[SdrSatcomObservation]) -> Result<()> {
+    let mut out = String::from(
+        "timestamp,decoder,protocol,freq_hz,band,encryption_posture,payload_parse_state,has_coordinates,identifier_hints,payload_fields,summary,message,raw\n",
+    );
+    for row in rows {
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            csv_escape(&row.timestamp.to_rfc3339()),
+            csv_escape(&row.decoder),
+            csv_escape(&row.protocol),
+            row.freq_hz,
+            csv_escape(&row.band),
+            csv_escape(&row.encryption_posture),
+            csv_escape(&row.payload_parse_state),
+            if row.has_coordinates { "true" } else { "false" },
+            csv_escape(&row.identifier_hints.join("|")),
+            csv_escape(&satcom_payload_fields_text(&row.payload_fields)),
+            csv_escape(&row.summary),
+            csv_escape(&row.message),
+            csv_escape(&row.raw),
+        ));
+    }
+    fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+fn csv_escape(value: &str) -> String {
+    let escaped = value.replace('"', "\"\"");
+    format!("\"{}\"", escaped)
 }
 
 fn sdr_decode_table_header() -> Grid {
@@ -8839,6 +9017,30 @@ fn format_sdr_dependency_status(statuses: &[SdrDependencyStatus]) -> String {
     }
 }
 
+fn format_sdr_decoder_telemetry(
+    active_decoder: Option<&str>,
+    telemetry: &HashMap<String, SdrDecoderTelemetry>,
+) -> String {
+    if telemetry.is_empty() {
+        return "Decoder Health: no telemetry".to_string();
+    }
+    let selected = active_decoder
+        .and_then(|name| telemetry.get(name))
+        .or_else(|| telemetry.values().max_by_key(|entry| entry.timestamp));
+    if let Some(entry) = selected {
+        format!(
+            "Decoder Health [{}] rows={} map={} satcom={} stderr={}",
+            entry.decoder,
+            entry.decoded_rows,
+            entry.map_points,
+            entry.satcom_rows,
+            entry.stderr_lines
+        )
+    } else {
+        "Decoder Health: no telemetry".to_string()
+    }
+}
+
 fn draw_sdr_fft(ctx: &cairo::Context, width: f64, height: f64, model: &SdrUiModel) {
     ctx.set_source_rgb(0.03, 0.05, 0.09);
     let _ = ctx.paint();
@@ -8963,7 +9165,47 @@ fn draw_sdr_map(ctx: &cairo::Context, width: f64, height: f64, model: &SdrUiMode
     ctx.rectangle(margin_left, margin_top, plot_width, plot_height);
     let _ = ctx.stroke();
 
-    for point in model.map_points.iter().rev().take(5000).rev() {
+    let recent_points = model
+        .map_points
+        .iter()
+        .rev()
+        .take(5000)
+        .rev()
+        .collect::<Vec<_>>();
+    let mut trails: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
+    for point in &recent_points {
+        let x_ratio = ((point.longitude - min_lon) / lon_span).clamp(0.0, 1.0);
+        let y_ratio = ((point.latitude - min_lat) / lat_span).clamp(0.0, 1.0);
+        let x = margin_left + x_ratio * plot_width;
+        let y = margin_top + (1.0 - y_ratio) * plot_height;
+        trails
+            .entry(point.protocol.to_ascii_lowercase())
+            .or_default()
+            .push((x, y));
+    }
+
+    for (protocol, points) in &trails {
+        if points.len() < 2 {
+            continue;
+        }
+        let (r, g, b) = match protocol.as_str() {
+            "adsb" => (0.95, 0.74, 0.21),
+            "ais" => (0.22, 0.80, 0.95),
+            "acars" => (0.63, 0.88, 0.38),
+            "iridium" | "inmarsat_c" => (0.86, 0.40, 0.98),
+            _ => (0.34, 0.84, 0.42),
+        };
+        ctx.set_source_rgba(r, g, b, 0.18);
+        ctx.set_line_width(1.1);
+        let (x0, y0) = points[0];
+        ctx.move_to(x0, y0);
+        for (x, y) in points.iter().skip(1) {
+            ctx.line_to(*x, *y);
+        }
+        let _ = ctx.stroke();
+    }
+
+    for point in recent_points {
         let x_ratio = ((point.longitude - min_lon) / lon_span).clamp(0.0, 1.0);
         let y_ratio = ((point.latitude - min_lat) / lat_span).clamp(0.0, 1.0);
         let x = margin_left + x_ratio * plot_width;
@@ -8978,6 +9220,22 @@ fn draw_sdr_map(ctx: &cairo::Context, width: f64, height: f64, model: &SdrUiMode
         ctx.set_source_rgba(r, g, b, 0.8);
         ctx.arc(x, y, 2.2, 0.0, std::f64::consts::TAU);
         let _ = ctx.fill();
+    }
+
+    if let Some(last) = model.map_points.last() {
+        let x_ratio = ((last.longitude - min_lon) / lon_span).clamp(0.0, 1.0);
+        let y_ratio = ((last.latitude - min_lat) / lat_span).clamp(0.0, 1.0);
+        let x = margin_left + x_ratio * plot_width;
+        let y = margin_top + (1.0 - y_ratio) * plot_height;
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
+        ctx.set_line_width(1.2);
+        ctx.arc(x, y, 5.5, 0.0, std::f64::consts::TAU);
+        let _ = ctx.stroke();
+        ctx.move_to((x + 8.0).min(width - 140.0), (y - 8.0).max(12.0));
+        let _ = ctx.show_text(&format!(
+            "Latest: {} {:.5},{:.5}",
+            last.protocol, last.latitude, last.longitude
+        ));
     }
 
     ctx.set_source_rgb(0.84, 0.86, 0.88);

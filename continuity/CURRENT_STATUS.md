@@ -44,6 +44,11 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 24. Wi-Fi frame parsing is now an explicit opt-in setting (default off) with capture-only fallback and UI warnings about higher resource usage when enabled.
 25. Satcom observation pipeline now includes unencrypted payload field parsing metadata (`payload_parse_state`, normalized parsed fields) and a built-in Inmarsat STD-C decoder path (`inmarsat_stdc`) when compatible tools are installed.
 26. Satcom parser supports protocol/decoder denylist filtering via `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST` (comma-separated tokens), yielding `denied_by_policy` parse state without disabling full satcom observation.
+27. Satcom parser denylist is now configurable from SDR controls and persisted in settings (env fallback remains supported).
+28. SDR pane now shows decoder telemetry counters (`decoded_rows`, `map_points`, `satcom_rows`, `stderr_lines`) for runtime health monitoring.
+29. SDR satcom export now emits JSON + CSV + parsed-only JSON + denied-only JSON artifacts in one action.
+30. SDR map plotting now renders recent protocol trails and highlights the latest coordinate-bearing decode point.
+31. Built-in ACARS/AIS command resolution now includes additional non-RTL fallback pipeline attempts when compatible toolchains are present.
 
 ### Bluetooth
 

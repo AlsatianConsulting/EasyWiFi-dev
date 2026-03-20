@@ -103,6 +103,10 @@ pub fn default_enable_wifi_frame_parsing() -> bool {
     false
 }
 
+pub fn default_sdr_satcom_parse_denylist() -> Vec<String> {
+    Vec::new()
+}
+
 pub fn default_bluetooth_identity_expanded() -> bool {
     true
 }
@@ -889,6 +893,8 @@ pub struct AppSettings {
     pub sdr_bookmarks: Vec<SdrBookmarkSetting>,
     #[serde(default)]
     pub sdr_operator_presets: Vec<SdrOperatorPresetSetting>,
+    #[serde(default = "default_sdr_satcom_parse_denylist")]
+    pub sdr_satcom_parse_denylist: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -926,6 +932,7 @@ impl Default for AppSettings {
             auto_check_oui_updates: default_auto_check_oui_updates(),
             sdr_bookmarks: Vec::new(),
             sdr_operator_presets: Vec::new(),
+            sdr_satcom_parse_denylist: default_sdr_satcom_parse_denylist(),
         }
     }
 }
@@ -999,6 +1006,7 @@ mod tests {
         settings.default_rows_per_page = 100;
         settings.bluetooth_enabled = false;
         settings.enable_wifi_frame_parsing = true;
+        settings.sdr_satcom_parse_denylist = vec!["inmarsat".to_string(), "iridium".to_string()];
         settings.oui_source_path = PathBuf::from("/tmp/test-manuf");
         settings.bluetooth_detail_view.descriptors_expanded = true;
         settings.sdr_bookmarks = vec![SdrBookmarkSetting {
@@ -1025,6 +1033,10 @@ mod tests {
         assert_eq!(loaded.default_rows_per_page, 100);
         assert!(!loaded.bluetooth_enabled);
         assert!(loaded.enable_wifi_frame_parsing);
+        assert_eq!(
+            loaded.sdr_satcom_parse_denylist,
+            vec!["inmarsat".to_string(), "iridium".to_string()]
+        );
         assert_eq!(loaded.oui_source_path, PathBuf::from("/tmp/test-manuf"));
         assert!(loaded.bluetooth_detail_view.descriptors_expanded);
         assert_eq!(
