@@ -6871,6 +6871,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_model = sdr_model.clone();
         let sdr_decoder_lookup = sdr_decoder_lookup.clone();
         let sdr_decoder_order = sdr_decoder_order.clone();
+        let sdr_decoder_combo = sdr_decoder_combo.clone();
         let sdr_hardware_combo = sdr_hardware_combo.clone();
         let sdr_center_freq_entry = sdr_center_freq_entry.clone();
         let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
@@ -6946,6 +6947,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 let state = state.clone();
                 let decoder = decoder.clone();
                 let sdr_hardware_combo = sdr_hardware_combo.clone();
+                let sdr_decoder_combo = sdr_decoder_combo.clone();
                 let sdr_center_freq_entry = sdr_center_freq_entry.clone();
                 let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
                 let sdr_log_enable_check = sdr_log_enable_check.clone();
@@ -7001,6 +7003,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                         return;
                     }
                     if let Some(runtime) = s.sdr_runtime.as_ref() {
+                        let decoder_id = decoder.id();
+                        sdr_decoder_combo.set_active_id(Some(decoder_id.as_str()));
                         runtime.set_center_freq(clicked_freq_hz);
                         apply_sdr_runtime_controls(runtime, &config);
                         runtime.start_decode(decoder.clone());
@@ -7023,6 +7027,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_model = sdr_model.clone();
         let sdr_decoder_lookup = sdr_decoder_lookup.clone();
         let sdr_decoder_order = sdr_decoder_order.clone();
+        let sdr_decoder_combo = sdr_decoder_combo.clone();
         let sdr_hardware_combo = sdr_hardware_combo.clone();
         let sdr_center_freq_entry = sdr_center_freq_entry.clone();
         let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
@@ -7143,6 +7148,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 let state = state.clone();
                 let decoder = decoder.clone();
                 let sdr_hardware_combo = sdr_hardware_combo.clone();
+                let sdr_decoder_combo = sdr_decoder_combo.clone();
                 let sdr_center_freq_entry = sdr_center_freq_entry.clone();
                 let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
                 let sdr_log_enable_check = sdr_log_enable_check.clone();
@@ -7198,6 +7204,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                         return;
                     }
                     if let Some(runtime) = s.sdr_runtime.as_ref() {
+                        let decoder_id = decoder.id();
+                        sdr_decoder_combo.set_active_id(Some(decoder_id.as_str()));
                         runtime.set_center_freq(clicked_freq_hz);
                         apply_sdr_runtime_controls(runtime, &config);
                         runtime.start_decode(decoder.clone());
@@ -7220,6 +7228,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_model = sdr_model.clone();
         let sdr_decoder_lookup = sdr_decoder_lookup.clone();
         let sdr_decoder_order = sdr_decoder_order.clone();
+        let sdr_decoder_combo = sdr_decoder_combo.clone();
         let sdr_hardware_combo = sdr_hardware_combo.clone();
         let sdr_center_freq_entry = sdr_center_freq_entry.clone();
         let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
@@ -7328,6 +7337,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 let state = state.clone();
                 let decoder = decoder.clone();
                 let sdr_hardware_combo = sdr_hardware_combo.clone();
+                let sdr_decoder_combo = sdr_decoder_combo.clone();
                 let sdr_center_freq_entry = sdr_center_freq_entry.clone();
                 let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
                 let sdr_log_enable_check = sdr_log_enable_check.clone();
@@ -7383,6 +7393,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                         return;
                     }
                     if let Some(runtime) = s.sdr_runtime.as_ref() {
+                        let decoder_id = decoder.id();
+                        sdr_decoder_combo.set_active_id(Some(decoder_id.as_str()));
                         runtime.set_center_freq(clicked_freq_hz);
                         apply_sdr_runtime_controls(runtime, &config);
                         runtime.start_decode(decoder.clone());
