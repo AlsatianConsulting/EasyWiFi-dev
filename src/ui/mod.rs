@@ -1426,6 +1426,15 @@ struct SdrUiModel {
     satcom_observations: Vec<SdrSatcomObservation>,
     dependency_status: Vec<SdrDependencyStatus>,
     decoder_telemetry: HashMap<String, SdrDecoderTelemetry>,
+    decoder_telemetry_rates: HashMap<String, SdrDecoderTelemetryRate>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SdrDecoderTelemetryRate {
+    decoded_rows_per_sec: f64,
+    map_points_per_sec: f64,
+    satcom_rows_per_sec: f64,
+    stderr_lines_per_sec: f64,
 }
 
 #[derive(Clone)]
@@ -4082,6 +4091,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let sdr_capture_sample_btn = Button::with_label("Capture IQ Sample");
     let sdr_export_map_btn = Button::with_label("Export Map JSON");
     let sdr_export_satcom_btn = Button::with_label("Export Satcom JSON");
+    let sdr_export_satcom_filtered_btn = Button::with_label("Export Satcom (Filtered)");
+    let sdr_satcom_filter_all_btn = Button::with_label("Satcom Filter: All");
+    let sdr_satcom_filter_parsed_btn = Button::with_label("Satcom Filter: Parsed");
+    let sdr_satcom_filter_denied_btn = Button::with_label("Satcom Filter: Denied");
 
     let mut initial_sdr_bookmarks = vec![
         ("ADS-B (1090 MHz)".to_string(), 1_090_000_000),
@@ -4192,8 +4205,12 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_controls.attach(&Label::new(Some("IQ Dir")), 7, 6, 1, 1);
     sdr_controls.attach(&sdr_sample_dir_entry, 8, 6, 2, 1);
     sdr_controls.attach(&sdr_capture_sample_btn, 10, 6, 1, 1);
+    sdr_controls.attach(&sdr_satcom_filter_all_btn, 6, 7, 1, 1);
+    sdr_controls.attach(&sdr_satcom_filter_parsed_btn, 7, 7, 1, 1);
+    sdr_controls.attach(&sdr_satcom_filter_denied_btn, 8, 7, 1, 1);
     sdr_controls.attach(&sdr_export_map_btn, 9, 7, 1, 1);
     sdr_controls.attach(&sdr_export_satcom_btn, 10, 7, 1, 1);
+    sdr_controls.attach(&sdr_export_satcom_filtered_btn, 9, 8, 2, 1);
     sdr_controls.attach(&sdr_center_geiger_rssi_label, 0, 8, 3, 1);
     sdr_controls.attach(&sdr_center_geiger_tone_label, 3, 8, 3, 1);
     sdr_controls.attach(&sdr_center_geiger_progress, 6, 8, 5, 1);
@@ -5651,6 +5668,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let state = state.clone();
         let sdr_model = sdr_model.clone();
         let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
         sdr_export_satcom_btn.connect_clicked(move |_| {
             let observations = sdr_model.borrow().satcom_observations.clone();
             if observations.is_empty() {
@@ -5679,59 +5697,112 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 "sdr_satcom_audit_{}.json",
                 Utc::now().format("%Y%m%dT%H%M%SZ")
             ));
-            let csv_path = file_path.with_extension("csv");
-            let parsed_path = file_path
-                .with_file_name(file_path.file_name().unwrap_or_default())
-                .with_extension("parsed.json");
-            let denied_path = file_path
-                .with_file_name(file_path.file_name().unwrap_or_default())
-                .with_extension("denied.json");
-            let parsed = observations
-                .iter()
-                .filter(|row| row.payload_parse_state == "parsed")
-                .cloned()
-                .collect::<Vec<_>>();
-            let denied = observations
-                .iter()
-                .filter(|row| row.payload_parse_state == "denied_by_policy")
-                .cloned()
-                .collect::<Vec<_>>();
+            match export_sdr_satcom_artifacts(&file_path, &observations) {
+                Ok((json_path, csv_path, parsed_path, denied_path)) => {
+                    state.borrow_mut().push_status(format!(
+                        "exported SDR satcom artifacts: {}, {}, {}, {}",
+                        json_path.display(),
+                        csv_path.display(),
+                        parsed_path.display(),
+                        denied_path.display()
+                    ));
+                }
+                Err(err) => {
+                    state
+                        .borrow_mut()
+                        .push_status(format!("SDR satcom export failed: {err}"));
+                    return;
+                }
+            }
+            let filters = pagination_filter_terms(&sdr_satcom_pagination);
+            if !filters.is_empty() {
+                state.borrow_mut().push_status(format!(
+                    "active satcom table filters during export: {}",
+                    pagination_filter_signature(&filters)
+                ));
+            }
+        });
+    }
 
-            if let Err(err) = write_json_pretty(&file_path, &observations) {
+    {
+        let state = state.clone();
+        let sdr_model = sdr_model.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
+        sdr_export_satcom_filtered_btn.connect_clicked(move |_| {
+            let all_observations = sdr_model.borrow().satcom_observations.clone();
+            let filters = pagination_filter_terms(&sdr_satcom_pagination);
+            let filtered = all_observations
+                .into_iter()
+                .filter(|row| {
+                    row_matches_column_filters(&filters, |column_id| {
+                        sdr_satcom_row_column_value(row, column_id)
+                    })
+                })
+                .collect::<Vec<_>>();
+            if filtered.is_empty() {
+                state.borrow_mut().push_status(
+                    "SDR satcom filtered export skipped: no rows match active filters".to_string(),
+                );
+                return;
+            }
+            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
+            let output_dir = if output_dir_text.is_empty() {
+                SdrConfig::default().log_output_dir
+            } else {
+                PathBuf::from(output_dir_text)
+            };
+            if let Err(err) = fs::create_dir_all(&output_dir) {
                 state.borrow_mut().push_status(format!(
-                    "SDR satcom export failed (write {}): {err}",
-                    file_path.display()
+                    "SDR satcom filtered export failed (create dir {}): {err}",
+                    output_dir.display()
                 ));
                 return;
             }
-            if let Err(err) = write_sdr_satcom_csv(&csv_path, &observations) {
-                state.borrow_mut().push_status(format!(
-                    "SDR satcom CSV export failed (write {}): {err}",
-                    csv_path.display()
-                ));
-                return;
-            }
-            if let Err(err) = write_json_pretty(&parsed_path, &parsed) {
-                state.borrow_mut().push_status(format!(
-                    "SDR satcom parsed export failed (write {}): {err}",
-                    parsed_path.display()
-                ));
-                return;
-            }
-            if let Err(err) = write_json_pretty(&denied_path, &denied) {
-                state.borrow_mut().push_status(format!(
-                    "SDR satcom denied export failed (write {}): {err}",
-                    denied_path.display()
-                ));
-                return;
-            }
-            state.borrow_mut().push_status(format!(
-                "exported SDR satcom artifacts: {}, {}, {}, {}",
-                file_path.display(),
-                csv_path.display(),
-                parsed_path.display(),
-                denied_path.display()
+            let file_path = output_dir.join(format!(
+                "sdr_satcom_filtered_{}.json",
+                Utc::now().format("%Y%m%dT%H%M%SZ")
             ));
+            match export_sdr_satcom_artifacts(&file_path, &filtered) {
+                Ok((json_path, csv_path, parsed_path, denied_path)) => {
+                    state.borrow_mut().push_status(format!(
+                        "exported filtered SDR satcom artifacts: {}, {}, {}, {} | filters={}",
+                        json_path.display(),
+                        csv_path.display(),
+                        parsed_path.display(),
+                        denied_path.display(),
+                        pagination_filter_signature(&filters)
+                    ));
+                }
+                Err(err) => {
+                    state
+                        .borrow_mut()
+                        .push_status(format!("SDR satcom filtered export failed: {err}"));
+                }
+            }
+        });
+    }
+
+    {
+        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
+        sdr_satcom_filter_all_btn.connect_clicked(move |_| {
+            set_pagination_column_filter(&sdr_satcom_pagination, "payload_parse", "");
+        });
+    }
+    {
+        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
+        sdr_satcom_filter_parsed_btn.connect_clicked(move |_| {
+            set_pagination_column_filter(&sdr_satcom_pagination, "payload_parse", "parsed");
+        });
+    }
+    {
+        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
+        sdr_satcom_filter_denied_btn.connect_clicked(move |_| {
+            set_pagination_column_filter(
+                &sdr_satcom_pagination,
+                "payload_parse",
+                "denied_by_policy",
+            );
         });
     }
 
@@ -6370,6 +6441,57 @@ fn bind_poll_loop(
                 }
                 SdrEvent::DecoderTelemetry(telemetry) => {
                     let mut model = sdr_model.borrow_mut();
+                    if let Some((
+                        previous_timestamp,
+                        previous_decoded_rows,
+                        previous_map_points,
+                        previous_satcom_rows,
+                        previous_stderr_lines,
+                    )) = model
+                        .decoder_telemetry
+                        .get(&telemetry.decoder)
+                        .map(|previous| {
+                            (
+                                previous.timestamp,
+                                previous.decoded_rows,
+                                previous.map_points,
+                                previous.satcom_rows,
+                                previous.stderr_lines,
+                            )
+                        })
+                    {
+                        let dt_secs = (telemetry
+                            .timestamp
+                            .signed_duration_since(previous_timestamp)
+                            .num_milliseconds() as f64
+                            / 1000.0)
+                            .max(0.001);
+                        model.decoder_telemetry_rates.insert(
+                            telemetry.decoder.clone(),
+                            SdrDecoderTelemetryRate {
+                                decoded_rows_per_sec: telemetry
+                                    .decoded_rows
+                                    .saturating_sub(previous_decoded_rows)
+                                    as f64
+                                    / dt_secs,
+                                map_points_per_sec: telemetry
+                                    .map_points
+                                    .saturating_sub(previous_map_points)
+                                    as f64
+                                    / dt_secs,
+                                satcom_rows_per_sec: telemetry
+                                    .satcom_rows
+                                    .saturating_sub(previous_satcom_rows)
+                                    as f64
+                                    / dt_secs,
+                                stderr_lines_per_sec: telemetry
+                                    .stderr_lines
+                                    .saturating_sub(previous_stderr_lines)
+                                    as f64
+                                    / dt_secs,
+                            },
+                        );
+                    }
                     model
                         .decoder_telemetry
                         .insert(telemetry.decoder.clone(), telemetry);
@@ -7084,6 +7206,7 @@ fn bind_poll_loop(
             sdr_health_label.set_text(&format_sdr_decoder_telemetry(
                 model.decoder_running.as_deref(),
                 &model.decoder_telemetry,
+                &model.decoder_telemetry_rates,
             ));
             if let Some((center_dbm, tone_hz, fraction)) = center_geiger {
                 sdr_center_geiger_rssi_label
@@ -7903,6 +8026,22 @@ fn pagination_filter_terms(pagination: &TablePaginationUi) -> Vec<(String, Strin
     filters
 }
 
+fn set_pagination_column_filter(pagination: &TablePaginationUi, column_id: &str, value: &str) {
+    if let Some(entry) = pagination.filter_entries.borrow().get(column_id) {
+        entry.set_text(value);
+        pagination.current_page.set(0);
+        pagination
+            .generation
+            .set(pagination.generation.get().saturating_add(1));
+        let labels = pagination_filter_label_columns(&pagination.filter_columns.borrow().clone());
+        update_filter_summary_label(
+            &pagination.filter_summary_label,
+            &labels,
+            &pagination.filter_entries.borrow(),
+        );
+    }
+}
+
 fn pagination_filter_signature(filters: &[(String, String)]) -> String {
     filters
         .iter()
@@ -8678,7 +8817,10 @@ fn parse_satcom_parse_denylist_input(value: &str) -> Vec<String> {
     out
 }
 
-fn write_json_pretty<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<()> {
+fn write_json_pretty<T: serde::Serialize + ?Sized>(
+    path: &std::path::Path,
+    value: &T,
+) -> Result<()> {
     let encoded = serde_json::to_vec_pretty(value)
         .with_context(|| format!("serialize json payload for {}", path.display()))?;
     fs::write(path, encoded).with_context(|| format!("write {}", path.display()))?;
@@ -8709,6 +8851,52 @@ fn write_sdr_satcom_csv(path: &std::path::Path, rows: &[SdrSatcomObservation]) -
     }
     fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
     Ok(())
+}
+
+fn export_sdr_satcom_artifacts(
+    primary_json_path: &std::path::Path,
+    rows: &[SdrSatcomObservation],
+) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
+    write_json_pretty(primary_json_path, rows)?;
+
+    let mut csv_path = primary_json_path.to_path_buf();
+    csv_path.set_extension("csv");
+    write_sdr_satcom_csv(&csv_path, rows)?;
+
+    let stem = primary_json_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("sdr_satcom_export");
+    let extension = primary_json_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("json");
+    let parent = primary_json_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+
+    let parsed_rows = rows
+        .iter()
+        .filter(|row| row.payload_parse_state == "parsed")
+        .cloned()
+        .collect::<Vec<_>>();
+    let denied_rows = rows
+        .iter()
+        .filter(|row| row.payload_parse_state == "denied_by_policy")
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let parsed_path = parent.join(format!("{stem}_parsed.{extension}"));
+    let denied_path = parent.join(format!("{stem}_denied.{extension}"));
+    write_json_pretty(&parsed_path, &parsed_rows)?;
+    write_json_pretty(&denied_path, &denied_rows)?;
+
+    Ok((
+        primary_json_path.to_path_buf(),
+        csv_path,
+        parsed_path,
+        denied_path,
+    ))
 }
 
 fn csv_escape(value: &str) -> String {
@@ -9020,6 +9208,7 @@ fn format_sdr_dependency_status(statuses: &[SdrDependencyStatus]) -> String {
 fn format_sdr_decoder_telemetry(
     active_decoder: Option<&str>,
     telemetry: &HashMap<String, SdrDecoderTelemetry>,
+    rates: &HashMap<String, SdrDecoderTelemetryRate>,
 ) -> String {
     if telemetry.is_empty() {
         return "Decoder Health: no telemetry".to_string();
@@ -9028,13 +9217,18 @@ fn format_sdr_decoder_telemetry(
         .and_then(|name| telemetry.get(name))
         .or_else(|| telemetry.values().max_by_key(|entry| entry.timestamp));
     if let Some(entry) = selected {
+        let rate = rates.get(&entry.decoder);
         format!(
-            "Decoder Health [{}] rows={} map={} satcom={} stderr={}",
+            "Decoder Health [{}] rows={} ({:.1}/s) map={} ({:.1}/s) satcom={} ({:.1}/s) stderr={} ({:.1}/s)",
             entry.decoder,
             entry.decoded_rows,
+            rate.map(|v| v.decoded_rows_per_sec).unwrap_or(0.0),
             entry.map_points,
+            rate.map(|v| v.map_points_per_sec).unwrap_or(0.0),
             entry.satcom_rows,
-            entry.stderr_lines
+            rate.map(|v| v.satcom_rows_per_sec).unwrap_or(0.0),
+            entry.stderr_lines,
+            rate.map(|v| v.stderr_lines_per_sec).unwrap_or(0.0)
         )
     } else {
         "Decoder Health: no telemetry".to_string()
