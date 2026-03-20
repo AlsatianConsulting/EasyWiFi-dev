@@ -88,6 +88,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 68. SDR pane now surfaces a live satcom summary status line with parse-state and encryption-posture counters for quick non-content policy/runtime monitoring.
 69. SDR controls now include `Export Decode JSON`, which exports raw decode rows as JSON+CSV artifacts for offline triage alongside map/satcom/correlation exports.
 70. SDR controls now include `Validate Decoder`, a dry-run command/dependency readiness check for the selected decoder/hardware/frequency configuration.
+71. `Presets -> Frequencies` now includes `Import SDR Bookmarks CSV`, supporting `frequency_hz` or `frequency_mhz` columns with dedupe/normalization and live bookmark refresh.
 
 ### Bluetooth
 

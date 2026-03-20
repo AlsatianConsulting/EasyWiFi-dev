@@ -2662,6 +2662,72 @@ fn export_sdr_bookmarks_csv(path: &PathBuf, bookmarks: &[(String, u64)]) -> Resu
     Ok(())
 }
 
+fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
+    let mut reader = csv::Reader::from_path(path)
+        .with_context(|| format!("failed to open bookmark CSV {}", path.display()))?;
+    let headers = reader
+        .headers()
+        .with_context(|| format!("failed to read headers from {}", path.display()))?
+        .iter()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .collect::<Vec<_>>();
+
+    let index_of = |names: &[&str]| -> Option<usize> {
+        names.iter().find_map(|name| {
+            headers
+                .iter()
+                .position(|header| header == &name.trim().to_ascii_lowercase())
+        })
+    };
+
+    let label_idx = index_of(&["label", "name", "bookmark"]);
+    let hz_idx = index_of(&["frequency_hz", "freq_hz", "hz"]);
+    let mhz_idx = index_of(&["frequency_mhz", "freq_mhz", "mhz", "frequency"]);
+    if label_idx.is_none() && hz_idx.is_none() && mhz_idx.is_none() {
+        return Err(anyhow::anyhow!(
+            "bookmark CSV missing expected columns (label/frequency_hz/frequency_mhz)"
+        ));
+    }
+
+    let mut imported = Vec::new();
+    for row in reader.records() {
+        let row = row.with_context(|| format!("failed to read row in {}", path.display()))?;
+        let label = label_idx
+            .and_then(|idx| row.get(idx))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "Imported Bookmark".to_string());
+
+        let frequency_hz = hz_idx
+            .and_then(|idx| row.get(idx))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(|value| value.parse::<u64>().ok())
+            .or_else(|| {
+                mhz_idx
+                    .and_then(|idx| row.get(idx))
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .map(|mhz| (mhz * 1_000_000.0).round() as u64)
+            });
+
+        let Some(frequency_hz) = frequency_hz else {
+            continue;
+        };
+        if frequency_hz < 100_000 {
+            continue;
+        }
+        imported.push(SdrBookmarkSetting {
+            label,
+            frequency_hz,
+        });
+    }
+    normalize_sdr_bookmark_settings(&mut imported);
+    Ok(imported)
+}
+
 fn refresh_sdr_bookmark_combo(
     sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
     sdr_bookmark_combo: &ComboBoxText,
@@ -4123,6 +4189,10 @@ fn build_menubar(
         Some("Export SDR Bookmarks CSV"),
         Some("app.preset_export_sdr_bookmarks_csv"),
     );
+    frequency_menu.append(
+        Some("Import SDR Bookmarks CSV"),
+        Some("app.preset_import_sdr_bookmarks_csv"),
+    );
     presets_root_menu.append_submenu(Some("Frequencies"), &frequency_menu);
 
     let scanner_menu = gio::Menu::new();
@@ -4874,6 +4944,68 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_export_sdr_bookmarks_csv_action);
+
+    let presets_import_sdr_bookmarks_csv_action =
+        gio::SimpleAction::new("preset_import_sdr_bookmarks_csv", None);
+    {
+        let state = state.clone();
+        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
+        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
+        presets_import_sdr_bookmarks_csv_action.connect_activate(move |_, _| {
+            let dialog = FileChooserDialog::new(
+                Some("Import SDR Bookmarks CSV"),
+                None::<&gtk::Window>,
+                FileChooserAction::Open,
+                &[
+                    ("Cancel", ResponseType::Cancel),
+                    ("Import", ResponseType::Accept),
+                ],
+            );
+            let state = state.clone();
+            let sdr_bookmarks = sdr_bookmarks.clone();
+            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+            dialog.connect_response(move |dialog, response| {
+                if response == ResponseType::Accept {
+                    let Some(path) = dialog.file().and_then(|file| file.path()) else {
+                        state.borrow_mut().push_status(
+                            "SDR bookmark import skipped: no CSV path selected".to_string(),
+                        );
+                        dialog.close();
+                        return;
+                    };
+                    match import_sdr_bookmarks_csv(&path) {
+                        Ok(imported) => {
+                            if imported.is_empty() {
+                                state.borrow_mut().push_status(format!(
+                                    "SDR bookmark import skipped: no valid rows in {}",
+                                    path.display()
+                                ));
+                            } else {
+                                let summary = import_sdr_bookmarks(
+                                    &state,
+                                    &sdr_bookmarks,
+                                    &sdr_bookmark_combo,
+                                    imported,
+                                );
+                                state.borrow_mut().push_status(format!(
+                                    "imported SDR bookmarks from {} (added={}, duplicates={})",
+                                    path.display(),
+                                    summary.added,
+                                    summary.skipped_duplicates
+                                ));
+                            }
+                        }
+                        Err(err) => state
+                            .borrow_mut()
+                            .push_status(format!("SDR bookmark import failed: {err}")),
+                    }
+                }
+                dialog.close();
+            });
+            dialog.present();
+        });
+    }
+    app.add_action(&presets_import_sdr_bookmarks_csv_action);
 
     let file_menu = gio::Menu::new();
     file_menu.append(
@@ -18836,6 +18968,31 @@ mod tests {
         assert!(content.contains("label,frequency_hz,frequency_mhz,source"));
         assert!(content.contains("fcc_imported"));
         assert!(content.contains("manual_or_default"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_csv_reads_hz_and_mhz_columns() {
+        let path =
+            std::env::temp_dir().join(format!("sdr-bookmarks-import-{}.csv", Uuid::new_v4()));
+        let csv = "label,frequency_hz,frequency_mhz\nAPRS,144390000,\nACARS,,131.550\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_csv_deduplicates_and_skips_invalid_rows() {
+        let path =
+            std::env::temp_dir().join(format!("sdr-bookmarks-import-dup-{}.csv", Uuid::new_v4()));
+        let csv = "label,frequency_hz\nOne,155340000\nDup,155340000\nBad,0\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].frequency_hz, 155_340_000);
         let _ = std::fs::remove_file(path);
     }
 
