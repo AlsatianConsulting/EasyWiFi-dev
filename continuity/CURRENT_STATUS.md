@@ -73,6 +73,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 53. Radiosonde RS41 plugin dependency status is now explicitly surfaced through SDR dependency planning (`rtl_433` mapping).
 54. SDR bookmark state now remains synchronized/sorted across manual adds and FCC import workflows (settings, in-memory list, and combo UI stay aligned).
 55. Persisted SDR bookmark settings are now normalized (invalid entries removed, sorted by frequency, duplicates deduplicated) during add/import workflows.
+56. Scanner presets now include dedicated public-safety P25 ranges (700/800 MHz) for faster targeted trunking-band sweeps.
 
 ### Bluetooth
 
