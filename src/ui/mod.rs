@@ -1201,6 +1201,23 @@ struct FrequencyPresetGroup {
     entries: Vec<FrequencyPresetEntry>,
 }
 
+#[derive(Clone)]
+struct ScannerPresetEntry {
+    id: String,
+    label: String,
+    start_hz: u64,
+    end_hz: u64,
+    step_hz: u64,
+    steps_per_sec: f64,
+    squelch_dbm: f32,
+}
+
+#[derive(Clone)]
+struct ScannerPresetGroup {
+    label: String,
+    entries: Vec<ScannerPresetEntry>,
+}
+
 fn default_frequency_preset_groups() -> Vec<FrequencyPresetGroup> {
     vec![
         FrequencyPresetGroup {
@@ -1218,6 +1235,83 @@ fn default_frequency_preset_groups() -> Vec<FrequencyPresetGroup> {
         FrequencyPresetGroup {
             label: "Satellite Frequencies".to_string(),
             entries: satellite_frequency_presets(),
+        },
+        FrequencyPresetGroup {
+            label: "Digital Voice / Utility".to_string(),
+            entries: digital_voice_utility_presets(),
+        },
+        FrequencyPresetGroup {
+            label: "IoT / ISM".to_string(),
+            entries: iot_ism_frequency_presets(),
+        },
+    ]
+}
+
+fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
+    vec![
+        ScannerPresetGroup {
+            label: "2.4 GHz Scans".to_string(),
+            entries: vec![
+                ScannerPresetEntry {
+                    id: "scan_2400_24835".to_string(),
+                    label: "2.4 GHz Full Band".to_string(),
+                    start_hz: 2_400_000_000,
+                    end_hz: 2_483_500_000,
+                    step_hz: 1_000_000,
+                    steps_per_sec: 8.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_wifi24".to_string(),
+                    label: "Wi-Fi 2.4 Channels".to_string(),
+                    start_hz: 2_412_000_000,
+                    end_hz: 2_472_000_000,
+                    step_hz: 5_000_000,
+                    steps_per_sec: 8.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_bt24".to_string(),
+                    label: "Bluetooth 2.4 Band".to_string(),
+                    start_hz: 2_402_000_000,
+                    end_hz: 2_480_000_000,
+                    step_hz: 1_000_000,
+                    steps_per_sec: 10.0,
+                    squelch_dbm: -84.0,
+                },
+            ],
+        },
+        ScannerPresetGroup {
+            label: "IoT / ISM Scans".to_string(),
+            entries: vec![
+                ScannerPresetEntry {
+                    id: "scan_315_320".to_string(),
+                    label: "315 MHz ISM Window".to_string(),
+                    start_hz: 314_000_000,
+                    end_hz: 316_000_000,
+                    step_hz: 25_000,
+                    steps_per_sec: 8.0,
+                    squelch_dbm: -84.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_433_435".to_string(),
+                    label: "433 MHz ISM Window".to_string(),
+                    start_hz: 433_000_000,
+                    end_hz: 435_000_000,
+                    step_hz: 25_000,
+                    steps_per_sec: 8.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_902_928".to_string(),
+                    label: "902-928 MHz ISM".to_string(),
+                    start_hz: 902_000_000,
+                    end_hz: 928_000_000,
+                    step_hz: 200_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+            ],
         },
     ]
 }
@@ -1394,6 +1488,106 @@ fn satellite_frequency_presets() -> Vec<FrequencyPresetEntry> {
             id: "sat_iridium_1626000".to_string(),
             label: "Iridium".to_string(),
             freq_hz: 1_626_000_000,
+        },
+    ]
+}
+
+fn digital_voice_utility_presets() -> Vec<FrequencyPresetEntry> {
+    vec![
+        FrequencyPresetEntry {
+            id: "dect_1886400".to_string(),
+            label: "DECT Center".to_string(),
+            freq_hz: 1_886_400_000,
+        },
+        FrequencyPresetEntry {
+            id: "dect_1881792".to_string(),
+            label: "DECT Alt".to_string(),
+            freq_hz: 1_881_792_000,
+        },
+        FrequencyPresetEntry {
+            id: "dmr_446075".to_string(),
+            label: "DMR Simplex 446.075".to_string(),
+            freq_hz: 446_075_000,
+        },
+        FrequencyPresetEntry {
+            id: "dmr_440000".to_string(),
+            label: "DMR UHF Center".to_string(),
+            freq_hz: 440_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "p25_851000".to_string(),
+            label: "P25 800 MHz".to_string(),
+            freq_hz: 851_000_000,
+        },
+    ]
+}
+
+fn iot_ism_frequency_presets() -> Vec<FrequencyPresetEntry> {
+    vec![
+        FrequencyPresetEntry {
+            id: "ism_315000".to_string(),
+            label: "ISM 315.000".to_string(),
+            freq_hz: 315_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "ism_390000".to_string(),
+            label: "ISM 390.000".to_string(),
+            freq_hz: 390_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "ism_433920".to_string(),
+            label: "ISM 433.920".to_string(),
+            freq_hz: 433_920_000,
+        },
+        FrequencyPresetEntry {
+            id: "lora_eu_868100".to_string(),
+            label: "LoRa EU 868.100".to_string(),
+            freq_hz: 868_100_000,
+        },
+        FrequencyPresetEntry {
+            id: "lora_eu_868300".to_string(),
+            label: "LoRa EU 868.300".to_string(),
+            freq_hz: 868_300_000,
+        },
+        FrequencyPresetEntry {
+            id: "zwave_eu_868420".to_string(),
+            label: "Z-Wave EU 868.420".to_string(),
+            freq_hz: 868_420_000,
+        },
+        FrequencyPresetEntry {
+            id: "lora_us_903900".to_string(),
+            label: "LoRa US 903.900".to_string(),
+            freq_hz: 903_900_000,
+        },
+        FrequencyPresetEntry {
+            id: "zwave_us_908420".to_string(),
+            label: "Z-Wave US 908.420".to_string(),
+            freq_hz: 908_420_000,
+        },
+        FrequencyPresetEntry {
+            id: "ism_915000".to_string(),
+            label: "ISM 915.000".to_string(),
+            freq_hz: 915_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "zigbee_ch11".to_string(),
+            label: "Zigbee Ch 11".to_string(),
+            freq_hz: 2_405_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "zigbee_ch15".to_string(),
+            label: "Zigbee Ch 15".to_string(),
+            freq_hz: 2_425_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "zigbee_ch20".to_string(),
+            label: "Zigbee Ch 20".to_string(),
+            freq_hz: 2_450_000_000,
+        },
+        FrequencyPresetEntry {
+            id: "zigbee_ch26".to_string(),
+            label: "Zigbee Ch 26".to_string(),
+            freq_hz: 2_480_000_000,
         },
     ]
 }
@@ -1707,6 +1901,12 @@ struct UiWidgets {
     channel_draw: DrawingArea,
     ap_inline_channel_draw: DrawingArea,
     sdr_center_freq_entry: Entry,
+    sdr_sample_rate_entry: Entry,
+    sdr_scan_enable_check: CheckButton,
+    sdr_scan_start_entry: Entry,
+    sdr_scan_end_entry: Entry,
+    sdr_scan_step_entry: Entry,
+    sdr_scan_speed_entry: Entry,
     sdr_frequency_label: Label,
     sdr_decoder_label: Label,
     sdr_dependency_label: Label,
@@ -2882,6 +3082,7 @@ fn build_menubar(
     app.add_action(&quit_action);
 
     let presets_root_menu = gio::Menu::new();
+    let frequency_menu = gio::Menu::new();
     for group in default_frequency_preset_groups() {
         let group_menu = gio::Menu::new();
         for entry in group.entries {
@@ -2912,8 +3113,72 @@ fn build_menubar(
             app.add_action(&action);
             group_menu.append(Some(&label), Some(&action_target));
         }
-        presets_root_menu.append_submenu(Some(&group.label), &group_menu);
+        frequency_menu.append_submenu(Some(&group.label), &group_menu);
     }
+    presets_root_menu.append_submenu(Some("Frequencies"), &frequency_menu);
+
+    let scanner_menu = gio::Menu::new();
+    for group in default_scanner_preset_groups() {
+        let group_menu = gio::Menu::new();
+        for entry in group.entries {
+            let action_name = format!("preset_scan_{}", entry.id);
+            let action_target = format!("app.{}", action_name);
+            let label = format!(
+                "{} ({:.3}-{:.3} MHz)",
+                entry.label,
+                entry.start_hz as f64 / 1_000_000.0,
+                entry.end_hz as f64 / 1_000_000.0
+            );
+            let state = state.clone();
+            let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
+            let sdr_sample_rate_entry = widgets.sdr_sample_rate_entry.clone();
+            let sdr_scan_enable_check = widgets.sdr_scan_enable_check.clone();
+            let sdr_scan_start_entry = widgets.sdr_scan_start_entry.clone();
+            let sdr_scan_end_entry = widgets.sdr_scan_end_entry.clone();
+            let sdr_scan_step_entry = widgets.sdr_scan_step_entry.clone();
+            let sdr_scan_speed_entry = widgets.sdr_scan_speed_entry.clone();
+            let sdr_squelch_scale = widgets.sdr_squelch_scale.clone();
+            let entry_label = entry.label.clone();
+            let start_hz = entry.start_hz;
+            let end_hz = entry.end_hz;
+            let step_hz = entry.step_hz;
+            let steps_per_sec = entry.steps_per_sec;
+            let squelch_dbm = entry.squelch_dbm;
+            let action = gio::SimpleAction::new(&action_name, None);
+            action.connect_activate(move |_, _| {
+                let center_hz = start_hz + (end_hz.saturating_sub(start_hz) / 2);
+                let mut sample_rate_hz =
+                    ((end_hz.saturating_sub(start_hz)).saturating_mul(12) / 10).max(2_000_000);
+                sample_rate_hz = sample_rate_hz.min(20_000_000);
+                sdr_center_freq_entry.set_text(&center_hz.to_string());
+                sdr_sample_rate_entry.set_text(&sample_rate_hz.to_string());
+                sdr_scan_enable_check.set_active(true);
+                sdr_scan_start_entry.set_text(&start_hz.to_string());
+                sdr_scan_end_entry.set_text(&end_hz.to_string());
+                sdr_scan_step_entry.set_text(&step_hz.to_string());
+                sdr_scan_speed_entry.set_text(&format!("{steps_per_sec:.2}"));
+                sdr_squelch_scale.set_value(squelch_dbm as f64);
+                let mut s = state.borrow_mut();
+                if let Some(runtime) = s.sdr_runtime.as_ref() {
+                    runtime.set_center_freq(center_hz);
+                    runtime.set_scan_range(true, start_hz, end_hz, step_hz, steps_per_sec);
+                    runtime.set_squelch(squelch_dbm);
+                }
+                s.push_status(format!(
+                    "scanner preset applied: {} ({:.3}-{:.3} MHz, step {} kHz, squelch {:.0} dBm)",
+                    entry_label,
+                    start_hz as f64 / 1_000_000.0,
+                    end_hz as f64 / 1_000_000.0,
+                    step_hz as f64 / 1_000.0,
+                    squelch_dbm
+                ));
+            });
+            app.add_action(&action);
+            group_menu.append(Some(&label), Some(&action_target));
+        }
+        scanner_menu.append_submenu(Some(&group.label), &group_menu);
+    }
+    presets_root_menu.append_submenu(Some("Scanner Presets"), &scanner_menu);
 
     let file_menu = gio::Menu::new();
     file_menu.append(
@@ -6823,6 +7088,12 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             channel_draw,
             ap_inline_channel_draw,
             sdr_center_freq_entry,
+            sdr_sample_rate_entry,
+            sdr_scan_enable_check,
+            sdr_scan_start_entry,
+            sdr_scan_end_entry,
+            sdr_scan_step_entry,
+            sdr_scan_speed_entry,
             sdr_frequency_label,
             sdr_decoder_label,
             sdr_dependency_label,
@@ -6921,6 +7192,12 @@ fn bind_poll_loop(
         channel_draw,
         ap_inline_channel_draw,
         sdr_center_freq_entry: _sdr_center_freq_entry,
+        sdr_sample_rate_entry: _sdr_sample_rate_entry,
+        sdr_scan_enable_check: _sdr_scan_enable_check,
+        sdr_scan_start_entry: _sdr_scan_start_entry,
+        sdr_scan_end_entry: _sdr_scan_end_entry,
+        sdr_scan_step_entry: _sdr_scan_step_entry,
+        sdr_scan_speed_entry: _sdr_scan_speed_entry,
         sdr_frequency_label,
         sdr_decoder_label,
         sdr_dependency_label,

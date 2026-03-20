@@ -52,6 +52,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 32. Built-in APRS/AX.25 decoder path is now available with RTL and non-RTL fallback command resolution, including right-click launch parity across SDR hardware classes.
 33. Meshtastic and Meshcore metadata plugin presets are now included in `sdr-plugins.json` with dependency-plan integration and protocol autotune defaults.
 34. Top-level `Presets` menu now provides grouped default frequency selections for Wi-Fi channels, Bluetooth frequencies, pager bands, and satellite targets; selection updates/tunes SDR center frequency.
+35. Presets now include additional DECT/DMR/IoT/ISM defaults and scanner profiles that auto-configure center/sample-rate/range/step/squelch and enable scan mode from the menu.
 
 ### Bluetooth
 
