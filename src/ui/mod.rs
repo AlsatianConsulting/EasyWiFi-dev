@@ -2522,6 +2522,7 @@ struct BookmarkImportSummary {
 
 fn import_sdr_bookmarks(
     state: &Rc<RefCell<AppState>>,
+    sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
     sdr_bookmark_combo: &ComboBoxText,
     imported: Vec<SdrBookmarkSetting>,
 ) -> BookmarkImportSummary {
@@ -2538,6 +2539,9 @@ fn import_sdr_bookmarks(
             continue;
         }
         sdr_bookmark_combo.append(Some(&bookmark.frequency_hz.to_string()), &bookmark.label);
+        sdr_bookmarks
+            .borrow_mut()
+            .push((bookmark.label.clone(), bookmark.frequency_hz));
         s.settings.sdr_bookmarks.push(bookmark);
         added = added.saturating_add(1);
     }
@@ -2711,6 +2715,7 @@ struct UiWidgets {
     ap_inline_channel_draw: DrawingArea,
     sdr_center_freq_entry: Entry,
     sdr_sample_rate_entry: Entry,
+    sdr_bookmarks: Rc<RefCell<Vec<(String, u64)>>>,
     sdr_bookmark_combo: ComboBoxText,
     sdr_decoder_combo: ComboBoxText,
     sdr_scan_enable_check: CheckButton,
@@ -4392,6 +4397,7 @@ fn build_menubar(
     {
         let window = window.clone();
         let state = state.clone();
+        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
         let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
         presets_fcc_frequency_action.connect_activate(move |_, _| {
             let dialog = Dialog::builder()
@@ -4426,6 +4432,7 @@ fn build_menubar(
 
             let window = window.clone();
             let state = state.clone();
+            let sdr_bookmarks = sdr_bookmarks.clone();
             let sdr_bookmark_combo = sdr_bookmark_combo.clone();
             dialog.connect_response(move |d, response| {
                 if response != ResponseType::Accept {
@@ -4442,6 +4449,7 @@ fn build_menubar(
                 d.close();
                 choose_file_path(&window, "Select FCC Assignments CSV", PathBuf::from("."), {
                     let state = state.clone();
+                    let sdr_bookmarks = sdr_bookmarks.clone();
                     let sdr_bookmark_combo = sdr_bookmark_combo.clone();
                     let signal_filter = signal_filter.clone();
                     move |selected| {
@@ -4471,7 +4479,12 @@ fn build_menubar(
                         }
 
                         let summary =
-                            import_sdr_bookmarks(&state, &sdr_bookmark_combo, imported);
+                            import_sdr_bookmarks(
+                                &state,
+                                &sdr_bookmarks,
+                                &sdr_bookmark_combo,
+                                imported,
+                            );
                         state.borrow_mut().push_status(format!(
                             "FCC frequency explorer loaded from {} [{} | type={}] added={} skipped_duplicates={}",
                             csv_path.display(),
@@ -4501,6 +4514,7 @@ fn build_menubar(
     {
         let window = window.clone();
         let state = state.clone();
+        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
         let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
         presets_fcc_frequency_url_action.connect_activate(move |_, _| {
             let dialog = Dialog::builder()
@@ -4540,6 +4554,7 @@ fn build_menubar(
             content.append(&url_entry);
 
             let state = state.clone();
+            let sdr_bookmarks = sdr_bookmarks.clone();
             let sdr_bookmark_combo = sdr_bookmark_combo.clone();
             dialog.connect_response(move |d, response| {
                 if response != ResponseType::Accept {
@@ -4589,7 +4604,8 @@ fn build_menubar(
                     let _ = fs::remove_file(&csv_path);
                     return;
                 }
-                let summary = import_sdr_bookmarks(&state, &sdr_bookmark_combo, imported);
+                let summary =
+                    import_sdr_bookmarks(&state, &sdr_bookmarks, &sdr_bookmark_combo, imported);
                 state.borrow_mut().push_status(format!(
                     "FCC frequency explorer URL loaded [{} | type={}] added={} skipped_duplicates={}",
                     if area.trim().is_empty() {
@@ -8573,6 +8589,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_inline_channel_draw,
             sdr_center_freq_entry,
             sdr_sample_rate_entry,
+            sdr_bookmarks,
             sdr_bookmark_combo,
             sdr_decoder_combo,
             sdr_scan_enable_check,
@@ -8679,6 +8696,7 @@ fn bind_poll_loop(
         ap_inline_channel_draw,
         sdr_center_freq_entry: _sdr_center_freq_entry,
         sdr_sample_rate_entry: _sdr_sample_rate_entry,
+        sdr_bookmarks: _sdr_bookmarks,
         sdr_bookmark_combo: _sdr_bookmark_combo,
         sdr_decoder_combo: _sdr_decoder_combo,
         sdr_scan_enable_check: _sdr_scan_enable_check,
