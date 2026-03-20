@@ -56,6 +56,7 @@ This repository contains an MVP implementation with:
   - `Presets -> Frequencies` also supports direct bookmark import from remote CSV URL
   - Bookmark controls include `Decode Bookmark` for one-click tune + decoder start on the selected bookmark
   - `Export SDR Health JSON` captures telemetry/rate counters plus satcom/aircraft summaries in one snapshot artifact
+  - SDR CSV exports with timestamp fields honor the selected time display mode (Local or Zulu/UTC)
   - Aircraft correlation export now derives ADS-B/ACARS identity joins (`icao_hex`/`callsign`) and writes JSON+CSV artifacts
   - SDR health section includes live aircraft-correlation counts (mixed ADS-B/ACARS + single-source tallies)
   - SDR health section also includes live satcom summary counters (parse state + encryption posture)

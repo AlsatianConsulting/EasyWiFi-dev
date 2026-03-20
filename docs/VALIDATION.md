@@ -93,6 +93,7 @@ Time display behavior now includes:
 
 - local time as default display mode for UI timestamps
 - optional Zulu/UTC display mode toggle in Preferences -> General
+- SDR CSV exports with timestamp fields follow the same Local/Zulu mode
 
 ## Multi-Adapter Status
 

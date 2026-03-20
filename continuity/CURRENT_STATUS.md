@@ -96,6 +96,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 76. Channel status pane now includes a live `Runtime Activity` heartbeat line that updates once per second with current Wi-Fi/Bluetooth/SDR runtime states.
 77. Time display now defaults to local time across UI tables/status timestamps, with a Settings toggle to switch to Zulu (`UTC`) display mode.
 78. `Export SDR Bookmarks CSV` now also emits a JSON companion artifact (`sdr_bookmarks.json`) with source tagging for downstream automation.
+79. SDR CSV exports that include timestamp fields (decode/satcom/aircraft-correlation) now honor the local-vs-Zulu time display setting.
 
 ### Bluetooth
 

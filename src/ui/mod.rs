@@ -12314,7 +12314,7 @@ fn write_sdr_satcom_csv(path: &std::path::Path, rows: &[SdrSatcomObservation]) -
     for row in rows {
         out.push_str(&format!(
             "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
-            csv_escape(&row.timestamp.to_rfc3339()),
+            csv_escape(&format_display_timestamp(row.timestamp)),
             csv_escape(&row.decoder),
             csv_escape(&row.protocol),
             row.freq_hz,
@@ -12339,7 +12339,7 @@ fn write_sdr_decode_csv(path: &std::path::Path, rows: &[SdrDecodeRow]) -> Result
     for row in rows {
         out.push_str(&format!(
             "{},{},{},{},{},{}\n",
-            csv_escape(&row.timestamp.to_rfc3339()),
+            csv_escape(&format_display_timestamp(row.timestamp)),
             csv_escape(&row.decoder),
             row.freq_hz,
             csv_escape(&row.protocol),
@@ -12399,8 +12399,8 @@ fn write_sdr_aircraft_correlation_csv(
             row.adsb_rows,
             row.acars_rows,
             row.total_rows,
-            csv_escape(&row.first_seen.to_rfc3339()),
-            csv_escape(&row.last_seen.to_rfc3339()),
+            csv_escape(&format_display_timestamp(row.first_seen)),
+            csv_escape(&format_display_timestamp(row.last_seen)),
             csv_escape(
                 &row.frequencies_hz
                     .iter()
