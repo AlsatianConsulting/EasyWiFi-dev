@@ -69,6 +69,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 49. FCC frequency-bookmark import status now reports added vs skipped-duplicate counts to improve large-import auditability.
 50. FCC frequency-bookmark explorers (CSV and URL) now support optional signal/service-type filtering during import.
 51. FCC area explorer workflows (CSV and URL) now support optional signal/service-type filtering for targeted scan-profile generation.
+52. Presets and scan macros now include radiosonde-focused defaults (400-406 MHz sweep and common sonde frequencies) tied to existing RS41 decoder plugin workflow.
 
 ### Bluetooth
 
