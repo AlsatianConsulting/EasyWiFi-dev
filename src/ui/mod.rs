@@ -2070,11 +2070,39 @@ fn build_fcc_frequency_bookmarks_from_csv(
                 "freq_assigned",
                 "assigned_frequency",
                 "frequency",
+                "center_frequency",
+                "frequency_mhz",
             ],
         )
         .and_then(|value| parse_fcc_frequency_hz(&value));
-        let Some(freq_hz) = assigned_hz else {
-            continue;
+        let lower_hz = fcc_record_value(
+            &record,
+            &header_index,
+            &[
+                "lower_frequency",
+                "frequency_lower",
+                "freq_lower",
+                "lower_freq",
+                "lower_frequency_mhz",
+            ],
+        )
+        .and_then(|value| parse_fcc_frequency_hz(&value));
+        let upper_hz = fcc_record_value(
+            &record,
+            &header_index,
+            &[
+                "upper_frequency",
+                "frequency_upper",
+                "freq_upper",
+                "upper_freq",
+                "upper_frequency_mhz",
+            ],
+        )
+        .and_then(|value| parse_fcc_frequency_hz(&value));
+        let freq_hz = match (assigned_hz, lower_hz, upper_hz) {
+            (Some(center), _, _) => center,
+            (None, Some(start), Some(end)) if end > start => start + (end - start) / 2,
+            _ => continue,
         };
         if freq_hz < 100_000 || freq_hz > 8_000_000_000 || seen_freqs.contains(&freq_hz) {
             continue;
@@ -2100,6 +2128,7 @@ fn build_fcc_frequency_bookmarks_from_csv(
             break;
         }
     }
+    out.sort_by_key(|entry| entry.frequency_hz);
     Ok(out)
 }
 
@@ -17784,6 +17813,28 @@ mod tests {
         let out = build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", 1).expect("parse ok");
         assert_eq!(out.len(), 1);
         assert!(out[0].frequency_hz == 155_340_000 || out[0].frequency_hz == 460_125_000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn fcc_frequency_bookmark_builder_uses_lower_upper_midpoint_when_assigned_missing() {
+        let path = std::env::temp_dir().join(format!("fcc-freq-mid-{}.csv", Uuid::new_v4()));
+        let csv = "city,state,lower_frequency,upper_frequency,radio_service_desc\nRaleigh,NC,451.000,451.050,Business\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let out = build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", 10).expect("parse ok");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].frequency_hz, 451_025_000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn fcc_frequency_bookmark_builder_returns_sorted_frequencies() {
+        let path = std::env::temp_dir().join(format!("fcc-freq-sort-{}.csv", Uuid::new_v4()));
+        let csv = "city,state,frequency_assigned,radio_service_desc\nRaleigh,NC,460.125,Public Safety\nRaleigh,NC,155.340,Public Safety\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let out = build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", 10).expect("parse ok");
+        assert_eq!(out.len(), 2);
+        assert!(out[0].frequency_hz < out[1].frequency_hz);
         let _ = std::fs::remove_file(path);
     }
 
