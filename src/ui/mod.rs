@@ -2629,6 +2629,38 @@ fn normalize_sdr_bookmark_settings(bookmarks: &mut Vec<SdrBookmarkSetting>) {
     bookmarks.dedup_by(|left, right| left.frequency_hz == right.frequency_hz);
 }
 
+fn export_sdr_bookmarks_csv(path: &PathBuf, bookmarks: &[(String, u64)]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create bookmark export dir {}", parent.display())
+        })?;
+    }
+    let mut writer = csv::Writer::from_path(path)
+        .with_context(|| format!("failed to create {}", path.display()))?;
+    writer
+        .write_record(["label", "frequency_hz", "frequency_mhz", "source"])
+        .with_context(|| format!("failed to write header to {}", path.display()))?;
+    for (label, freq_hz) in bookmarks.iter() {
+        let source = if label.trim_start().starts_with("FCC |") {
+            "fcc_imported"
+        } else {
+            "manual_or_default"
+        };
+        writer
+            .write_record([
+                label.as_str(),
+                &freq_hz.to_string(),
+                &format!("{:.6}", *freq_hz as f64 / 1_000_000.0),
+                source,
+            ])
+            .with_context(|| format!("failed to write row to {}", path.display()))?;
+    }
+    writer
+        .flush()
+        .with_context(|| format!("failed to flush {}", path.display()))?;
+    Ok(())
+}
+
 fn refresh_sdr_bookmark_combo(
     sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
     sdr_bookmark_combo: &ComboBoxText,
@@ -4084,6 +4116,10 @@ fn build_menubar(
         Some("Remove FCC Bookmarks"),
         Some("app.preset_fcc_bookmarks_remove"),
     );
+    frequency_menu.append(
+        Some("Export SDR Bookmarks CSV"),
+        Some("app.preset_export_sdr_bookmarks_csv"),
+    );
     presets_root_menu.append_submenu(Some("Frequencies"), &frequency_menu);
 
     let scanner_menu = gio::Menu::new();
@@ -4806,6 +4842,35 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_fcc_bookmarks_remove_action);
+
+    let presets_export_sdr_bookmarks_csv_action =
+        gio::SimpleAction::new("preset_export_sdr_bookmarks_csv", None);
+    {
+        let state = state.clone();
+        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
+        presets_export_sdr_bookmarks_csv_action.connect_activate(move |_, _| {
+            let bookmarks = sdr_bookmarks.borrow().clone();
+            let export_path = {
+                let s = state.borrow();
+                s.exporter
+                    .paths
+                    .session_dir
+                    .join("csv")
+                    .join("sdr_bookmarks.csv")
+            };
+            let result = export_sdr_bookmarks_csv(&export_path, &bookmarks);
+            let mut s = state.borrow_mut();
+            match result {
+                Ok(()) => s.push_status(format!(
+                    "exported SDR bookmarks CSV ({} rows): {}",
+                    bookmarks.len(),
+                    export_path.display()
+                )),
+                Err(err) => s.push_status(format!("SDR bookmark export failed: {err}")),
+            }
+        });
+    }
+    app.add_action(&presets_export_sdr_bookmarks_csv_action);
 
     let file_menu = gio::Menu::new();
     file_menu.append(
@@ -18324,6 +18389,21 @@ mod tests {
         assert!(bookmarks[0].frequency_hz < bookmarks[1].frequency_hz);
         assert_eq!(bookmarks[0].frequency_hz, 155_340_000);
         assert_eq!(bookmarks[1].frequency_hz, 460_125_000);
+    }
+
+    #[test]
+    fn export_sdr_bookmarks_csv_writes_rows_and_source_tag() {
+        let path = std::env::temp_dir().join(format!("sdr-bookmarks-{}.csv", Uuid::new_v4()));
+        let rows = vec![
+            ("FCC | Public Safety | WQAB123".to_string(), 155_340_000u64),
+            ("APRS 144.390".to_string(), 144_390_000u64),
+        ];
+        export_sdr_bookmarks_csv(&path, &rows).expect("export csv");
+        let content = std::fs::read_to_string(&path).expect("read csv");
+        assert!(content.contains("label,frequency_hz,frequency_mhz,source"));
+        assert!(content.contains("fcc_imported"));
+        assert!(content.contains("manual_or_default"));
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
