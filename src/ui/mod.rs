@@ -2086,6 +2086,26 @@ struct FccAreaScanPreset {
     signal_type: Option<String>,
 }
 
+fn decoder_id_for_fcc_signal_type(signal_type: &str) -> Option<&'static str> {
+    let lower = signal_type.to_ascii_lowercase();
+    if lower.contains("public safety") || lower.contains("trunked") || lower.contains("land mobile")
+    {
+        Some("p25")
+    } else if lower.contains("maritime") || lower.contains("ship") || lower.contains("coast") {
+        Some("ais")
+    } else if lower.contains("paging") || lower.contains("pager") {
+        Some("pocsag")
+    } else if lower.contains("aeronautical") || lower.contains("aircraft") {
+        Some("acars")
+    } else if lower.contains("weather") || lower.contains("meteorological") {
+        Some("weather_noaa_apt")
+    } else if lower.contains("satellite") || lower.contains("space") {
+        Some("inmarsat_stdc")
+    } else {
+        None
+    }
+}
+
 fn build_fcc_frequency_bookmarks_from_csv(
     csv_path: &PathBuf,
     area_filter: &str,
@@ -4153,6 +4173,7 @@ fn build_menubar(
     {
         let window = window.clone();
         let state = state.clone();
+        let sdr_decoder_combo = widgets.sdr_decoder_combo.clone();
         let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
         let sdr_sample_rate_entry = widgets.sdr_sample_rate_entry.clone();
         let sdr_scan_enable_check = widgets.sdr_scan_enable_check.clone();
@@ -4188,6 +4209,7 @@ fn build_menubar(
 
             let window = window.clone();
             let state = state.clone();
+            let sdr_decoder_combo = sdr_decoder_combo.clone();
             let sdr_center_freq_entry = sdr_center_freq_entry.clone();
             let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
             let sdr_scan_enable_check = sdr_scan_enable_check.clone();
@@ -4212,6 +4234,7 @@ fn build_menubar(
                         let state = state.clone();
                         let sdr_center_freq_entry = sdr_center_freq_entry.clone();
                         let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+                        let sdr_decoder_combo = sdr_decoder_combo.clone();
                         let sdr_scan_enable_check = sdr_scan_enable_check.clone();
                         let sdr_scan_start_entry = sdr_scan_start_entry.clone();
                         let sdr_scan_end_entry = sdr_scan_end_entry.clone();
@@ -4246,6 +4269,12 @@ fn build_menubar(
                             let preset = fcc_scan.preset;
                             let signal_type = fcc_scan.signal_type;
                             let matched_rows = fcc_scan.matched_rows;
+                            if let Some(decoder_id) = signal_type
+                                .as_deref()
+                                .and_then(decoder_id_for_fcc_signal_type)
+                            {
+                                let _ = sdr_decoder_combo.set_active_id(Some(decoder_id));
+                            }
 
                             sdr_center_freq_entry.set_text(&preset.center_freq_hz.to_string());
                             sdr_sample_rate_entry.set_text(&preset.sample_rate_hz.to_string());
@@ -4306,6 +4335,7 @@ fn build_menubar(
     {
         let window = window.clone();
         let state = state.clone();
+        let sdr_decoder_combo = widgets.sdr_decoder_combo.clone();
         let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
         let sdr_sample_rate_entry = widgets.sdr_sample_rate_entry.clone();
         let sdr_scan_enable_check = widgets.sdr_scan_enable_check.clone();
@@ -4346,6 +4376,7 @@ fn build_menubar(
             content.append(&url_entry);
 
             let state = state.clone();
+            let sdr_decoder_combo = sdr_decoder_combo.clone();
             let sdr_center_freq_entry = sdr_center_freq_entry.clone();
             let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
             let sdr_scan_enable_check = sdr_scan_enable_check.clone();
@@ -4396,6 +4427,12 @@ fn build_menubar(
                 let preset = fcc_scan.preset;
                 let signal_type = fcc_scan.signal_type;
                 let matched_rows = fcc_scan.matched_rows;
+                if let Some(decoder_id) = signal_type
+                    .as_deref()
+                    .and_then(decoder_id_for_fcc_signal_type)
+                {
+                    let _ = sdr_decoder_combo.set_active_id(Some(decoder_id));
+                }
                 sdr_center_freq_entry.set_text(&preset.center_freq_hz.to_string());
                 sdr_sample_rate_entry.set_text(&preset.sample_rate_hz.to_string());
                 sdr_scan_enable_check.set_active(true);
@@ -18184,6 +18221,24 @@ mod tests {
         assert!(bookmarks[0].frequency_hz < bookmarks[1].frequency_hz);
         assert_eq!(bookmarks[0].frequency_hz, 155_340_000);
         assert_eq!(bookmarks[1].frequency_hz, 460_125_000);
+    }
+
+    #[test]
+    fn decoder_id_for_fcc_signal_type_maps_common_services() {
+        assert_eq!(
+            decoder_id_for_fcc_signal_type("Public Safety Pool, Conventional"),
+            Some("p25")
+        );
+        assert_eq!(
+            decoder_id_for_fcc_signal_type("Maritime Coast"),
+            Some("ais")
+        );
+        assert_eq!(decoder_id_for_fcc_signal_type("Paging"), Some("pocsag"));
+        assert_eq!(
+            decoder_id_for_fcc_signal_type("Aeronautical Enroute"),
+            Some("acars")
+        );
+        assert_eq!(decoder_id_for_fcc_signal_type("Unknown"), None);
     }
 
     #[test]
