@@ -19717,6 +19717,15 @@ mod tests {
     }
 
     #[test]
+    fn time_display_mode_switches_zulu_suffix_behavior() {
+        let sample = Utc::now();
+        set_use_zulu_time_display(true);
+        assert!(format_display_time_hms(sample).ends_with('Z'));
+        set_use_zulu_time_display(false);
+        assert!(!format_display_time_hms(sample).ends_with('Z'));
+    }
+
+    #[test]
     fn runtime_output_root_uses_effective_uid_namespace() {
         let root = internal_runtime_output_root();
         let uid = unsafe { libc::geteuid() };
