@@ -2417,19 +2417,26 @@ fn merge_sdr_operator_presets(
     added
 }
 
+struct BookmarkImportSummary {
+    added: usize,
+    skipped_duplicates: usize,
+}
+
 fn import_sdr_bookmarks(
     state: &Rc<RefCell<AppState>>,
     sdr_bookmark_combo: &ComboBoxText,
     imported: Vec<SdrBookmarkSetting>,
-) -> usize {
+) -> BookmarkImportSummary {
     let mut s = state.borrow_mut();
     let mut added = 0usize;
+    let mut skipped_duplicates = 0usize;
     for bookmark in imported {
         if s.settings
             .sdr_bookmarks
             .iter()
             .any(|current| current.frequency_hz == bookmark.frequency_hz)
         {
+            skipped_duplicates = skipped_duplicates.saturating_add(1);
             continue;
         }
         sdr_bookmark_combo.append(Some(&bookmark.frequency_hz.to_string()), &bookmark.label);
@@ -2437,7 +2444,10 @@ fn import_sdr_bookmarks(
         added = added.saturating_add(1);
     }
     s.save_settings_to_disk();
-    added
+    BookmarkImportSummary {
+        added,
+        skipped_duplicates,
+    }
 }
 
 struct StopCompletion {
@@ -4324,16 +4334,18 @@ fn build_menubar(
                             return;
                         }
 
-                        let added = import_sdr_bookmarks(&state, &sdr_bookmark_combo, imported);
+                        let summary =
+                            import_sdr_bookmarks(&state, &sdr_bookmark_combo, imported);
                         state.borrow_mut().push_status(format!(
-                            "FCC frequency explorer loaded from {} [{}] new bookmarks added: {}",
+                            "FCC frequency explorer loaded from {} [{}] added={} skipped_duplicates={}",
                             csv_path.display(),
                             if area.trim().is_empty() {
                                 "all rows".to_string()
                             } else {
                                 area.trim().to_string()
                             },
-                            added
+                            summary.added,
+                            summary.skipped_duplicates
                         ));
                     }
                 });
@@ -4424,15 +4436,16 @@ fn build_menubar(
                     let _ = fs::remove_file(&csv_path);
                     return;
                 }
-                let added = import_sdr_bookmarks(&state, &sdr_bookmark_combo, imported);
+                let summary = import_sdr_bookmarks(&state, &sdr_bookmark_combo, imported);
                 state.borrow_mut().push_status(format!(
-                    "FCC frequency explorer URL loaded [{}] new bookmarks added: {}",
+                    "FCC frequency explorer URL loaded [{}] added={} skipped_duplicates={}",
                     if area.trim().is_empty() {
                         "all rows".to_string()
                     } else {
                         area.trim().to_string()
                     },
-                    added
+                    summary.added,
+                    summary.skipped_duplicates
                 ));
                 let _ = fs::remove_file(csv_path);
             });
