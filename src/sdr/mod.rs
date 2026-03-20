@@ -1380,6 +1380,8 @@ fn resolve_decoder_command_line(
                     "rtl_fm -f {freq_hz} -M fm -s 22050 -g 35 - | multimon-ng -t raw -a AFSK1200 -a AFSK2400 -"
                         .to_string(),
                 )
+            } else if hardware == SdrHardware::RtlSdr {
+                resolve_multimon_rtl_command(freq_hz, "aprs")
             } else if hardware != SdrHardware::RtlSdr {
                 resolve_aprs_ax25_non_rtl_command(hardware, freq_hz)
             } else {
@@ -1395,6 +1397,8 @@ fn resolve_decoder_command_line(
                     "rtl_fm -f {freq_hz} -M fm -s 22050 -g 35 - | multimon-ng -t raw -a POCSAG1200 -a POCSAG2400 -"
                         .to_string(),
                 )
+            } else if hardware == SdrHardware::RtlSdr {
+                resolve_multimon_rtl_command(freq_hz, "pocsag")
             } else if hardware != SdrHardware::RtlSdr {
                 resolve_multimon_non_rtl_command(hardware, freq_hz, "pocsag")
             } else {
@@ -1428,6 +1432,8 @@ fn resolve_decoder_command_line(
                     "rtl_fm -f {freq_hz} -M fm -s 48000 -g 35 - | multimon-ng -t raw -a DECT -"
                         .to_string(),
                 )
+            } else if hardware == SdrHardware::RtlSdr {
+                resolve_multimon_rtl_command(freq_hz, "dect")
             } else if hardware != SdrHardware::RtlSdr {
                 resolve_multimon_non_rtl_command(hardware, freq_hz, "dect")
             } else {
@@ -1612,6 +1618,28 @@ fn resolve_multimon_non_rtl_command(
         capture = capture_command,
         convert = csdr_convert,
         mode_args = mode_args
+    ))
+}
+
+fn resolve_multimon_rtl_command(freq_hz: u64, mode: &str) -> Option<String> {
+    if !(command_exists("rtl_sdr")
+        && command_exists("csdr")
+        && command_exists("sox")
+        && command_exists("multimon-ng"))
+    {
+        return None;
+    }
+    let mode_args = match mode {
+        "aprs" => "-a AFSK1200 -a AFSK2400",
+        "pocsag" => "-a POCSAG1200 -a POCSAG2400",
+        "dect" => "-a DECT",
+        _ => return None,
+    };
+    let sample_rate_hz = 240_000u32;
+    let capture_samples = sample_rate_hz as u64 * 2;
+    Some(format!(
+        "tmp_iq=\"$(mktemp)\"; trap 'rm -f \"$tmp_iq\"' EXIT; while true; do rtl_sdr -f {} -s {} -n {} \"$tmp_iq\" >/dev/null 2>&1; csdr convert_u8_f < \"$tmp_iq\" | csdr fmdemod_quadri_cf | csdr limit_ff | csdr old_fractional_decimator_ff 4 | csdr convert_f_s16 | sox -t raw -r 60000 -e signed -b 16 -c 1 - -t raw -r 22050 -e signed -b 16 -c 1 - | multimon-ng -t raw {} -; done",
+        freq_hz, sample_rate_hz, capture_samples, mode_args
     ))
 }
 
@@ -4447,5 +4475,31 @@ mod tests {
         assert!(
             resolve_multimon_non_rtl_command(SdrHardware::HackRf, 169_650_000, "unknown").is_none()
         );
+    }
+
+    #[test]
+    fn resolve_multimon_rtl_command_rejects_unknown_mode() {
+        assert!(resolve_multimon_rtl_command(169_650_000, "unknown").is_none());
+    }
+
+    #[test]
+    fn aprs_rtl_fallback_pipeline_uses_rtl_sdr_when_rtl_fm_absent() {
+        let command = resolve_decoder_command_line(
+            &SdrDecoderKind::AprsAx25,
+            144_390_000,
+            2_400_000,
+            SdrHardware::RtlSdr,
+            &[],
+        );
+        if !command_exists("rtl_fm")
+            && command_exists("rtl_sdr")
+            && command_exists("csdr")
+            && command_exists("sox")
+            && command_exists("multimon-ng")
+        {
+            let command = command.expect("rtl_sdr aprs fallback");
+            assert!(command.contains("rtl_sdr -f 144390000"));
+            assert!(command.contains("AFSK1200"));
+        }
     }
 }

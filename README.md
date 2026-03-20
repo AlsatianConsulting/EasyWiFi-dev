@@ -73,6 +73,7 @@ This repository contains an MVP implementation with:
   - ADS-B built-in resolver now supports `dump1090-fa` as an additional RTL fallback before `readsb`
   - AIS built-in resolver now uses an explicit RTL fallback pipeline (`rtl_fm -> aisdecoder`) when `rtl_ais` is unavailable
   - ACARS built-in resolver no longer requires `acarsdec` for non-RTL fallback pipelines (`csdr/sox/multimon-ng`), improving multi-device launch success
+  - APRS/POCSAG/DECT built-in resolvers now fall back to an RTL IQ pipeline (`rtl_sdr + csdr + sox + multimon-ng`) when `rtl_fm` is unavailable
   - Built-in decoder command path supports optional hardware-specific plugin overrides via `sdr-plugins.json` IDs:
     - `<decoder_id>_<hardware_id>`
     - `<decoder_id>__<hardware_id>`

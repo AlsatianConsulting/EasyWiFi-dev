@@ -73,6 +73,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 32. Validate ADS-B resolver fallback order on RTL-only installs (`dump1090`, `dump1090-mutability`, `dump1090-fa`, `readsb`) and confirm status messaging clarity.
 33. Validate AIS RTL fallback behavior when `rtl_ais` is absent but `rtl_fm` + `aisdecoder` are available.
 34. Validate ACARS non-RTL fallback behavior when `acarsdec` is missing but `csdr/sox/multimon-ng` toolchain is present.
+35. Validate APRS/POCSAG/DECT RTL fallback behavior when `rtl_fm` is absent but `rtl_sdr/csdr/sox/multimon-ng` are present.
 
 ## Priority 4: requested SDR decoder backlog
 
