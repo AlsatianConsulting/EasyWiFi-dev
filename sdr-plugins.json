@@ -148,6 +148,20 @@
       "enabled": true
     },
     {
+      "id": "meshtastic_meta",
+      "label": "Meshtastic Metadata",
+      "command": "if command -v meshtastic >/dev/null; then meshtastic --info; elif command -v meshtasticd >/dev/null; then meshtasticd --version; else echo 'missing meshtastic CLI/daemon'; fi",
+      "protocol": "meshtastic",
+      "enabled": true
+    },
+    {
+      "id": "meshcore_meta",
+      "label": "Meshcore Metadata",
+      "command": "if command -v meshcore >/dev/null; then meshcore --version; elif command -v meshcore-cli >/dev/null; then meshcore-cli --version; else echo 'missing meshcore tooling'; fi",
+      "protocol": "meshcore",
+      "enabled": true
+    },
+    {
       "id": "m17",
       "label": "M17",
       "command": "if command -v m17-demod >/dev/null; then m17-demod; else echo 'missing m17-demod'; fi",

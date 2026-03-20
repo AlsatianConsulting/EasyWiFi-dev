@@ -50,6 +50,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 30. SDR map plotting now renders recent protocol trails and highlights the latest coordinate-bearing decode point.
 31. Built-in ACARS/AIS command resolution now includes additional non-RTL fallback pipeline attempts when compatible toolchains are present.
 32. Built-in APRS/AX.25 decoder path is now available with RTL and non-RTL fallback command resolution, including right-click launch parity across SDR hardware classes.
+33. Meshtastic and Meshcore metadata plugin presets are now included in `sdr-plugins.json` with dependency-plan integration and protocol autotune defaults.
 
 ### Bluetooth
 

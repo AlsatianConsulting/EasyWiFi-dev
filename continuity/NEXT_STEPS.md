@@ -62,8 +62,8 @@ Highest practical decoder backlog in the order requested:
 3. `ACARS`
 4. `AIS`
 5. `POCSAG`
-6. Meshtastic metadata support
-7. Meshcore metadata support
+6. Meshtastic metadata support (plugin preset implemented; prioritize live RF/toolchain validation)
+7. Meshcore metadata support (plugin preset implemented; prioritize live RF/toolchain validation)
 8. radiosonde
 9. APRS / AX.25 (implemented; prioritize live RF validation)
 10. weather satellite APT

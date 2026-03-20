@@ -2407,6 +2407,8 @@ fn decoder_autotune_for_plugin_id(id: &str) -> Option<u64> {
         Some(2_437_000_000)
     } else if id.contains("stdc") || id.contains("inmarsat_c") || id.contains("inmarsatc") {
         Some(1_541_450_000)
+    } else if id.contains("meshtastic") || id.contains("meshcore") {
+        Some(915_000_000)
     } else if id.contains("lora") {
         Some(868_100_000)
     } else {
@@ -2872,6 +2874,18 @@ fn dependency_install_plan(package_hint: &str) -> DependencyInstallPlan {
             verify_commands: vec!["m17-demod".to_string()],
             source_install_command: None,
         },
+        "meshtastic" => DependencyInstallPlan {
+            apt_candidates: vec!["meshtastic".to_string()],
+            pip_candidates: vec!["meshtastic".to_string()],
+            verify_commands: vec!["meshtastic".to_string(), "meshtasticd".to_string()],
+            source_install_command: None,
+        },
+        "meshcore" => DependencyInstallPlan {
+            apt_candidates: vec!["meshcore".to_string()],
+            pip_candidates: Vec::new(),
+            verify_commands: vec!["meshcore".to_string(), "meshcore-cli".to_string()],
+            source_install_command: None,
+        },
         "jaero" => DependencyInstallPlan {
             apt_candidates: vec!["jaero".to_string()],
             pip_candidates: Vec::new(),
@@ -3042,6 +3056,14 @@ fn plugin_dependency_descriptors(plugin_defs: &[SdrPluginDefinition]) -> Vec<Dep
             "m17" => vec![DependencyDescriptor {
                 tool: "M17 decoder".to_string(),
                 package_hint: "m17-tools".to_string(),
+            }],
+            "meshtastic_meta" => vec![DependencyDescriptor {
+                tool: "Meshtastic metadata CLI".to_string(),
+                package_hint: "meshtastic".to_string(),
+            }],
+            "meshcore_meta" => vec![DependencyDescriptor {
+                tool: "Meshcore metadata CLI".to_string(),
+                package_hint: "meshcore".to_string(),
             }],
             "inmarsat_aero" => vec![DependencyDescriptor {
                 tool: "JAERO".to_string(),
@@ -3576,6 +3598,18 @@ mod tests {
     }
 
     #[test]
+    fn plugin_autotune_supports_mesh_protocol_ids() {
+        assert_eq!(
+            decoder_autotune_for_plugin_id("meshtastic_meta"),
+            Some(915_000_000)
+        );
+        assert_eq!(
+            decoder_autotune_for_plugin_id("meshcore_meta"),
+            Some(915_000_000)
+        );
+    }
+
+    #[test]
     fn acarsdec_command_line_uses_rtl_mode_with_mhz_frequency() {
         let command = resolve_acarsdec_command_line(131_550_000, SdrHardware::RtlSdr)
             .expect("rtl acars command");
@@ -3689,6 +3723,18 @@ mod tests {
                 command_template: "srsue".to_string(),
                 protocol: Some("lte".to_string()),
             },
+            SdrPluginDefinition {
+                id: "meshtastic_meta".to_string(),
+                label: "Meshtastic".to_string(),
+                command_template: "meshtastic --info".to_string(),
+                protocol: Some("meshtastic".to_string()),
+            },
+            SdrPluginDefinition {
+                id: "meshcore_meta".to_string(),
+                label: "Meshcore".to_string(),
+                command_template: "meshcore --version".to_string(),
+                protocol: Some("meshcore".to_string()),
+            },
         ];
         let descriptors = dependency_descriptors_with_plugins(&plugin_defs);
         assert!(descriptors.iter().any(|descriptor| {
@@ -3699,6 +3745,12 @@ mod tests {
         }));
         assert!(descriptors.iter().any(|descriptor| {
             descriptor.tool == "LTE metadata scanner" && descriptor.package_hint == "srsran"
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.tool == "Meshtastic metadata CLI" && descriptor.package_hint == "meshtastic"
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.tool == "Meshcore metadata CLI" && descriptor.package_hint == "meshcore"
         }));
     }
 
