@@ -3096,6 +3096,13 @@ fn plugin_dependency_descriptors(plugin_defs: &[SdrPluginDefinition]) -> Vec<Dep
                 tool: "dump978".to_string(),
                 package_hint: "dump978".to_string(),
             }],
+            "weather_noaa_apt"
+            | "weather_noaa_apt_hackrf"
+            | "weather_noaa_apt_bladerf"
+            | "weather_noaa_apt_ettus_b210" => vec![DependencyDescriptor {
+                tool: "Weather satellite APT decoder".to_string(),
+                package_hint: "satdump".to_string(),
+            }],
             "lte_meta" => vec![DependencyDescriptor {
                 tool: "LTE metadata scanner".to_string(),
                 package_hint: "srsran".to_string(),
@@ -3760,6 +3767,12 @@ mod tests {
                 command_template: "meshcore --version".to_string(),
                 protocol: Some("meshcore".to_string()),
             },
+            SdrPluginDefinition {
+                id: "weather_noaa_apt_hackrf".to_string(),
+                label: "Weather APT".to_string(),
+                command_template: "satdump live noaa_apt /tmp/out -".to_string(),
+                protocol: Some("weather_sat".to_string()),
+            },
         ];
         let descriptors = dependency_descriptors_with_plugins(&plugin_defs);
         assert!(descriptors.iter().any(|descriptor| {
@@ -3776,6 +3789,10 @@ mod tests {
         }));
         assert!(descriptors.iter().any(|descriptor| {
             descriptor.tool == "Meshcore metadata CLI" && descriptor.package_hint == "meshcore"
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.tool == "Weather satellite APT decoder"
+                && descriptor.package_hint == "satdump"
         }));
     }
 
