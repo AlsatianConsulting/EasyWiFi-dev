@@ -2520,6 +2520,12 @@ struct BookmarkImportSummary {
     skipped_duplicates: usize,
 }
 
+fn normalize_sdr_bookmark_settings(bookmarks: &mut Vec<SdrBookmarkSetting>) {
+    bookmarks.retain(|entry| entry.frequency_hz >= 100_000);
+    bookmarks.sort_by_key(|entry| entry.frequency_hz);
+    bookmarks.dedup_by(|left, right| left.frequency_hz == right.frequency_hz);
+}
+
 fn refresh_sdr_bookmark_combo(
     sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
     sdr_bookmark_combo: &ComboBoxText,
@@ -2566,6 +2572,7 @@ fn import_sdr_bookmarks(
         s.settings.sdr_bookmarks.push(bookmark);
         added = added.saturating_add(1);
     }
+    normalize_sdr_bookmark_settings(&mut s.settings.sdr_bookmarks);
     s.save_settings_to_disk();
     drop(s);
     refresh_sdr_bookmark_combo(sdr_bookmarks, sdr_bookmark_combo, preferred_active_hz);
@@ -7210,6 +7217,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                         label: label.clone(),
                         frequency_hz: freq_hz,
                     });
+                    normalize_sdr_bookmark_settings(&mut s.settings.sdr_bookmarks);
                     s.save_settings_to_disk();
                 }
             }
@@ -18047,6 +18055,33 @@ mod tests {
         let normalized = normalize_bookmark_label(raw, 20);
         assert!(!normalized.contains("  "));
         assert!(normalized.chars().count() <= 20);
+    }
+
+    #[test]
+    fn normalize_sdr_bookmark_settings_sorts_and_deduplicates() {
+        let mut bookmarks = vec![
+            SdrBookmarkSetting {
+                label: "B".to_string(),
+                frequency_hz: 460_125_000,
+            },
+            SdrBookmarkSetting {
+                label: "A".to_string(),
+                frequency_hz: 155_340_000,
+            },
+            SdrBookmarkSetting {
+                label: "Dup".to_string(),
+                frequency_hz: 460_125_000,
+            },
+            SdrBookmarkSetting {
+                label: "Invalid".to_string(),
+                frequency_hz: 0,
+            },
+        ];
+        normalize_sdr_bookmark_settings(&mut bookmarks);
+        assert_eq!(bookmarks.len(), 2);
+        assert!(bookmarks[0].frequency_hz < bookmarks[1].frequency_hz);
+        assert_eq!(bookmarks[0].frequency_hz, 155_340_000);
+        assert_eq!(bookmarks[1].frequency_hz, 460_125_000);
     }
 
     #[test]
