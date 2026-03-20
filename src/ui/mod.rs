@@ -1991,6 +1991,16 @@ fn fcc_record_value(
         .map(ToString::to_string)
 }
 
+fn normalize_bookmark_label(raw: &str, max_len: usize) -> String {
+    let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= max_len.max(1) {
+        return compact;
+    }
+    let keep = max_len.saturating_sub(1).max(1);
+    let truncated = compact.chars().take(keep).collect::<String>();
+    format!("{truncated}…")
+}
+
 struct FccAreaScanPreset {
     preset: SdrOperatorPresetSetting,
     matched_rows: usize,
@@ -2081,8 +2091,9 @@ fn build_fcc_frequency_bookmarks_from_csv(
         } else if !county.is_empty() {
             label_parts.push(county);
         }
+        let raw_label = label_parts.join(" | ");
         out.push(SdrBookmarkSetting {
-            label: label_parts.join(" | "),
+            label: normalize_bookmark_label(&raw_label, 96),
             frequency_hz: freq_hz,
         });
         if out.len() >= max_entries.max(1) {
@@ -17761,6 +17772,14 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].frequency_hz == 155_340_000 || out[0].frequency_hz == 460_125_000);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn normalize_bookmark_label_truncates_and_compacts_whitespace() {
+        let raw = "FCC   Public    Safety    Extremely Long Label Text";
+        let normalized = normalize_bookmark_label(raw, 20);
+        assert!(!normalized.contains("  "));
+        assert!(normalized.chars().count() <= 20);
     }
 
     #[test]
