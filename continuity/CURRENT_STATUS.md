@@ -72,6 +72,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 52. Presets and scan macros now include radiosonde-focused defaults (400-406 MHz sweep and common sonde frequencies) tied to existing RS41 decoder plugin workflow.
 53. Radiosonde RS41 plugin dependency status is now explicitly surfaced through SDR dependency planning (`rtl_433` mapping).
 54. SDR bookmark state now remains synchronized/sorted across manual adds and FCC import workflows (settings, in-memory list, and combo UI stay aligned).
+55. Persisted SDR bookmark settings are now normalized (invalid entries removed, sorted by frequency, duplicates deduplicated) during add/import workflows.
 
 ### Bluetooth
 
