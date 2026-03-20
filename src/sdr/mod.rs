@@ -1367,8 +1367,8 @@ fn resolve_decoder_command_line(
         SdrDecoderKind::Ais => {
             if hardware == SdrHardware::RtlSdr && command_exists("rtl_ais") {
                 Some("rtl_ais".to_string())
-            } else if hardware == SdrHardware::RtlSdr && command_exists("aisdecoder") {
-                Some("aisdecoder".to_string())
+            } else if hardware == SdrHardware::RtlSdr {
+                resolve_ais_rtl_command(freq_hz)
             } else if hardware != SdrHardware::RtlSdr {
                 resolve_ais_non_rtl_command(hardware, freq_hz)
             } else {
@@ -1669,6 +1669,16 @@ fn resolve_ais_non_rtl_command(hardware: SdrHardware, freq_hz: u64) -> Option<St
         "csdr fmdemod_quadri_cf | csdr limit_ff | csdr old_fractional_decimator_ff 4",
         "sox -t raw -r 60000 -e signed -b 16 -c 1 - -t raw -r 48000 -e signed -b 16 -c 1 - | aisdecoder",
     )
+}
+
+fn resolve_ais_rtl_command(freq_hz: u64) -> Option<String> {
+    if !(command_exists("rtl_fm") && command_exists("aisdecoder")) {
+        return None;
+    }
+    Some(format!(
+        "rtl_fm -f {} -M fm -s 48000 -g 35 - | aisdecoder",
+        freq_hz
+    ))
 }
 
 fn resolve_aprs_ax25_non_rtl_command(hardware: SdrHardware, freq_hz: u64) -> Option<String> {
@@ -3982,6 +3992,23 @@ mod tests {
             && !command_exists("dump1090-mutability")
         {
             assert_eq!(command.as_deref(), Some("dump1090-fa --net --quiet"));
+        }
+    }
+
+    #[test]
+    fn ais_rtl_command_uses_rtl_fm_pipeline_when_rtl_ais_is_missing() {
+        let command = resolve_decoder_command_line(
+            &SdrDecoderKind::Ais,
+            162_025_000,
+            2_400_000,
+            SdrHardware::RtlSdr,
+            &[],
+        );
+        if !command_exists("rtl_ais") && command_exists("rtl_fm") && command_exists("aisdecoder") {
+            let command = command.expect("rtl_fm ais fallback");
+            assert!(command.contains("rtl_fm"));
+            assert!(command.contains("aisdecoder"));
+            assert!(command.contains("162025000"));
         }
     }
 

@@ -70,6 +70,7 @@ This repository contains an MVP implementation with:
   - Decoder launch availability checks now gate right-click/start actions with explicit hardware/toolchain status
   - GSM/LTE decoder launch command now carries explicit center frequency and non-RTL Soapy driver arguments for improved multi-device compatibility
   - ADS-B built-in resolver now supports `dump1090-fa` as an additional RTL fallback before `readsb`
+  - AIS built-in resolver now uses an explicit RTL fallback pipeline (`rtl_fm -> aisdecoder`) when `rtl_ais` is unavailable
   - Built-in decoder command path supports optional hardware-specific plugin overrides via `sdr-plugins.json` IDs:
     - `<decoder_id>_<hardware_id>`
     - `<decoder_id>__<hardware_id>`
