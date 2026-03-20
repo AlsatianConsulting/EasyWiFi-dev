@@ -1219,6 +1219,73 @@ struct ScannerPresetGroup {
     entries: Vec<ScannerPresetEntry>,
 }
 
+#[derive(Clone)]
+struct ProtocolScanMacro {
+    id: String,
+    label: String,
+    decoder_id: String,
+    start_hz: u64,
+    end_hz: u64,
+    step_hz: u64,
+    steps_per_sec: f64,
+    squelch_dbm: f32,
+}
+
+fn protocol_scan_macros() -> Vec<ProtocolScanMacro> {
+    vec![
+        ProtocolScanMacro {
+            id: "macro_pager_us".to_string(),
+            label: "Pager Sweep + POCSAG".to_string(),
+            decoder_id: "pocsag".to_string(),
+            start_hz: 929_000_000,
+            end_hz: 932_000_000,
+            step_hz: 12_500,
+            steps_per_sec: 8.0,
+            squelch_dbm: -82.0,
+        },
+        ProtocolScanMacro {
+            id: "macro_dmr_uhf".to_string(),
+            label: "DMR UHF Sweep".to_string(),
+            decoder_id: "dmr".to_string(),
+            start_hz: 440_000_000,
+            end_hz: 470_000_000,
+            step_hz: 12_500,
+            steps_per_sec: 7.0,
+            squelch_dbm: -78.0,
+        },
+        ProtocolScanMacro {
+            id: "macro_dect".to_string(),
+            label: "DECT Band Sweep".to_string(),
+            decoder_id: "dect".to_string(),
+            start_hz: 1_880_000_000,
+            end_hz: 1_900_000_000,
+            step_hz: 1_728_000,
+            steps_per_sec: 6.0,
+            squelch_dbm: -76.0,
+        },
+        ProtocolScanMacro {
+            id: "macro_satcom_lband".to_string(),
+            label: "L-Band Satcom Sweep".to_string(),
+            decoder_id: "inmarsat_stdc".to_string(),
+            start_hz: 1_525_000_000,
+            end_hz: 1_660_000_000,
+            step_hz: 10_000,
+            steps_per_sec: 5.0,
+            squelch_dbm: -78.0,
+        },
+        ProtocolScanMacro {
+            id: "macro_iot_915".to_string(),
+            label: "915 MHz IoT Sweep".to_string(),
+            decoder_id: "rtl_433".to_string(),
+            start_hz: 902_000_000,
+            end_hz: 928_000_000,
+            step_hz: 200_000,
+            steps_per_sec: 6.0,
+            squelch_dbm: -80.0,
+        },
+    ]
+}
+
 fn scanner_presets_from_settings(settings: &AppSettings) -> Option<ScannerPresetGroup> {
     let entries = settings
         .sdr_operator_presets
@@ -2012,6 +2079,7 @@ struct UiWidgets {
     ap_inline_channel_draw: DrawingArea,
     sdr_center_freq_entry: Entry,
     sdr_sample_rate_entry: Entry,
+    sdr_decoder_combo: ComboBoxText,
     sdr_scan_enable_check: CheckButton,
     sdr_scan_start_entry: Entry,
     sdr_scan_end_entry: Entry,
@@ -3298,6 +3366,79 @@ fn build_menubar(
         scanner_menu.append_submenu(Some(&group.label), &group_menu);
     }
     presets_root_menu.append_submenu(Some("Scanner Presets"), &scanner_menu);
+
+    let macro_menu = gio::Menu::new();
+    for entry in protocol_scan_macros() {
+        let action_name = format!("preset_macro_{}", entry.id);
+        let action_target = format!("app.{}", action_name);
+        let label = format!(
+            "{} ({:.3}-{:.3} MHz)",
+            entry.label,
+            entry.start_hz as f64 / 1_000_000.0,
+            entry.end_hz as f64 / 1_000_000.0
+        );
+        let state = state.clone();
+        let sdr_decoder_combo = widgets.sdr_decoder_combo.clone();
+        let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = widgets.sdr_sample_rate_entry.clone();
+        let sdr_scan_enable_check = widgets.sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = widgets.sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = widgets.sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = widgets.sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = widgets.sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = widgets.sdr_squelch_scale.clone();
+        let entry_label = entry.label.clone();
+        let decoder_id = entry.decoder_id.clone();
+        let start_hz = entry.start_hz;
+        let end_hz = entry.end_hz;
+        let step_hz = entry.step_hz;
+        let steps_per_sec = entry.steps_per_sec;
+        let squelch_dbm = entry.squelch_dbm;
+        let action = gio::SimpleAction::new(&action_name, None);
+        action.connect_activate(move |_, _| {
+            let center_hz = start_hz + (end_hz.saturating_sub(start_hz) / 2);
+            let mut sample_rate_hz = ((end_hz.saturating_sub(start_hz)).saturating_mul(12) / 10)
+                .max(2_000_000)
+                .min(20_000_000) as u32;
+            sample_rate_hz = sample_rate_hz.clamp(200_000, 20_000_000);
+            sdr_center_freq_entry.set_text(&center_hz.to_string());
+            sdr_sample_rate_entry.set_text(&sample_rate_hz.to_string());
+            sdr_scan_enable_check.set_active(true);
+            sdr_scan_start_entry.set_text(&start_hz.to_string());
+            sdr_scan_end_entry.set_text(&end_hz.to_string());
+            sdr_scan_step_entry.set_text(&step_hz.to_string());
+            sdr_scan_speed_entry.set_text(&format!("{steps_per_sec:.2}"));
+            sdr_squelch_scale.set_value(squelch_dbm as f64);
+            let decoder_selected = sdr_decoder_combo.set_active_id(Some(&decoder_id));
+
+            let mut s = state.borrow_mut();
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                runtime.set_center_freq(center_hz);
+                runtime.set_scan_range(true, start_hz, end_hz, step_hz, steps_per_sec);
+                runtime.set_squelch(squelch_dbm);
+            }
+            if decoder_selected {
+                s.push_status(format!(
+                    "scan macro applied: {} [{}] ({:.3}-{:.3} MHz)",
+                    entry_label,
+                    decoder_id,
+                    start_hz as f64 / 1_000_000.0,
+                    end_hz as f64 / 1_000_000.0
+                ));
+            } else {
+                s.push_status(format!(
+                    "scan macro applied: {} ({:.3}-{:.3} MHz); decoder `{}` unavailable",
+                    entry_label,
+                    start_hz as f64 / 1_000_000.0,
+                    end_hz as f64 / 1_000_000.0,
+                    decoder_id
+                ));
+            }
+        });
+        app.add_action(&action);
+        macro_menu.append(Some(&label), Some(&action_target));
+    }
+    presets_root_menu.append_submenu(Some("Scan Macros"), &macro_menu);
 
     let file_menu = gio::Menu::new();
     file_menu.append(
@@ -7248,6 +7389,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_inline_channel_draw,
             sdr_center_freq_entry,
             sdr_sample_rate_entry,
+            sdr_decoder_combo,
             sdr_scan_enable_check,
             sdr_scan_start_entry,
             sdr_scan_end_entry,
@@ -7352,6 +7494,7 @@ fn bind_poll_loop(
         ap_inline_channel_draw,
         sdr_center_freq_entry: _sdr_center_freq_entry,
         sdr_sample_rate_entry: _sdr_sample_rate_entry,
+        sdr_decoder_combo: _sdr_decoder_combo,
         sdr_scan_enable_check: _sdr_scan_enable_check,
         sdr_scan_start_entry: _sdr_scan_start_entry,
         sdr_scan_end_entry: _sdr_scan_end_entry,
@@ -16518,6 +16661,31 @@ mod tests {
         assert_eq!(group.entries.len(), 1);
         assert_eq!(group.entries[0].label, "Custom IoT");
         assert_eq!(group.entries[0].sample_rate_hz, Some(2_400_000));
+    }
+
+    #[test]
+    fn protocol_scan_macros_cover_requested_protocol_targets() {
+        let macros = protocol_scan_macros();
+        let ids = macros
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        assert!(ids.contains("macro_pager_us"));
+        assert!(ids.contains("macro_dmr_uhf"));
+        assert!(ids.contains("macro_dect"));
+        assert!(ids.contains("macro_satcom_lband"));
+        assert!(ids.contains("macro_iot_915"));
+    }
+
+    #[test]
+    fn protocol_scan_macros_use_valid_ranges_and_decoder_ids() {
+        let macros = protocol_scan_macros();
+        assert!(macros.iter().all(|entry| {
+            !entry.decoder_id.trim().is_empty()
+                && entry.start_hz < entry.end_hz
+                && entry.step_hz > 0
+                && entry.steps_per_sec > 0.0
+        }));
     }
 
     #[test]
