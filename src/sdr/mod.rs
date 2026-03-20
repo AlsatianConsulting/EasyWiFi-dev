@@ -1358,11 +1358,7 @@ fn resolve_decoder_command_line(
             }
         }
         SdrDecoderKind::Acars => {
-            if command_exists("acarsdec") {
-                resolve_acarsdec_command_line(freq_hz, hardware)
-            } else {
-                None
-            }
+            resolve_acarsdec_command_line(freq_hz, hardware)
         }
         SdrDecoderKind::Ais => {
             if hardware == SdrHardware::RtlSdr && command_exists("rtl_ais") {
@@ -1514,13 +1510,22 @@ fn plugin_override_id_for_builtin(
 fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -> Option<String> {
     match kind {
         SdrDecoderKind::Acars => {
-            if command_exists("acarsdec")
-                && resolve_acarsdec_command_line(131_550_000, hardware).is_none()
-            {
-                Some(format!(
-                    "acarsdec is installed but {} mode is not configured for ACARS in this build",
-                    hardware.label()
-                ))
+            if hardware == SdrHardware::RtlSdr {
+                if !command_exists("acarsdec") {
+                    Some("ACARS on RTL-SDR requires acarsdec".to_string())
+                } else if resolve_acarsdec_command_line(131_550_000, hardware).is_none() {
+                    Some(format!(
+                        "acarsdec is installed but {} mode is not configured for ACARS in this build",
+                        hardware.label()
+                    ))
+                } else {
+                    None
+                }
+            } else if resolve_acarsdec_command_line(131_550_000, hardware).is_none() {
+                Some(
+                    "ACARS on non-RTL hardware requires csdr + sox + multimon-ng and a compatible capture tool"
+                        .to_string(),
+                )
             } else {
                 None
             }
@@ -1641,7 +1646,13 @@ pub fn decoder_launch_unavailable_reason(
 fn resolve_acarsdec_command_line(freq_hz: u64, hardware: SdrHardware) -> Option<String> {
     let freq_mhz = (freq_hz as f64) / 1_000_000.0;
     match hardware {
-        SdrHardware::RtlSdr => Some(format!("acarsdec -o 4 -r 0 {freq_mhz:.3}")),
+        SdrHardware::RtlSdr => {
+            if command_exists("acarsdec") {
+                Some(format!("acarsdec -o 4 -r 0 {freq_mhz:.3}"))
+            } else {
+                None
+            }
+        }
         _ => {
             if !command_exists("multimon-ng") {
                 None
@@ -3951,9 +3962,12 @@ mod tests {
 
     #[test]
     fn acarsdec_command_line_uses_rtl_mode_with_mhz_frequency() {
-        let command = resolve_acarsdec_command_line(131_550_000, SdrHardware::RtlSdr)
-            .expect("rtl acars command");
-        assert_eq!(command, "acarsdec -o 4 -r 0 131.550");
+        let command = resolve_acarsdec_command_line(131_550_000, SdrHardware::RtlSdr);
+        if command_exists("acarsdec") {
+            assert_eq!(command.as_deref(), Some("acarsdec -o 4 -r 0 131.550"));
+        } else {
+            assert!(command.is_none());
+        }
     }
 
     #[test]
@@ -3974,6 +3988,26 @@ mod tests {
             &[],
         );
         if let Some(command) = command {
+            assert!(command.contains("non-rtl acars pipeline active"));
+        }
+    }
+
+    #[test]
+    fn acars_non_rtl_resolution_is_not_blocked_by_missing_acarsdec_binary() {
+        let command = resolve_decoder_command_line(
+            &SdrDecoderKind::Acars,
+            131_550_000,
+            2_400_000,
+            SdrHardware::HackRf,
+            &[],
+        );
+        if !command_exists("acarsdec")
+            && command_exists("multimon-ng")
+            && command_exists("csdr")
+            && command_exists("sox")
+            && command_exists("hackrf_transfer")
+        {
+            let command = command.expect("non-rtl acars fallback");
             assert!(command.contains("non-rtl acars pipeline active"));
         }
     }

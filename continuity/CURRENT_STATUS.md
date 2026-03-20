@@ -105,6 +105,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 85. GSM/LTE built-in decoder command resolution now injects explicit center-frequency args and non-RTL Soapy driver args, improving cross-hardware launch compatibility.
 86. ADS-B built-in command resolution now recognizes `dump1090-fa` as an additional RTL fallback, improving out-of-box decoder availability on feeder-focused installs.
 87. AIS built-in command resolution on RTL now falls back to an explicit `rtl_fm -> aisdecoder` pipeline when `rtl_ais` is unavailable.
+88. ACARS built-in command resolution no longer hard-gates on `acarsdec` for non-RTL hardware, allowing valid `csdr/sox/multimon-ng` fallback pipelines to launch.
 
 ### Bluetooth
 
