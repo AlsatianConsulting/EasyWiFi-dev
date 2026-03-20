@@ -6134,6 +6134,191 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         sdr_fft_draw.add_controller(right_click);
     }
 
+    {
+        let state = state.clone();
+        let sdr_satcom_list = sdr_satcom_list.clone();
+        let sdr_satcom_list_for_click = sdr_satcom_list.clone();
+        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
+        let sdr_model = sdr_model.clone();
+        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
+        let sdr_decoder_order = sdr_decoder_order.clone();
+        let sdr_hardware_combo = sdr_hardware_combo.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_log_enable_check = sdr_log_enable_check.clone();
+        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+        let sdr_squelch_scale = sdr_squelch_scale.clone();
+        let sdr_autotune_check = sdr_autotune_check.clone();
+        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
+        let sdr_plugin_defs = sdr_plugin_defs.clone();
+        let right_click = GestureClick::new();
+        right_click.set_button(3);
+        right_click.connect_pressed(move |_, _, x, y| {
+            let Some(clicked_row_widget) = sdr_satcom_list_for_click.row_at_y(y as i32) else {
+                return;
+            };
+            let row_index = clicked_row_widget.index();
+            if row_index < 0 {
+                return;
+            }
+
+            let selected = {
+                let model = sdr_model.borrow();
+                let filters = pagination_filter_terms(&sdr_satcom_pagination);
+                let filtered = model
+                    .satcom_observations
+                    .iter()
+                    .filter(|row| {
+                        row_matches_column_filters(&filters, |column_id| {
+                            sdr_satcom_row_column_value(row, column_id)
+                        })
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let total_items = filtered.len();
+                let page_size = sdr_satcom_pagination.page_size.get();
+                let (_, _, start, end) = paged_indices(
+                    total_items,
+                    sdr_satcom_pagination.current_page.get(),
+                    page_size,
+                );
+                filtered
+                    .into_iter()
+                    .skip(start)
+                    .take(end.saturating_sub(start))
+                    .nth(row_index as usize)
+            };
+            let Some(observation) = selected else {
+                return;
+            };
+            let clicked_freq_hz = observation.freq_hz.max(100_000);
+            sdr_center_freq_entry.set_text(&clicked_freq_hz.to_string());
+
+            let popover = Popover::new();
+            popover.set_has_arrow(true);
+            popover.set_parent(&sdr_satcom_list_for_click);
+            let rect = gdk::Rectangle::new(x as i32, y as i32, 1, 1);
+            popover.set_pointing_to(Some(&rect));
+            let popover_box = GtkBox::new(Orientation::Vertical, 4);
+            let title = Label::new(Some(&format!(
+                "Decode {} Hz ({})",
+                clicked_freq_hz, observation.protocol
+            )));
+            title.set_xalign(0.0);
+            popover_box.append(&title);
+            let menu_config = sdr_config_from_inputs(
+                &sdr_hardware_combo,
+                &sdr_center_freq_entry,
+                &sdr_sample_rate_entry,
+                &sdr_log_enable_check,
+                &sdr_log_dir_entry,
+                &sdr_scan_enable_check,
+                &sdr_scan_start_entry,
+                &sdr_scan_end_entry,
+                &sdr_scan_step_entry,
+                &sdr_scan_speed_entry,
+                &sdr_squelch_scale,
+                &sdr_autotune_check,
+                &sdr_bias_tee_check,
+                &sdr_no_payload_satcom_check,
+                &sdr_satcom_denylist_entry,
+            );
+            for decoder_id in sdr_decoder_order.iter() {
+                let Some(decoder) = sdr_decoder_lookup.borrow().get(decoder_id).cloned() else {
+                    continue;
+                };
+                let unavailable_reason = sdr::decoder_launch_unavailable_reason(
+                    &decoder,
+                    clicked_freq_hz,
+                    menu_config.sample_rate_hz,
+                    menu_config.hardware,
+                    &sdr_plugin_defs,
+                );
+                let button = if unavailable_reason.is_some() {
+                    Button::with_label(&format!("Decode -> {} (unavailable)", decoder.label()))
+                } else {
+                    Button::with_label(&format!("Decode -> {}", decoder.label()))
+                };
+                button.set_sensitive(unavailable_reason.is_none());
+                let state = state.clone();
+                let decoder = decoder.clone();
+                let sdr_hardware_combo = sdr_hardware_combo.clone();
+                let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+                let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+                let sdr_log_enable_check = sdr_log_enable_check.clone();
+                let sdr_log_dir_entry = sdr_log_dir_entry.clone();
+                let sdr_scan_enable_check = sdr_scan_enable_check.clone();
+                let sdr_scan_start_entry = sdr_scan_start_entry.clone();
+                let sdr_scan_end_entry = sdr_scan_end_entry.clone();
+                let sdr_scan_step_entry = sdr_scan_step_entry.clone();
+                let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
+                let sdr_squelch_scale = sdr_squelch_scale.clone();
+                let sdr_autotune_check = sdr_autotune_check.clone();
+                let sdr_bias_tee_check = sdr_bias_tee_check.clone();
+                let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
+                let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
+                let popover = popover.clone();
+                let sdr_plugin_defs = sdr_plugin_defs.clone();
+                button.connect_clicked(move |_| {
+                    let config = sdr_config_from_inputs(
+                        &sdr_hardware_combo,
+                        &sdr_center_freq_entry,
+                        &sdr_sample_rate_entry,
+                        &sdr_log_enable_check,
+                        &sdr_log_dir_entry,
+                        &sdr_scan_enable_check,
+                        &sdr_scan_start_entry,
+                        &sdr_scan_end_entry,
+                        &sdr_scan_step_entry,
+                        &sdr_scan_speed_entry,
+                        &sdr_squelch_scale,
+                        &sdr_autotune_check,
+                        &sdr_bias_tee_check,
+                        &sdr_no_payload_satcom_check,
+                        &sdr_satcom_denylist_entry,
+                    );
+                    let mut s = state.borrow_mut();
+                    if s.sdr_runtime.is_none() {
+                        s.start_sdr_runtime(config.clone());
+                    }
+                    if let Some(reason) = sdr::decoder_launch_unavailable_reason(
+                        &decoder,
+                        clicked_freq_hz,
+                        config.sample_rate_hz,
+                        config.hardware,
+                        &sdr_plugin_defs,
+                    ) {
+                        s.push_status(format!(
+                            "decoder {} unavailable on {}: {}",
+                            decoder.label(),
+                            config.hardware.label(),
+                            reason
+                        ));
+                        popover.popdown();
+                        return;
+                    }
+                    if let Some(runtime) = s.sdr_runtime.as_ref() {
+                        runtime.set_center_freq(clicked_freq_hz);
+                        apply_sdr_runtime_controls(runtime, &config);
+                        runtime.start_decode(decoder.clone());
+                    }
+                    popover.popdown();
+                });
+                popover_box.append(&button);
+            }
+            popover.set_child(Some(&popover_box));
+            popover.popup();
+        });
+        sdr_satcom_list.add_controller(right_click);
+    }
+
     (
         notebook,
         UiWidgets {
