@@ -66,6 +66,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 25. Validate `Import SDR Bookmarks CSV URL` against stable/unstable endpoints and confirm retry/error messaging quality.
 26. Validate local-vs-Zulu time mode toggle across AP/client/bluetooth/SDR table timestamps, GPS/status panels, SDR CSV timestamp fields, SDR decoder text logs, and SDR summary JSON artifact time fields.
 27. Validate bookmark export artifacts in both CSV and JSON forms for schema and source-tag consistency.
+28. Validate `Import SDR Bookmarks JSON` with mixed numeric/string frequency fields and both supported top-level schemas (array and `{ "bookmarks": [...] }`).
 
 ## Priority 4: requested SDR decoder backlog
 

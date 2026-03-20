@@ -2786,6 +2786,107 @@ fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
     Ok(imported)
 }
 
+fn json_frequency_hz(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => {
+            if let Some(hz) = number.as_u64() {
+                return Some(hz);
+            }
+            number
+                .as_f64()
+                .filter(|hz| hz.is_finite() && *hz >= 0.0)
+                .map(|hz| hz.round() as u64)
+        }
+        serde_json::Value::String(raw) => raw
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|hz| hz.is_finite() && *hz >= 0.0)
+            .map(|hz| hz.round() as u64),
+        _ => None,
+    }
+}
+
+fn json_frequency_mhz(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => number
+            .as_f64()
+            .filter(|mhz| mhz.is_finite() && *mhz >= 0.0)
+            .map(|mhz| (mhz * 1_000_000.0).round() as u64),
+        serde_json::Value::String(raw) => raw
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|mhz| mhz.is_finite() && *mhz >= 0.0)
+            .map(|mhz| (mhz * 1_000_000.0).round() as u64),
+        _ => None,
+    }
+}
+
+fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let rows = match &parsed {
+        serde_json::Value::Array(rows) => rows,
+        serde_json::Value::Object(map) => map
+            .get("bookmarks")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| {
+            anyhow::anyhow!("bookmark JSON missing array root or 'bookmarks' key")
+        })?,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "bookmark JSON must be an array or object with 'bookmarks' array"
+            ))
+        }
+    };
+
+    let mut imported = Vec::new();
+    for row in rows {
+        let Some(object) = row.as_object() else {
+            continue;
+        };
+        let label = object
+            .get("label")
+            .or_else(|| object.get("name"))
+            .or_else(|| object.get("bookmark"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "Imported Bookmark".to_string());
+
+        let frequency_hz = object
+            .get("frequency_hz")
+            .or_else(|| object.get("freq_hz"))
+            .or_else(|| object.get("hz"))
+            .and_then(json_frequency_hz)
+            .or_else(|| {
+                object
+                    .get("frequency_mhz")
+                    .or_else(|| object.get("freq_mhz"))
+                    .or_else(|| object.get("mhz"))
+                    .or_else(|| object.get("frequency"))
+                    .and_then(json_frequency_mhz)
+            });
+
+        let Some(frequency_hz) = frequency_hz else {
+            continue;
+        };
+        if frequency_hz < 100_000 {
+            continue;
+        }
+        imported.push(SdrBookmarkSetting {
+            label,
+            frequency_hz,
+        });
+    }
+    normalize_sdr_bookmark_settings(&mut imported);
+    Ok(imported)
+}
+
 fn refresh_sdr_bookmark_combo(
     sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
     sdr_bookmark_combo: &ComboBoxText,
@@ -4254,6 +4355,10 @@ fn build_menubar(
         Some("app.preset_import_sdr_bookmarks_csv"),
     );
     frequency_menu.append(
+        Some("Import SDR Bookmarks JSON"),
+        Some("app.preset_import_sdr_bookmarks_json"),
+    );
+    frequency_menu.append(
         Some("Import SDR Bookmarks CSV URL"),
         Some("app.preset_import_sdr_bookmarks_csv_url"),
     );
@@ -5083,6 +5188,68 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_import_sdr_bookmarks_csv_action);
+
+    let presets_import_sdr_bookmarks_json_action =
+        gio::SimpleAction::new("preset_import_sdr_bookmarks_json", None);
+    {
+        let state = state.clone();
+        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
+        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
+        presets_import_sdr_bookmarks_json_action.connect_activate(move |_, _| {
+            let dialog = FileChooserDialog::new(
+                Some("Import SDR Bookmarks JSON"),
+                None::<&gtk::Window>,
+                FileChooserAction::Open,
+                &[
+                    ("Cancel", ResponseType::Cancel),
+                    ("Import", ResponseType::Accept),
+                ],
+            );
+            let state = state.clone();
+            let sdr_bookmarks = sdr_bookmarks.clone();
+            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+            dialog.connect_response(move |dialog, response| {
+                if response == ResponseType::Accept {
+                    let Some(path) = dialog.file().and_then(|file| file.path()) else {
+                        state.borrow_mut().push_status(
+                            "SDR bookmark import skipped: no JSON path selected".to_string(),
+                        );
+                        dialog.close();
+                        return;
+                    };
+                    match import_sdr_bookmarks_json(&path) {
+                        Ok(imported) => {
+                            if imported.is_empty() {
+                                state.borrow_mut().push_status(format!(
+                                    "SDR bookmark import skipped: no valid rows in {}",
+                                    path.display()
+                                ));
+                            } else {
+                                let summary = import_sdr_bookmarks(
+                                    &state,
+                                    &sdr_bookmarks,
+                                    &sdr_bookmark_combo,
+                                    imported,
+                                );
+                                state.borrow_mut().push_status(format!(
+                                    "imported SDR bookmarks from {} (added={}, duplicates={})",
+                                    path.display(),
+                                    summary.added,
+                                    summary.skipped_duplicates
+                                ));
+                            }
+                        }
+                        Err(err) => state
+                            .borrow_mut()
+                            .push_status(format!("SDR bookmark import failed: {err}")),
+                    }
+                }
+                dialog.close();
+            });
+            dialog.present();
+        });
+    }
+    app.add_action(&presets_import_sdr_bookmarks_json_action);
 
     let presets_import_sdr_bookmarks_csv_url_action =
         gio::SimpleAction::new("preset_import_sdr_bookmarks_csv_url", None);
@@ -19419,6 +19586,44 @@ mod tests {
         let csv = "label,frequency_hz\nOne,155340000\nDup,155340000\nBad,0\n";
         std::fs::write(&path, csv).expect("write csv");
         let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].frequency_hz, 155_340_000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_json_reads_export_array_schema() {
+        let path =
+            std::env::temp_dir().join(format!("sdr-bookmarks-import-{}.json", Uuid::new_v4()));
+        let json = r#"
+[
+  {"label":"APRS","frequency_hz":144390000,"frequency_mhz":144.390000,"source":"manual_or_default"},
+  {"label":"ACARS","frequency_hz":131550000,"frequency_mhz":131.550000,"source":"manual_or_default"}
+]
+"#;
+        std::fs::write(&path, json).expect("write json");
+        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_json_reads_bookmarks_key_and_string_numbers() {
+        let path =
+            std::env::temp_dir().join(format!("sdr-bookmarks-import-key-{}.json", Uuid::new_v4()));
+        let json = r#"
+{
+  "bookmarks": [
+    {"name":"One","frequency_mhz":"155.340"},
+    {"label":"Dup","frequency_hz":"155340000"},
+    {"label":"Skip","frequency_hz":"0"}
+  ]
+}
+"#;
+        std::fs::write(&path, json).expect("write json");
+        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].frequency_hz, 155_340_000);
         let _ = std::fs::remove_file(path);
