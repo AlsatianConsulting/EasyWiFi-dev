@@ -2979,6 +2979,7 @@ struct UiWidgets {
     sdr_model: Rc<RefCell<SdrUiModel>>,
     status_label: Label,
     gps_status_label: Label,
+    runtime_activity_label: Label,
 }
 
 #[derive(Clone)]
@@ -6324,10 +6325,16 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     gps_status_label.set_xalign(0.0);
     gps_status_label.set_wrap(true);
     gps_status_label.set_selectable(true);
+    let runtime_activity_label = Label::new(Some("Runtime Activity: starting"));
+    runtime_activity_label.set_xalign(0.0);
+    runtime_activity_label.set_wrap(true);
+    runtime_activity_label.set_selectable(true);
 
     let channel_status_box = GtkBox::new(Orientation::Vertical, 6);
     channel_status_box.append(&Label::new(Some("Status")));
     channel_status_box.append(&status_label);
+    channel_status_box.append(&Label::new(Some("Runtime Activity")));
+    channel_status_box.append(&runtime_activity_label);
     channel_status_box.append(&Label::new(Some("GPS Status")));
     channel_status_box.append(&gps_status_label);
     let channel_status_scrolled = ScrolledWindow::builder()
@@ -9554,6 +9561,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             sdr_model,
             status_label,
             gps_status_label,
+            runtime_activity_label,
         },
     )
 }
@@ -9663,6 +9671,7 @@ fn bind_poll_loop(
         sdr_model,
         status_label,
         gps_status_label,
+        runtime_activity_label,
     } = widgets;
     let window = window.clone();
     let last_ap_list_refresh = Rc::new(RefCell::new(None::<Instant>));
@@ -9696,6 +9705,7 @@ fn bind_poll_loop(
         String::new(),
         "Aircraft Correlation: no correlated targets".to_string(),
     )));
+    let last_runtime_activity_second = Cell::new(-1i64);
 
     glib::timeout_add_local(Duration::from_millis(UI_POLL_INTERVAL_MS), move || {
         let mut refresh = UiRefreshHint::none();
@@ -10622,13 +10632,21 @@ fn bind_poll_loop(
             }
         }
 
-        let (status_text, gps_text, wifi_running, bluetooth_running, scan_transition_in_progress) = {
+        let (
+            status_text,
+            gps_text,
+            wifi_running,
+            bluetooth_running,
+            sdr_running,
+            scan_transition_in_progress,
+        ) = {
             let s = state.borrow();
             (
                 s.status_text(),
                 s.gps_status_text(),
                 s.capture_runtime.is_some(),
                 s.bluetooth_runtime.is_some(),
+                s.sdr_runtime.is_some(),
                 s.scan_start_in_progress || s.scan_stop_in_progress,
             )
         };
@@ -10648,6 +10666,19 @@ fn bind_poll_loop(
 
         gps_status_label.set_text(&gps_text);
         global_gps_status_label.set_text(&gps_text);
+
+        let now = Utc::now();
+        let now_second = now.timestamp();
+        if last_runtime_activity_second.get() != now_second {
+            last_runtime_activity_second.set(now_second);
+            runtime_activity_label.set_text(&format!(
+                "tick {} UTC | wifi={} bt={} sdr={}",
+                now.format("%H:%M:%S"),
+                if wifi_running { "on" } else { "off" },
+                if bluetooth_running { "on" } else { "off" },
+                if sdr_running { "on" } else { "off" },
+            ));
+        }
 
         glib::ControlFlow::Continue
     });
