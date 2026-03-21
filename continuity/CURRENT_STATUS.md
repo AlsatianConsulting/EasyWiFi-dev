@@ -132,6 +132,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 112. Auto bookmark URL import now infers `.csv`/`.json` from the URL path for temp-file extension selection before parser fallback.
 113. CSV bookmark import now accepts `name` as a numeric frequency alias (for `bookmark,name` style datasets) in addition to existing frequency columns.
 114. JSON bookmark imports now also support nested envelope objects (for example `{ "data": { "bookmarks": [...] } }`) in addition to flat array/envelope forms.
+115. JSON bookmark imports now support deeper nested envelope paths using `payload`/`result` in addition to `bookmarks`/`rows`/`items`/`data`.
 
 ### Bluetooth
 

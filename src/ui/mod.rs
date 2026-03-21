@@ -3006,41 +3006,39 @@ fn json_frequency_auto(value: &serde_json::Value) -> Option<u64> {
     }
 }
 
+fn bookmark_rows_from_json_value<'a>(
+    value: &'a serde_json::Value,
+    depth: usize,
+) -> Option<&'a Vec<serde_json::Value>> {
+    if depth > 6 {
+        return None;
+    }
+    match value {
+        serde_json::Value::Array(rows) => Some(rows),
+        serde_json::Value::Object(map) => {
+            for key in ["bookmarks", "rows", "items", "data", "payload", "result"] {
+                if let Some(nested) = map.get(key) {
+                    if let Some(rows) = bookmark_rows_from_json_value(nested, depth + 1) {
+                        return Some(rows);
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
     let raw =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     let parsed: serde_json::Value = serde_json::from_str(&raw)
         .with_context(|| format!("failed to parse {}", path.display()))?;
-    let rows = match &parsed {
-        serde_json::Value::Array(rows) => rows,
-        serde_json::Value::Object(map) => {
-            let direct = map
-                .get("bookmarks")
-                .or_else(|| map.get("rows"))
-                .or_else(|| map.get("items"))
-                .or_else(|| map.get("data"));
-            let direct_array = direct.and_then(|value| value.as_array());
-            let nested_array = direct.and_then(|value| match value {
-                serde_json::Value::Object(nested_map) => nested_map
-                    .get("bookmarks")
-                    .or_else(|| nested_map.get("rows"))
-                    .or_else(|| nested_map.get("items"))
-                    .or_else(|| nested_map.get("data"))
-                    .and_then(|nested_value| nested_value.as_array()),
-                _ => None,
-            });
-            direct_array.or(nested_array).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "bookmark JSON missing array root or one of: bookmarks/rows/items/data"
-                )
-            })?
-        }
-        _ => {
-            return Err(anyhow::anyhow!(
-                "bookmark JSON must be an array or object with bookmarks/rows/items/data array"
-            ))
-        }
-    };
+    let rows = bookmark_rows_from_json_value(&parsed, 0).ok_or_else(|| {
+        anyhow::anyhow!(
+            "bookmark JSON missing array root or nested bookmarks/rows/items/data/payload/result array"
+        )
+    })?;
 
     let mut imported = Vec::new();
     for row in rows {
@@ -20313,6 +20311,32 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_json_accepts_deep_nested_envelope_keys() {
+        let path = std::env::temp_dir().join(format!(
+            "sdr-bookmarks-import-deep-nested-key-{}.json",
+            Uuid::new_v4()
+        ));
+        let json = r#"
+{
+  "payload": {
+    "result": {
+      "items": [
+        {"label":"Thread Ch 15","frequency":"2425"},
+        {"label":"APRS","frequency_hz":"144390000"}
+      ]
+    }
+  }
+}
+"#;
+        std::fs::write(&path, json).expect("write json");
+        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.frequency_hz == 2_425_000_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
         let _ = std::fs::remove_file(path);
     }
 

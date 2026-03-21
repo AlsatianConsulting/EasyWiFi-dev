@@ -94,6 +94,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 53. Validate URL extension inference in auto bookmark URL import (`.csv`/`.json` path endings and extension-less URLs).
 54. Validate CSV `bookmark,name` import variants where `name` is a numeric frequency field.
 55. Validate nested JSON bookmark envelope compatibility (for example `data.bookmarks`, `rows.items`) across file and URL import paths.
+56. Validate deep JSON envelope compatibility (for example `payload.result.items`) across file and URL import paths.
 
 ## Priority 4: requested SDR decoder backlog
 
