@@ -2005,7 +2005,7 @@ fn digital_voice_utility_presets() -> Vec<FrequencyPresetEntry> {
 }
 
 fn iot_ism_frequency_presets() -> Vec<FrequencyPresetEntry> {
-    vec![
+    let mut out = vec![
         FrequencyPresetEntry {
             id: "ism_315000".to_string(),
             label: "ISM 315.000".to_string(),
@@ -2071,7 +2071,18 @@ fn iot_ism_frequency_presets() -> Vec<FrequencyPresetEntry> {
             label: "Zigbee Ch 26".to_string(),
             freq_hz: 2_480_000_000,
         },
-    ]
+    ];
+
+    for channel in 11u64..=26u64 {
+        let freq_hz = (2405 + ((channel - 11) * 5)) * 1_000_000;
+        out.push(FrequencyPresetEntry {
+            id: format!("thread_ch{channel:02}"),
+            label: format!("Thread Ch {channel:02}"),
+            freq_hz,
+        });
+    }
+
+    out
 }
 
 fn drone_rid_frequency_presets() -> Vec<FrequencyPresetEntry> {
@@ -19756,6 +19767,8 @@ mod tests {
         assert!(ids.contains("ble_data_ch00"));
         assert!(ids.contains("ble_data_ch36"));
         assert!(ids.contains("ble_adv_ch37"));
+        assert!(ids.contains("thread_ch11"));
+        assert!(ids.contains("thread_ch26"));
     }
 
     #[test]

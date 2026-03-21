@@ -46,6 +46,7 @@ This repository contains an MVP implementation with:
   - Bluetooth frequency presets include Classic channels, BLE data channels (0-36), and BLE advertising channels (37-39)
   - Scanner presets now include a dedicated `BLE Data Channels` sweep profile (2404-2478 MHz, 2 MHz steps)
   - Scanner presets also include a dedicated `Zigbee 2.4 Channels` sweep profile (2405-2480 MHz, 5 MHz steps)
+  - IoT frequency presets now include explicit Thread 2.4 channel centers (Ch 11-26)
   - Save Current as Preset stores user-defined SDR presets in app settings
   - Rename/Delete/Move controls for saved user presets
   - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)

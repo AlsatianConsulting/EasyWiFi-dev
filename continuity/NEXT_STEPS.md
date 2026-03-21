@@ -87,6 +87,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 46. Validate Bluetooth context-menu BLE scan shortcut updates active SDR runtime scan range and persists reusable BLE operator presets.
 47. Validate ambiguous `frequency` field auto-detection (Hz vs MHz) across CSV/JSON imports and URL/file workflows.
 48. Validate Bluetooth context-menu Zigbee scan shortcut updates active SDR runtime scan range and persists reusable Zigbee operator presets.
+49. Validate Thread channel preset entries (`thread_ch11`..`thread_ch26`) for expected 2.4 GHz center-frequency mapping.
 
 ## Priority 4: requested SDR decoder backlog
 
