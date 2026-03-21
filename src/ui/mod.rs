@@ -1550,6 +1550,16 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     steps_per_sec: 9.0,
                     squelch_dbm: -84.0,
                 },
+                ScannerPresetEntry {
+                    id: "scan_thread24".to_string(),
+                    label: "Thread 2.4 Channels".to_string(),
+                    start_hz: 2_405_000_000,
+                    end_hz: 2_480_000_000,
+                    sample_rate_hz: None,
+                    step_hz: 5_000_000,
+                    steps_per_sec: 9.0,
+                    squelch_dbm: -84.0,
+                },
             ],
         },
         ScannerPresetGroup {
@@ -15721,11 +15731,13 @@ fn attach_bluetooth_context_menu(
     let locate_btn = Button::with_label("Locate Device");
     let scan_ble_btn = Button::with_label("Scan BLE Data Channels (SDR)");
     let scan_zigbee_btn = Button::with_label("Scan Zigbee 2.4 Channels (SDR)");
+    let scan_thread_btn = Button::with_label("Scan Thread 2.4 Channels (SDR)");
     let enumerate_btn = Button::with_label("Connect & Enumerate");
     let disconnect_btn = Button::with_label("Disconnect");
     box_.append(&locate_btn);
     box_.append(&scan_ble_btn);
     box_.append(&scan_zigbee_btn);
+    box_.append(&scan_thread_btn);
     box_.append(&enumerate_btn);
     box_.append(&disconnect_btn);
     popover.set_child(Some(&box_));
@@ -15785,6 +15797,29 @@ fn attach_bluetooth_context_menu(
                 &state,
                 &device,
                 "Zigbee 2.4 Channels",
+                2_405_000_000,
+                2_480_000_000,
+                5_000_000,
+                9.0,
+                -84.0,
+            );
+        });
+    }
+
+    {
+        let state = state.clone();
+        let bluetooth_list = bluetooth_list.clone();
+        scan_thread_btn.connect_clicked(move |_| {
+            let Some(device) = selected_bluetooth(&state, &bluetooth_list) else {
+                state.borrow_mut().push_status(
+                    "no bluetooth device selected for Thread scan profile".to_string(),
+                );
+                return;
+            };
+            apply_sdr_scan_shortcut_from_bluetooth(
+                &state,
+                &device,
+                "Thread 2.4 Channels",
                 2_405_000_000,
                 2_480_000_000,
                 5_000_000,
@@ -19800,6 +19835,7 @@ mod tests {
             .any(|entry| entry.id == "scan_drone_rid_2400_24835"));
         assert!(entries.iter().any(|entry| entry.id == "scan_ble_data"));
         assert!(entries.iter().any(|entry| entry.id == "scan_zigbee24"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_thread24"));
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_drone_rid_5725_5850"));

@@ -46,6 +46,7 @@ Current SDR logging can also emit:
 - Bluetooth context menu can apply a BLE data-channel SDR scan profile directly from selected device rows
 - Bluetooth context menu can also apply a Zigbee 2.4 SDR scan profile directly from selected device rows
 - IoT preset catalog now includes explicit Thread 2.4 channel centers (`thread_ch11` through `thread_ch26`)
+- scanner presets include dedicated Thread 2.4 channel sweep profiles, with matching Bluetooth context-menu shortcut
 - bookmark export now emits both CSV and JSON artifacts with source tagging
 - bookmark workflow now includes one-click tune + decoder start (`Decode Bookmark`)
 - aircraft correlation export action emits ADS-B/ACARS correlation JSON + CSV artifacts (`icao_hex`/`callsign` merged identities)

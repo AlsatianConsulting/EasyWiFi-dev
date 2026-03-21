@@ -22,6 +22,7 @@ This repository contains an MVP implementation with:
   - Embedded geiger tracker panel for selected Bluetooth device (RSSI + audible tone mapping)
   - Bluetooth context menu includes `Scan BLE Data Channels (SDR)` to apply a BLE-focused SDR scan profile
   - Bluetooth context menu also includes `Scan Zigbee 2.4 Channels (SDR)` for quick IoT scan-range application
+  - Bluetooth context menu also includes `Scan Thread 2.4 Channels (SDR)` for quick Thread scan-range application
 - Channel Usage tab
   - Channel utilization chart with spectrum dropdown filter
   - Optional inline Channel Usage panel in Access Points tab (toggleable)
@@ -47,6 +48,7 @@ This repository contains an MVP implementation with:
   - Scanner presets now include a dedicated `BLE Data Channels` sweep profile (2404-2478 MHz, 2 MHz steps)
   - Scanner presets also include a dedicated `Zigbee 2.4 Channels` sweep profile (2405-2480 MHz, 5 MHz steps)
   - IoT frequency presets now include explicit Thread 2.4 channel centers (Ch 11-26)
+  - Scanner presets also include a dedicated `Thread 2.4 Channels` sweep profile (2405-2480 MHz, 5 MHz steps)
   - Save Current as Preset stores user-defined SDR presets in app settings
   - Rename/Delete/Move controls for saved user presets
   - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)

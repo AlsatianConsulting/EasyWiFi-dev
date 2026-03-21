@@ -127,6 +127,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 107. Bluetooth SDR scan shortcuts (BLE/Zigbee) now use a shared helper path for consistent preset merge/persist/runtime-apply/status behavior.
 108. IoT frequency preset catalog now includes explicit Thread 2.4 channel center entries (`thread_ch11`..`thread_ch26`).
 109. Bookmark imports now enforce a sane frequency window (`100 kHz` to `8 GHz`), dropping out-of-range rows during CSV/JSON ingest.
+110. Scanner presets now include `Thread 2.4 Channels` and Bluetooth context menus include `Scan Thread 2.4 Channels (SDR)` with the same runtime+preset application path used by BLE/Zigbee shortcuts.
 
 ### Bluetooth
 

@@ -89,6 +89,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 48. Validate Bluetooth context-menu Zigbee scan shortcut updates active SDR runtime scan range and persists reusable Zigbee operator presets.
 49. Validate Thread channel preset entries (`thread_ch11`..`thread_ch26`) for expected 2.4 GHz center-frequency mapping.
 50. Validate bookmark import range guard behavior to confirm out-of-range values (`<100 kHz` or `>8 GHz`) are discarded across CSV/JSON paths.
+51. Validate Thread scanner preset (`scan_thread24`) and Bluetooth Thread scan shortcut runtime/preset application behavior.
 
 ## Priority 4: requested SDR decoder backlog
 
