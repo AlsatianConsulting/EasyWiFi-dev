@@ -2987,13 +2987,18 @@ fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> 
         serde_json::Value::Array(rows) => rows,
         serde_json::Value::Object(map) => map
             .get("bookmarks")
+            .or_else(|| map.get("rows"))
+            .or_else(|| map.get("items"))
+            .or_else(|| map.get("data"))
             .and_then(|value| value.as_array())
             .ok_or_else(|| {
-            anyhow::anyhow!("bookmark JSON missing array root or 'bookmarks' key")
-        })?,
+                anyhow::anyhow!(
+                    "bookmark JSON missing array root or one of: bookmarks/rows/items/data"
+                )
+            })?,
         _ => {
             return Err(anyhow::anyhow!(
-                "bookmark JSON must be an array or object with 'bookmarks' array"
+                "bookmark JSON must be an array or object with bookmarks/rows/items/data array"
             ))
         }
     };
@@ -20199,6 +20204,28 @@ mod tests {
         assert!(rows.iter().any(|row| row.frequency_hz == 155_340_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 1_694_100_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_json_accepts_rows_envelope_key() {
+        let path = std::env::temp_dir().join(format!(
+            "sdr-bookmarks-import-rows-key-{}.json",
+            Uuid::new_v4()
+        ));
+        let json = r#"
+{
+  "rows": [
+    {"label":"APRS","frequency_hz":"144390000"},
+    {"label":"AIS","frequency":"162.025"}
+  ]
+}
+"#;
+        std::fs::write(&path, json).expect("write json");
+        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
         let _ = std::fs::remove_file(path);
     }
 
