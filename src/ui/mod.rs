@@ -2305,6 +2305,120 @@ fn fcc_record_value(
         .map(ToString::to_string)
 }
 
+fn fcc_assigned_frequency_hz(
+    record: &csv::StringRecord,
+    header_index: &HashMap<String, usize>,
+) -> Option<u64> {
+    fcc_record_value(
+        record,
+        header_index,
+        &[
+            "frequency_assigned",
+            "freq_assigned",
+            "assigned_frequency",
+            "frequency",
+            "center_frequency",
+            "frequency_mhz",
+            "frequency_assigned_hz",
+            "freq_assigned_hz",
+            "assigned_frequency_hz",
+            "center_frequency_hz",
+            "frequency_hz",
+        ],
+    )
+    .and_then(|value| parse_fcc_frequency_hz(&value))
+}
+
+fn fcc_lower_frequency_hz(
+    record: &csv::StringRecord,
+    header_index: &HashMap<String, usize>,
+) -> Option<u64> {
+    fcc_record_value(
+        record,
+        header_index,
+        &[
+            "lower_frequency",
+            "frequency_lower",
+            "freq_lower",
+            "lower_freq",
+            "lower_frequency_mhz",
+            "lower_frequency_hz",
+            "frequency_lower_hz",
+            "freq_lower_hz",
+            "lower_freq_hz",
+        ],
+    )
+    .and_then(|value| parse_fcc_frequency_hz(&value))
+}
+
+fn fcc_upper_frequency_hz(
+    record: &csv::StringRecord,
+    header_index: &HashMap<String, usize>,
+) -> Option<u64> {
+    fcc_record_value(
+        record,
+        header_index,
+        &[
+            "upper_frequency",
+            "frequency_upper",
+            "freq_upper",
+            "upper_freq",
+            "upper_frequency_mhz",
+            "upper_frequency_hz",
+            "frequency_upper_hz",
+            "freq_upper_hz",
+            "upper_freq_hz",
+        ],
+    )
+    .and_then(|value| parse_fcc_frequency_hz(&value))
+}
+
+fn fcc_tx_frequency_hz(
+    record: &csv::StringRecord,
+    header_index: &HashMap<String, usize>,
+) -> Option<u64> {
+    fcc_record_value(
+        record,
+        header_index,
+        &[
+            "tx_frequency",
+            "tx_freq",
+            "transmit_frequency",
+            "transmit_freq",
+            "frequency_tx",
+            "tx_frequency_hz",
+            "tx_freq_hz",
+            "transmit_frequency_hz",
+            "transmit_freq_hz",
+            "frequency_tx_hz",
+        ],
+    )
+    .and_then(|value| parse_fcc_frequency_hz(&value))
+}
+
+fn fcc_rx_frequency_hz(
+    record: &csv::StringRecord,
+    header_index: &HashMap<String, usize>,
+) -> Option<u64> {
+    fcc_record_value(
+        record,
+        header_index,
+        &[
+            "rx_frequency",
+            "rx_freq",
+            "receive_frequency",
+            "receive_freq",
+            "frequency_rx",
+            "rx_frequency_hz",
+            "rx_freq_hz",
+            "receive_frequency_hz",
+            "receive_freq_hz",
+            "frequency_rx_hz",
+        ],
+    )
+    .and_then(|value| parse_fcc_frequency_hz(&value))
+}
+
 fn normalize_bookmark_label(raw: &str, max_len: usize) -> String {
     let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     if compact.chars().count() <= max_len.max(1) {
@@ -2414,46 +2528,17 @@ fn build_fcc_frequency_bookmarks_from_csv(
         if !signal_filter.is_empty() && !signal_type.to_ascii_lowercase().contains(&signal_filter) {
             continue;
         }
-        let assigned_hz = fcc_record_value(
-            &record,
-            &header_index,
-            &[
-                "frequency_assigned",
-                "freq_assigned",
-                "assigned_frequency",
-                "frequency",
-                "center_frequency",
-                "frequency_mhz",
-            ],
-        )
-        .and_then(|value| parse_fcc_frequency_hz(&value));
-        let lower_hz = fcc_record_value(
-            &record,
-            &header_index,
-            &[
-                "lower_frequency",
-                "frequency_lower",
-                "freq_lower",
-                "lower_freq",
-                "lower_frequency_mhz",
-            ],
-        )
-        .and_then(|value| parse_fcc_frequency_hz(&value));
-        let upper_hz = fcc_record_value(
-            &record,
-            &header_index,
-            &[
-                "upper_frequency",
-                "frequency_upper",
-                "freq_upper",
-                "upper_freq",
-                "upper_frequency_mhz",
-            ],
-        )
-        .and_then(|value| parse_fcc_frequency_hz(&value));
-        let freq_hz = match (assigned_hz, lower_hz, upper_hz) {
-            (Some(center), _, _) => center,
-            (None, Some(start), Some(end)) if end > start => start + (end - start) / 2,
+        let assigned_hz = fcc_assigned_frequency_hz(&record, &header_index);
+        let lower_hz = fcc_lower_frequency_hz(&record, &header_index);
+        let upper_hz = fcc_upper_frequency_hz(&record, &header_index);
+        let tx_hz = fcc_tx_frequency_hz(&record, &header_index);
+        let rx_hz = fcc_rx_frequency_hz(&record, &header_index);
+        let freq_hz = match (assigned_hz, lower_hz, upper_hz, tx_hz, rx_hz) {
+            (Some(center), _, _, _, _) => center,
+            (None, Some(start), Some(end), _, _) if end > start => start + (end - start) / 2,
+            (None, None, None, Some(tx), Some(rx)) if tx != rx => tx.min(rx) + tx.abs_diff(rx) / 2,
+            (None, None, None, Some(tx), _) => tx,
+            (None, None, None, _, Some(rx)) => rx,
             _ => continue,
         };
         if freq_hz < 100_000 || freq_hz > 8_000_000_000 || seen_freqs.contains(&freq_hz) {
@@ -2558,43 +2643,18 @@ fn build_fcc_area_scan_preset_from_csv(
             }
         }
 
-        let assigned_hz = fcc_record_value(
-            &record,
-            &header_index,
-            &[
-                "frequency_assigned",
-                "freq_assigned",
-                "assigned_frequency",
-                "frequency",
-            ],
-        )
-        .and_then(|value| parse_fcc_frequency_hz(&value));
-        let lower_hz = fcc_record_value(
-            &record,
-            &header_index,
-            &[
-                "lower_frequency",
-                "freq_lower",
-                "lower_freq",
-                "frequency_lower",
-            ],
-        )
-        .and_then(|value| parse_fcc_frequency_hz(&value));
-        let upper_hz = fcc_record_value(
-            &record,
-            &header_index,
-            &[
-                "upper_frequency",
-                "freq_upper",
-                "upper_freq",
-                "frequency_upper",
-            ],
-        )
-        .and_then(|value| parse_fcc_frequency_hz(&value));
+        let assigned_hz = fcc_assigned_frequency_hz(&record, &header_index);
+        let lower_hz = fcc_lower_frequency_hz(&record, &header_index);
+        let upper_hz = fcc_upper_frequency_hz(&record, &header_index);
+        let tx_hz = fcc_tx_frequency_hz(&record, &header_index);
+        let rx_hz = fcc_rx_frequency_hz(&record, &header_index);
 
-        let range = match (lower_hz, upper_hz, assigned_hz) {
-            (Some(start), Some(end), _) if end > start => Some((start, end)),
-            (_, _, Some(center)) => Some((center.saturating_sub(12_500), center + 12_500)),
+        let range = match (lower_hz, upper_hz, tx_hz, rx_hz, assigned_hz) {
+            (Some(start), Some(end), _, _, _) if end > start => Some((start, end)),
+            (_, _, Some(tx), Some(rx), _) if tx != rx => Some((tx.min(rx), tx.max(rx))),
+            (_, _, Some(tx), None, _) => Some((tx.saturating_sub(12_500), tx + 12_500)),
+            (_, _, None, Some(rx), _) => Some((rx.saturating_sub(12_500), rx + 12_500)),
+            (_, _, _, _, Some(center)) => Some((center.saturating_sub(12_500), center + 12_500)),
             _ => None,
         };
         if let Some((start, end)) = range {
@@ -20053,6 +20113,20 @@ mod tests {
     }
 
     #[test]
+    fn fcc_area_scan_preset_builder_accepts_tx_rx_hz_aliases() {
+        let path = std::env::temp_dir().join(format!("fcc-area-txrx-hz-{}.csv", Uuid::new_v4()));
+        let csv = "city,state,tx_frequency_hz,rx_frequency_hz,radio_service_desc\nRaleigh,NC,451000000,451050000,Business\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh", "")
+            .expect("parse ok")
+            .expect("preset");
+        assert!(scan.preset.scan_start_hz <= 451_000_000);
+        assert!(scan.preset.scan_end_hz >= 451_050_000);
+        assert_eq!(scan.matched_rows, 1);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn fcc_frequency_bookmark_builder_emits_signal_typed_labels() {
         let path = std::env::temp_dir().join(format!("fcc-freq-{}.csv", Uuid::new_v4()));
         let csv = "city,state,callsign,frequency_assigned,radio_service_desc\nRaleigh,NC,WQAB123,155.340,Public Safety\n";
@@ -20111,6 +20185,19 @@ mod tests {
             .expect("parse ok");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].frequency_hz, 155_340_000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn fcc_frequency_bookmark_builder_accepts_hz_and_tx_rx_aliases() {
+        let path = std::env::temp_dir().join(format!("fcc-freq-hz-alias-{}.csv", Uuid::new_v4()));
+        let csv = "city,state,frequency_assigned_hz,tx_frequency_hz,rx_frequency_hz,radio_service_desc\nRaleigh,NC,155340000,,,Public Safety\nRaleigh,NC,,451000000,451050000,Business\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let out =
+            build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", "", 10).expect("parse ok");
+        assert_eq!(out.len(), 2);
+        assert!(out.iter().any(|row| row.frequency_hz == 155_340_000));
+        assert!(out.iter().any(|row| row.frequency_hz == 451_025_000));
         let _ = std::fs::remove_file(path);
     }
 
