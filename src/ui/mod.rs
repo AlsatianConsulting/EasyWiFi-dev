@@ -2848,7 +2848,7 @@ fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
         && frequency_indices.is_empty()
     {
         return Err(anyhow::anyhow!(
-            "bookmark CSV missing expected columns (label/frequency_hz/frequency_mhz)"
+            "bookmark CSV missing expected columns (label/frequency_hz/frequency_mhz/freq/frequency)"
         ));
     }
 
