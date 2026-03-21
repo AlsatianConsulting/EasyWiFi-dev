@@ -1497,6 +1497,8 @@ fn default_frequency_preset_groups() -> Vec<FrequencyPresetGroup> {
 
 fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
     let mut groups = Vec::<FrequencyPresetGroup>::new();
+    let link_suffix = if uplink { "Uplink" } else { "Downlink" };
+    let link_id = if uplink { "ul" } else { "dl" };
 
     let mut gsm850_entries = Vec::<FrequencyPresetEntry>::new();
     for arfcn in 128u16..=251u16 {
@@ -1507,16 +1509,8 @@ fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
             uplink_mhz + 45.0
         };
         gsm850_entries.push(FrequencyPresetEntry {
-            id: format!(
-                "arfcn_{}_gsm850_{}",
-                if uplink { "ul" } else { "dl" },
-                arfcn
-            ),
-            label: format!(
-                "ARFCN {} {}",
-                arfcn,
-                if uplink { "Uplink" } else { "Downlink" }
-            ),
+            id: format!("arfcn_{}_gsm850_{}", link_id, arfcn),
+            label: format!("ARFCN {} {}", arfcn, link_suffix),
             freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
         });
     }
@@ -1534,16 +1528,8 @@ fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
             uplink_mhz + 45.0
         };
         egsm900_entries.push(FrequencyPresetEntry {
-            id: format!(
-                "arfcn_{}_egsm900_{}",
-                if uplink { "ul" } else { "dl" },
-                arfcn
-            ),
-            label: format!(
-                "ARFCN {} {}",
-                arfcn,
-                if uplink { "Uplink" } else { "Downlink" }
-            ),
+            id: format!("arfcn_{}_egsm900_{}", link_id, arfcn),
+            label: format!("ARFCN {} {}", arfcn, link_suffix),
             freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
         });
     }
@@ -1555,16 +1541,8 @@ fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
             uplink_mhz + 45.0
         };
         egsm900_entries.push(FrequencyPresetEntry {
-            id: format!(
-                "arfcn_{}_egsm900_{}",
-                if uplink { "ul" } else { "dl" },
-                arfcn
-            ),
-            label: format!(
-                "ARFCN {} {}",
-                arfcn,
-                if uplink { "Uplink" } else { "Downlink" }
-            ),
+            id: format!("arfcn_{}_egsm900_{}", link_id, arfcn),
+            label: format!("ARFCN {} {}", arfcn, link_suffix),
             freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
         });
     }
@@ -1582,16 +1560,8 @@ fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
             uplink_mhz + 95.0
         };
         dcs1800_entries.push(FrequencyPresetEntry {
-            id: format!(
-                "arfcn_{}_dcs1800_{}",
-                if uplink { "ul" } else { "dl" },
-                arfcn
-            ),
-            label: format!(
-                "ARFCN {} {}",
-                arfcn,
-                if uplink { "Uplink" } else { "Downlink" }
-            ),
+            id: format!("arfcn_{}_dcs1800_{}", link_id, arfcn),
+            label: format!("ARFCN {} {}", arfcn, link_suffix),
             freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
         });
     }
@@ -1609,16 +1579,8 @@ fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
             uplink_mhz + 80.0
         };
         pcs1900_entries.push(FrequencyPresetEntry {
-            id: format!(
-                "arfcn_{}_pcs1900_{}",
-                if uplink { "ul" } else { "dl" },
-                arfcn
-            ),
-            label: format!(
-                "ARFCN {} {}",
-                arfcn,
-                if uplink { "Uplink" } else { "Downlink" }
-            ),
+            id: format!("arfcn_{}_pcs1900_{}", link_id, arfcn),
+            label: format!("ARFCN {} {}", arfcn, link_suffix),
             freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
         });
     }
@@ -1626,6 +1588,63 @@ fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
         label: "PCS 1900".to_string(),
         entries: pcs1900_entries,
     });
+
+    for (band_label, band_id, start_uarfcn, end_uarfcn, uplink_start_mhz, downlink_start_mhz) in [
+        ("UMTS Band 1", "umts_b1", 9612u16, 9888u16, 1922.4, 2112.4),
+        ("UMTS Band 2", "umts_b2", 9262u16, 9538u16, 1852.4, 1932.4),
+        ("UMTS Band 5", "umts_b5", 4132u16, 4233u16, 824.2, 869.2),
+        ("UMTS Band 8", "umts_b8", 2712u16, 2863u16, 880.2, 925.2),
+    ] {
+        let mut entries = Vec::<FrequencyPresetEntry>::new();
+        for uarfcn in start_uarfcn..=end_uarfcn {
+            let offset = (uarfcn - start_uarfcn) as f64;
+            let freq_mhz = if uplink {
+                uplink_start_mhz + 0.2 * offset
+            } else {
+                downlink_start_mhz + 0.2 * offset
+            };
+            entries.push(FrequencyPresetEntry {
+                id: format!("arfcn_{}_{}_{}", link_id, band_id, uarfcn),
+                label: format!("UARFCN {} {}", uarfcn, link_suffix),
+                freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
+            });
+        }
+        groups.push(FrequencyPresetGroup {
+            label: band_label.to_string(),
+            entries,
+        });
+    }
+
+    for (band_label, band_id, start_earfcn, end_earfcn, uplink_start_mhz, downlink_start_mhz) in [
+        ("LTE Band 2", "lte_b2", 600u16, 1199u16, 1850.0, 1930.0),
+        ("LTE Band 4", "lte_b4", 1950u16, 2399u16, 1710.0, 2110.0),
+        ("LTE Band 5", "lte_b5", 2400u16, 2649u16, 824.0, 869.0),
+        ("LTE Band 12", "lte_b12", 5010u16, 5179u16, 699.0, 729.0),
+        ("LTE Band 13", "lte_b13", 5180u16, 5279u16, 777.0, 746.0),
+        ("LTE Band 14", "lte_b14", 5280u16, 5379u16, 788.0, 758.0),
+        ("LTE Band 17", "lte_b17", 5730u16, 5849u16, 704.0, 734.0),
+        ("LTE Band 25", "lte_b25", 8040u16, 8689u16, 1850.0, 1930.0),
+        ("LTE Band 26", "lte_b26", 8690u16, 9039u16, 814.0, 859.0),
+    ] {
+        let mut entries = Vec::<FrequencyPresetEntry>::new();
+        for earfcn in start_earfcn..=end_earfcn {
+            let offset = (earfcn - start_earfcn) as f64;
+            let freq_mhz = if uplink {
+                uplink_start_mhz + 0.1 * offset
+            } else {
+                downlink_start_mhz + 0.1 * offset
+            };
+            entries.push(FrequencyPresetEntry {
+                id: format!("arfcn_{}_{}_{}", link_id, band_id, earfcn),
+                label: format!("EARFCN {} {}", earfcn, link_suffix),
+                freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
+            });
+        }
+        groups.push(FrequencyPresetGroup {
+            label: band_label.to_string(),
+            entries,
+        });
+    }
 
     groups
 }
@@ -20328,8 +20347,8 @@ mod tests {
     fn cellular_arfcn_playlist_groups_include_uplink_and_downlink_frequencies() {
         let uplink_groups = cellular_arfcn_frequency_groups(true);
         let downlink_groups = cellular_arfcn_frequency_groups(false);
-        assert_eq!(uplink_groups.len(), 4);
-        assert_eq!(downlink_groups.len(), 4);
+        assert_eq!(uplink_groups.len(), 17);
+        assert_eq!(downlink_groups.len(), 17);
 
         let uplink_entries = uplink_groups
             .iter()
@@ -20358,6 +20377,18 @@ mod tests {
         assert!(downlink_entries
             .iter()
             .any(|entry| entry.id == "arfcn_dl_pcs1900_512" && entry.freq_hz == 1_930_200_000));
+        assert!(uplink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_ul_umts_b1_9612" && entry.freq_hz == 1_922_400_000));
+        assert!(downlink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_dl_umts_b1_9612" && entry.freq_hz == 2_112_400_000));
+        assert!(uplink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_ul_lte_b2_600" && entry.freq_hz == 1_850_000_000));
+        assert!(downlink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_dl_lte_b2_600" && entry.freq_hz == 1_930_000_000));
     }
 
     #[test]
