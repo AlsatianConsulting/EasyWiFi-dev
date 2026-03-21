@@ -1782,6 +1782,19 @@ fn bluetooth_frequency_presets() -> Vec<FrequencyPresetEntry> {
         });
     }
 
+    for channel in 0u64..=36u64 {
+        let mhz = if channel <= 10 {
+            2404 + (2 * channel)
+        } else {
+            2428 + (2 * (channel - 11))
+        };
+        out.push(FrequencyPresetEntry {
+            id: format!("ble_data_ch{channel:02}"),
+            label: format!("BLE Data Ch {channel:02}"),
+            freq_hz: mhz * 1_000_000,
+        });
+    }
+
     out.push(FrequencyPresetEntry {
         id: "ble_adv_ch37".to_string(),
         label: "BLE Adv Ch 37".to_string(),
@@ -19557,6 +19570,9 @@ mod tests {
         assert!(ids.contains("sonde_403500"));
         assert!(ids.contains("drone_rid_2437000"));
         assert!(ids.contains("drone_rid_5745000"));
+        assert!(ids.contains("ble_data_ch00"));
+        assert!(ids.contains("ble_data_ch36"));
+        assert!(ids.contains("ble_adv_ch37"));
     }
 
     #[test]

@@ -77,6 +77,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 36. Validate `Import SDR Bookmarks URL (Auto CSV/JSON)` against mixed endpoint formats and extension mismatches.
 37. Validate right-click decoder unavailable tooltips for consistency with start-action/status-line failure reasons.
 38. Validate `Import SDR Bookmarks File (Auto CSV/JSON)` with mixed-format local files and mismatched file extensions.
+39. Validate BLE frequency presets against channel mapping expectations (data channels `0-36`, advertising channels `37-39`).
 
 ## Priority 4: requested SDR decoder backlog
 

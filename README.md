@@ -41,6 +41,7 @@ This repository contains an MVP implementation with:
   - FCC frequency imports now report added vs duplicate-skipped counts and keep bookmark data normalized/sorted
   - Bookmark export now writes both CSV and JSON artifacts
   - One-click operator preset profiles for common bands/workflows
+  - Bluetooth frequency presets include Classic channels, BLE data channels (0-36), and BLE advertising channels (37-39)
   - Save Current as Preset stores user-defined SDR presets in app settings
   - Rename/Delete/Move controls for saved user presets
   - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)

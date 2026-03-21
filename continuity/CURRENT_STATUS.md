@@ -112,6 +112,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 92. SDR right-click decode menus now attach hover tooltips with the exact unavailable-reason text for disabled decoder entries.
 93. Bookmark URL import actions (CSV/JSON/Auto) now use a shared status/reporting path for consistent added/duplicate/skipped/error messaging.
 94. `Presets -> Frequencies` now includes `Import SDR Bookmarks File (Auto CSV/JSON)`, and file-based CSV/JSON actions share the same normalized import/status reporting path.
+95. Bluetooth frequency presets now include BLE data channels (`0-36`) alongside existing Classic and BLE advertising channel presets.
 
 ### Bluetooth
 
