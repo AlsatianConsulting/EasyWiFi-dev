@@ -2779,6 +2779,20 @@ fn normalize_sdr_bookmark_settings(bookmarks: &mut Vec<SdrBookmarkSetting>) {
     bookmarks.dedup_by(|left, right| left.frequency_hz == right.frequency_hz);
 }
 
+fn normalize_imported_bookmark_label(raw: Option<&str>) -> String {
+    let compact = raw
+        .map(str::trim)
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if compact.is_empty() {
+        "Imported Bookmark".to_string()
+    } else {
+        compact
+    }
+}
+
 fn export_sdr_bookmarks_csv(path: &PathBuf, bookmarks: &[(String, u64)]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| {
@@ -2884,12 +2898,7 @@ fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
     let mut imported = Vec::new();
     for row in reader.records() {
         let row = row.with_context(|| format!("failed to read row in {}", path.display()))?;
-        let label = label_idx
-            .and_then(|idx| row.get(idx))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-            .unwrap_or_else(|| "Imported Bookmark".to_string());
+        let label = normalize_imported_bookmark_label(label_idx.and_then(|idx| row.get(idx)));
 
         let frequency_hz = hz_indices
             .iter()
@@ -3020,13 +3029,11 @@ fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> 
                     .and_then(|nested_value| nested_value.as_array()),
                 _ => None,
             });
-            direct_array
-                .or(nested_array)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "bookmark JSON missing array root or one of: bookmarks/rows/items/data"
-                    )
-                })?
+            direct_array.or(nested_array).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "bookmark JSON missing array root or one of: bookmarks/rows/items/data"
+                )
+            })?
         }
         _ => {
             return Err(anyhow::anyhow!(
@@ -3040,15 +3047,13 @@ fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> 
         let Some(object) = row.as_object() else {
             continue;
         };
-        let label = object
-            .get("label")
-            .or_else(|| object.get("name"))
-            .or_else(|| object.get("bookmark"))
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-            .unwrap_or_else(|| "Imported Bookmark".to_string());
+        let label = normalize_imported_bookmark_label(
+            object
+                .get("label")
+                .or_else(|| object.get("name"))
+                .or_else(|| object.get("bookmark"))
+                .and_then(|value| value.as_str()),
+        );
 
         let frequency_hz = object
             .get("frequency_hz")
@@ -20114,6 +20119,19 @@ mod tests {
         assert!(bookmarks[0].frequency_hz < bookmarks[1].frequency_hz);
         assert_eq!(bookmarks[0].frequency_hz, 155_340_000);
         assert_eq!(bookmarks[1].frequency_hz, 460_125_000);
+    }
+
+    #[test]
+    fn normalize_imported_bookmark_label_compacts_whitespace_and_defaults() {
+        assert_eq!(
+            normalize_imported_bookmark_label(Some("  NOAA   19    APT ")),
+            "NOAA 19 APT"
+        );
+        assert_eq!(
+            normalize_imported_bookmark_label(Some("   ")),
+            "Imported Bookmark"
+        );
+        assert_eq!(normalize_imported_bookmark_label(None), "Imported Bookmark");
     }
 
     #[test]
