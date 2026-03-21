@@ -15747,36 +15747,16 @@ fn attach_bluetooth_context_menu(
                     .push_status("no bluetooth device selected for BLE scan profile".to_string());
                 return;
             };
-            let start_hz = 2_404_000_000u64;
-            let end_hz = 2_478_000_000u64;
-            let step_hz = 2_000_000u64;
-            let center_hz = (start_hz + end_hz) / 2;
-            let preset = SdrOperatorPresetSetting {
-                label: "BLE Data Channels".to_string(),
-                center_freq_hz: center_hz,
-                sample_rate_hz: 2_400_000,
-                scan_enabled: true,
-                scan_start_hz: start_hz,
-                scan_end_hz: end_hz,
-                scan_step_hz: step_hz,
-                scan_steps_per_sec: 10.0,
-                squelch_dbm: -84.0,
-            };
-            let mut s = state.borrow_mut();
-            let added = merge_sdr_operator_presets(&mut s.settings.sdr_operator_presets, vec![preset]);
-            s.save_settings_to_disk();
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_center_freq(center_hz);
-                runtime.set_scan_range(true, start_hz, end_hz, step_hz, 10.0);
-            }
-            s.push_status(format!(
-                "applied BLE data scan profile from {} (range {:.3}-{:.3} MHz, step {:.3} MHz, preset_added={})",
-                device.mac,
-                start_hz as f64 / 1_000_000.0,
-                end_hz as f64 / 1_000_000.0,
-                step_hz as f64 / 1_000_000.0,
-                added
-            ));
+            apply_sdr_scan_shortcut_from_bluetooth(
+                &state,
+                &device,
+                "BLE Data Channels",
+                2_404_000_000,
+                2_478_000_000,
+                2_000_000,
+                10.0,
+                -84.0,
+            );
         });
     }
 
@@ -15790,36 +15770,16 @@ fn attach_bluetooth_context_menu(
                 );
                 return;
             };
-            let start_hz = 2_405_000_000u64;
-            let end_hz = 2_480_000_000u64;
-            let step_hz = 5_000_000u64;
-            let center_hz = (start_hz + end_hz) / 2;
-            let preset = SdrOperatorPresetSetting {
-                label: "Zigbee 2.4 Channels".to_string(),
-                center_freq_hz: center_hz,
-                sample_rate_hz: 2_400_000,
-                scan_enabled: true,
-                scan_start_hz: start_hz,
-                scan_end_hz: end_hz,
-                scan_step_hz: step_hz,
-                scan_steps_per_sec: 9.0,
-                squelch_dbm: -84.0,
-            };
-            let mut s = state.borrow_mut();
-            let added = merge_sdr_operator_presets(&mut s.settings.sdr_operator_presets, vec![preset]);
-            s.save_settings_to_disk();
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_center_freq(center_hz);
-                runtime.set_scan_range(true, start_hz, end_hz, step_hz, 9.0);
-            }
-            s.push_status(format!(
-                "applied Zigbee 2.4 scan profile from {} (range {:.3}-{:.3} MHz, step {:.3} MHz, preset_added={})",
-                device.mac,
-                start_hz as f64 / 1_000_000.0,
-                end_hz as f64 / 1_000_000.0,
-                step_hz as f64 / 1_000_000.0,
-                added
-            ));
+            apply_sdr_scan_shortcut_from_bluetooth(
+                &state,
+                &device,
+                "Zigbee 2.4 Channels",
+                2_405_000_000,
+                2_480_000_000,
+                5_000_000,
+                9.0,
+                -84.0,
+            );
         });
     }
 
@@ -16278,6 +16238,46 @@ fn selected_bluetooth(
         .iter()
         .find(|device| device.mac == key)
         .cloned()
+}
+
+fn apply_sdr_scan_shortcut_from_bluetooth(
+    state: &Rc<RefCell<AppState>>,
+    device: &BluetoothDeviceRecord,
+    profile_label: &str,
+    start_hz: u64,
+    end_hz: u64,
+    step_hz: u64,
+    steps_per_sec: f64,
+    squelch_dbm: f32,
+) {
+    let center_hz = (start_hz + end_hz) / 2;
+    let preset = SdrOperatorPresetSetting {
+        label: profile_label.to_string(),
+        center_freq_hz: center_hz,
+        sample_rate_hz: 2_400_000,
+        scan_enabled: true,
+        scan_start_hz: start_hz,
+        scan_end_hz: end_hz,
+        scan_step_hz: step_hz,
+        scan_steps_per_sec: steps_per_sec,
+        squelch_dbm,
+    };
+    let mut s = state.borrow_mut();
+    let added = merge_sdr_operator_presets(&mut s.settings.sdr_operator_presets, vec![preset]);
+    s.save_settings_to_disk();
+    if let Some(runtime) = s.sdr_runtime.as_ref() {
+        runtime.set_center_freq(center_hz);
+        runtime.set_scan_range(true, start_hz, end_hz, step_hz, steps_per_sec);
+    }
+    s.push_status(format!(
+        "applied {} scan profile from {} (range {:.3}-{:.3} MHz, step {:.3} MHz, preset_added={})",
+        profile_label,
+        device.mac,
+        start_hz as f64 / 1_000_000.0,
+        end_hz as f64 / 1_000_000.0,
+        step_hz as f64 / 1_000_000.0,
+        added
+    ));
 }
 
 fn bluetooth_record_bluez_controller(device: &BluetoothDeviceRecord) -> Option<Option<String>> {
