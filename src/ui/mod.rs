@@ -2911,6 +2911,22 @@ fn normalize_imported_bookmark_label(raw: Option<&str>) -> String {
     }
 }
 
+fn detect_csv_delimiter(raw: &str) -> u8 {
+    let line = raw
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("");
+    let candidates = [(b',', ','), (b';', ';'), (b'\t', '\t'), (b'|', '|')];
+    let mut best = (b',', 0usize);
+    for (byte, ch) in candidates {
+        let count = line.matches(ch).count();
+        if count > best.1 {
+            best = (byte, count);
+        }
+    }
+    best.0
+}
+
 fn export_sdr_bookmarks_csv(path: &PathBuf, bookmarks: &[(String, u64)]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| {
@@ -2974,8 +2990,14 @@ fn export_sdr_bookmarks_json(path: &PathBuf, bookmarks: &[(String, u64)]) -> Res
 }
 
 fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
-    let mut reader = csv::Reader::from_path(path)
-        .with_context(|| format!("failed to open bookmark CSV {}", path.display()))?;
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let delimiter = detect_csv_delimiter(raw.as_str());
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .delimiter(delimiter)
+        .from_reader(raw.as_bytes());
     let headers = reader
         .headers()
         .with_context(|| format!("failed to read headers from {}", path.display()))?
@@ -20452,6 +20474,21 @@ mod tests {
     }
 
     #[test]
+    fn import_sdr_bookmarks_csv_accepts_semicolon_delimiter() {
+        let path = std::env::temp_dir().join(format!(
+            "sdr-bookmarks-import-semicolon-{}.csv",
+            Uuid::new_v4()
+        ));
+        let csv = "label;frequency_hz;frequency\nAPRS;144390000;\nAIS;;162.025\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn import_sdr_bookmarks_csv_accepts_name_as_frequency_alias() {
         let path =
             std::env::temp_dir().join(format!("sdr-bookmarks-import-name-{}.csv", Uuid::new_v4()));
@@ -20718,6 +20755,18 @@ mod tests {
         assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn detect_csv_delimiter_prefers_semicolon_when_present() {
+        assert_eq!(
+            detect_csv_delimiter("label;frequency_hz\nA;144390000\n"),
+            b';'
+        );
+        assert_eq!(
+            detect_csv_delimiter("label,frequency_hz\nA,144390000\n"),
+            b','
+        );
     }
 
     #[test]
