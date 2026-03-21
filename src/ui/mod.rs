@@ -2279,7 +2279,7 @@ fn bookmark_data_extension_from_url(url: &str) -> &'static str {
         .split('?')
         .next()
         .unwrap_or(trimmed.as_str());
-    if path.ends_with(".json") {
+    if path.ends_with(".json") || path.ends_with(".jsonl") || path.ends_with(".ndjson") {
         "json"
     } else if path.ends_with(".csv") {
         "csv"
@@ -3209,7 +3209,7 @@ fn import_sdr_bookmarks_path(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> 
     if matches!(extension.as_deref(), Some("csv")) {
         return import_sdr_bookmarks_csv(path);
     }
-    if matches!(extension.as_deref(), Some("json")) {
+    if matches!(extension.as_deref(), Some("json" | "jsonl" | "ndjson")) {
         return import_sdr_bookmarks_json(path);
     }
     match import_sdr_bookmarks_csv(path) {
@@ -20695,6 +20695,21 @@ mod tests {
     }
 
     #[test]
+    fn import_sdr_bookmarks_path_reads_jsonl_extension_as_json() {
+        let path =
+            std::env::temp_dir().join(format!("sdr-bookmarks-import-ext-{}.jsonl", Uuid::new_v4()));
+        let jsonl = r#"{"label":"APRS","frequency_hz":"144390000"}
+{"label":"AIS","frequency":"162.025 MHz"}
+"#;
+        std::fs::write(&path, jsonl).expect("write jsonl");
+        let rows = import_sdr_bookmarks_path(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn bookmark_data_extension_from_url_detects_csv_json_or_fallback() {
         assert_eq!(
             bookmark_data_extension_from_url("https://example.com/a/bookmarks.csv"),
@@ -20702,6 +20717,14 @@ mod tests {
         );
         assert_eq!(
             bookmark_data_extension_from_url("https://example.com/a/bookmarks.JSON?sig=123"),
+            "json"
+        );
+        assert_eq!(
+            bookmark_data_extension_from_url("https://example.com/a/bookmarks.jsonl"),
+            "json"
+        );
+        assert_eq!(
+            bookmark_data_extension_from_url("https://example.com/a/bookmarks.ndjson"),
             "json"
         );
         assert_eq!(
