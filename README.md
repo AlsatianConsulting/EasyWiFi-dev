@@ -71,6 +71,7 @@ This repository contains an MVP implementation with:
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks URL (Auto CSV/JSON)` for one-step remote ingest
   - `Presets -> Frequencies` also supports direct bookmark import from remote CSV URL
   - Auto URL bookmark import now infers `.csv`/`.json` from URL path before parser fallback
+  - URL extension inference also recognizes gzipped variants (`.csv.gz`, `.json.gz`, `.jsonl.gz`, `.ndjson.gz`)
   - Bookmark imports now auto-detect CSV vs JSON when file extension/content mismatch occurs
   - CSV bookmark imports auto-detect common delimiters (comma/semicolon/tab/pipe)
   - Bookmark import parsers accept `freq` as an alias for raw Hz values in both CSV and JSON inputs

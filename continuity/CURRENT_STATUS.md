@@ -141,6 +141,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 121. Bookmark import URL/file extension routing now treats `.jsonl` and `.ndjson` as JSON-first paths for parser selection and temp-file extension inference.
 122. CSV bookmark imports now auto-detect common delimiters (comma/semicolon/tab/pipe), enabling direct import from semicolon-delimited regional exports.
 123. Scanner preset catalog now also includes a dedicated `863-870 MHz ISM` sweep profile under `IoT / ISM Scans`.
+124. Bookmark URL extension inference now recognizes gzipped suffixes (`.csv.gz`, `.json.gz`, `.jsonl.gz`, `.ndjson.gz`) for JSON/CSV parser preselection.
 
 ### Bluetooth
 

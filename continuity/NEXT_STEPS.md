@@ -103,6 +103,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 62. Validate `.jsonl`/`.ndjson` extension routing for both local and URL bookmark imports (JSON-first parser path and temp extension inference behavior).
 63. Validate bookmark CSV delimiter auto-detection across comma/semicolon/tab/pipe sources for file and URL import workflows.
 64. Validate new `863-870 MHz ISM` scanner preset stepping/coverage and runtime apply behavior under `Presets -> Scanners`.
+65. Validate bookmark URL extension inference for gzipped suffixes (`.csv.gz`, `.json.gz`, `.jsonl.gz`, `.ndjson.gz`) and parser preselection behavior.
 
 ## Priority 4: requested SDR decoder backlog
 
