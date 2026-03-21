@@ -3004,17 +3004,30 @@ fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> 
         .with_context(|| format!("failed to parse {}", path.display()))?;
     let rows = match &parsed {
         serde_json::Value::Array(rows) => rows,
-        serde_json::Value::Object(map) => map
-            .get("bookmarks")
-            .or_else(|| map.get("rows"))
-            .or_else(|| map.get("items"))
-            .or_else(|| map.get("data"))
-            .and_then(|value| value.as_array())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "bookmark JSON missing array root or one of: bookmarks/rows/items/data"
-                )
-            })?,
+        serde_json::Value::Object(map) => {
+            let direct = map
+                .get("bookmarks")
+                .or_else(|| map.get("rows"))
+                .or_else(|| map.get("items"))
+                .or_else(|| map.get("data"));
+            let direct_array = direct.and_then(|value| value.as_array());
+            let nested_array = direct.and_then(|value| match value {
+                serde_json::Value::Object(nested_map) => nested_map
+                    .get("bookmarks")
+                    .or_else(|| nested_map.get("rows"))
+                    .or_else(|| nested_map.get("items"))
+                    .or_else(|| nested_map.get("data"))
+                    .and_then(|nested_value| nested_value.as_array()),
+                _ => None,
+            });
+            direct_array
+                .or(nested_array)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "bookmark JSON missing array root or one of: bookmarks/rows/items/data"
+                    )
+                })?
+        }
         _ => {
             return Err(anyhow::anyhow!(
                 "bookmark JSON must be an array or object with bookmarks/rows/items/data array"
@@ -20251,6 +20264,30 @@ mod tests {
     {"label":"APRS","frequency_hz":"144390000"},
     {"label":"AIS","frequency":"162.025"}
   ]
+}
+"#;
+        std::fs::write(&path, json).expect("write json");
+        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_json_accepts_nested_data_bookmarks_envelope() {
+        let path = std::env::temp_dir().join(format!(
+            "sdr-bookmarks-import-nested-key-{}.json",
+            Uuid::new_v4()
+        ));
+        let json = r#"
+{
+  "data": {
+    "bookmarks": [
+      {"label":"APRS","frequency_hz":"144390000"},
+      {"label":"AIS","frequency":"162025000"}
+    ]
+  }
 }
 "#;
         std::fs::write(&path, json).expect("write json");
