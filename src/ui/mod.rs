@@ -2996,16 +2996,31 @@ fn import_sdr_bookmarks(
     sdr_bookmark_combo: &ComboBoxText,
     imported: Vec<SdrBookmarkSetting>,
 ) -> BookmarkImportSummary {
+    let is_default_label = |label: &str| {
+        let normalized = label.trim();
+        normalized.is_empty() || normalized.eq_ignore_ascii_case("imported bookmark")
+    };
     let mut s = state.borrow_mut();
     let mut added = 0usize;
     let mut skipped_duplicates = 0usize;
     let mut preferred_active_hz = None::<u64>;
     for bookmark in imported {
-        if s.settings
+        if let Some(current) = s
+            .settings
             .sdr_bookmarks
-            .iter()
-            .any(|current| current.frequency_hz == bookmark.frequency_hz)
+            .iter_mut()
+            .find(|current| current.frequency_hz == bookmark.frequency_hz)
         {
+            if is_default_label(&current.label) && !is_default_label(&bookmark.label) {
+                current.label = bookmark.label.clone();
+                if let Some(runtime_entry) = sdr_bookmarks
+                    .borrow_mut()
+                    .iter_mut()
+                    .find(|(_, freq_hz)| *freq_hz == bookmark.frequency_hz)
+                {
+                    runtime_entry.0 = bookmark.label.clone();
+                }
+            }
             skipped_duplicates = skipped_duplicates.saturating_add(1);
             continue;
         }

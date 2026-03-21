@@ -115,6 +115,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 95. Bluetooth frequency presets now include BLE data channels (`0-36`) alongside existing Classic and BLE advertising channel presets.
 96. Scanner presets now include a dedicated BLE data-channel sweep profile (`2404-2478 MHz`, `2 MHz` step) for quick BLE-focused scanning.
 97. Decoder-unavailable reasons now include explicit missing-tool hints for `rtl_433`, `ADS-B` toolchains (`dump1090*`/`readsb`), and `GSM/LTE` (`grgsm_livemon_headless`/`cell_search`).
+98. Duplicate-frequency bookmark imports now update existing placeholder labels (`Imported Bookmark`/empty) when incoming rows provide richer labels.
 
 ### Bluetooth
 

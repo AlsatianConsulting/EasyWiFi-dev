@@ -37,6 +37,7 @@ Current SDR logging can also emit:
 - bookmark management also includes URL-based auto import (`CSV`/`JSON`) with parser auto-detection
 - bookmark management also includes URL-based CSV import with retry/timeout fetch behavior
 - bookmark import parser path now auto-detects CSV vs JSON on unknown/mismatched file extensions
+- duplicate-frequency bookmark imports can upgrade existing default placeholder labels when richer labels are supplied
 - Bluetooth frequency presets include BLE data channels (`0-36`) in addition to Classic and advertising channels
 - bookmark export now emits both CSV and JSON artifacts with source tagging
 - bookmark workflow now includes one-click tune + decoder start (`Decode Bookmark`)
