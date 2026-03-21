@@ -69,6 +69,7 @@ This repository contains an MVP implementation with:
   - Auto URL bookmark import now infers `.csv`/`.json` from URL path before parser fallback
   - Bookmark imports now auto-detect CSV vs JSON when file extension/content mismatch occurs
   - Bookmark import parsers accept `freq` as an alias for raw Hz values in both CSV and JSON inputs
+  - CSV bookmark import also accepts `name` as a numeric frequency field alias in export variants that use `bookmark,name`
   - Ambiguous `frequency` fields now auto-detect Hz vs MHz by magnitude in both CSV and JSON imports
   - Bookmark imports now ignore out-of-range frequencies outside `100 kHz` to `8 GHz`
   - Duplicate-frequency bookmark imports now upgrade default placeholder labels when richer labels are present

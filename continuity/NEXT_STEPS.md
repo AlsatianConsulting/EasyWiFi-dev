@@ -92,6 +92,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 51. Validate Thread scanner preset (`scan_thread24`) and Bluetooth Thread scan shortcut runtime/preset application behavior.
 52. Validate JSON bookmark envelope compatibility for `bookmarks`/`rows`/`items`/`data` top-level keys.
 53. Validate URL extension inference in auto bookmark URL import (`.csv`/`.json` path endings and extension-less URLs).
+54. Validate CSV `bookmark,name` import variants where `name` is a numeric frequency field.
 
 ## Priority 4: requested SDR decoder backlog
 

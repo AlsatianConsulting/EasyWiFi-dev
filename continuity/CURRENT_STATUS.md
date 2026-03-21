@@ -130,6 +130,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 110. Scanner presets now include `Thread 2.4 Channels` and Bluetooth context menus include `Scan Thread 2.4 Channels (SDR)` with the same runtime+preset application path used by BLE/Zigbee shortcuts.
 111. JSON bookmark imports now accept additional envelope keys (`rows`, `items`, `data`) alongside `bookmarks` for broader third-party compatibility.
 112. Auto bookmark URL import now infers `.csv`/`.json` from the URL path for temp-file extension selection before parser fallback.
+113. CSV bookmark import now accepts `name` as a numeric frequency alias (for `bookmark,name` style datasets) in addition to existing frequency columns.
 
 ### Bluetooth
 

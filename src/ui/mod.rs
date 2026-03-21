@@ -2870,14 +2870,14 @@ fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
     let label_idx = index_of(&["label", "name", "bookmark"]);
     let hz_indices = indices_of(&["frequency_hz", "freq_hz", "hz", "freq"]);
     let mhz_indices = indices_of(&["frequency_mhz", "freq_mhz", "mhz"]);
-    let frequency_indices = indices_of(&["frequency"]);
+    let frequency_indices = indices_of(&["frequency", "name"]);
     if label_idx.is_none()
         && hz_indices.is_empty()
         && mhz_indices.is_empty()
         && frequency_indices.is_empty()
     {
         return Err(anyhow::anyhow!(
-            "bookmark CSV missing expected columns (label/frequency_hz/frequency_mhz/freq/frequency)"
+            "bookmark CSV missing expected columns (label/frequency_hz/frequency_mhz/freq/frequency/name)"
         ));
     }
 
@@ -20165,6 +20165,19 @@ mod tests {
         assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 137_900_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 1_694_100_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_csv_accepts_name_as_frequency_alias() {
+        let path =
+            std::env::temp_dir().join(format!("sdr-bookmarks-import-name-{}.csv", Uuid::new_v4()));
+        let csv = "bookmark,name\nThread Ch 15,2425\nGOES,1694100000\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.frequency_hz == 2_425_000_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 1_694_100_000));
         let _ = std::fs::remove_file(path);
     }
