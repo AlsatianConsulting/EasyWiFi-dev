@@ -3131,8 +3131,27 @@ fn bookmark_rows_from_json_value<'a>(
 fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
     let raw =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let parsed: serde_json::Value = serde_json::from_str(&raw)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(primary_err) => {
+            let mut jsonl_rows = Vec::<serde_json::Value>::new();
+            for line in raw.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let row: serde_json::Value = serde_json::from_str(trimmed).with_context(|| {
+                    format!("failed to parse JSONL row while reading {}", path.display())
+                })?;
+                jsonl_rows.push(row);
+            }
+            if jsonl_rows.is_empty() {
+                return Err(anyhow::anyhow!(primary_err))
+                    .with_context(|| format!("failed to parse {}", path.display()));
+            }
+            serde_json::Value::Array(jsonl_rows)
+        }
+    };
     let rows = bookmark_rows_from_json_value(&parsed, 0).ok_or_else(|| {
         anyhow::anyhow!(
             "bookmark JSON missing array root or nested bookmarks/rows/items/entries/records/data/payload/result array"
@@ -20475,6 +20494,23 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_json_accepts_json_lines_rows() {
+        let path = std::env::temp_dir().join(format!(
+            "sdr-bookmarks-import-jsonl-{}.jsonl",
+            Uuid::new_v4()
+        ));
+        let jsonl = r#"{"label":"APRS","frequency_hz":"144390000"}
+{"label":"AIS","frequency":"162.025 MHz"}
+"#;
+        std::fs::write(&path, jsonl).expect("write jsonl");
+        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
         let _ = std::fs::remove_file(path);
     }
 
