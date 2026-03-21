@@ -19576,6 +19576,22 @@ mod tests {
     }
 
     #[test]
+    fn bluetooth_presets_include_expected_ble_channel_centers() {
+        let entries = bluetooth_frequency_presets();
+        let map = entries
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.freq_hz))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(map.get("ble_data_ch00"), Some(&2_404_000_000));
+        assert_eq!(map.get("ble_data_ch10"), Some(&2_424_000_000));
+        assert_eq!(map.get("ble_data_ch11"), Some(&2_428_000_000));
+        assert_eq!(map.get("ble_data_ch36"), Some(&2_478_000_000));
+        assert_eq!(map.get("ble_adv_ch37"), Some(&2_402_000_000));
+        assert_eq!(map.get("ble_adv_ch38"), Some(&2_426_000_000));
+        assert_eq!(map.get("ble_adv_ch39"), Some(&2_480_000_000));
+    }
+
+    #[test]
     fn scanner_presets_include_24ghz_and_configurable_ranges() {
         let groups = default_scanner_preset_groups();
         let entries = groups
