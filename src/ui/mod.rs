@@ -1495,6 +1495,141 @@ fn default_frequency_preset_groups() -> Vec<FrequencyPresetGroup> {
     ]
 }
 
+fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
+    let mut groups = Vec::<FrequencyPresetGroup>::new();
+
+    let mut gsm850_entries = Vec::<FrequencyPresetEntry>::new();
+    for arfcn in 128u16..=251u16 {
+        let uplink_mhz = 824.2 + 0.2 * (arfcn - 128) as f64;
+        let freq_mhz = if uplink {
+            uplink_mhz
+        } else {
+            uplink_mhz + 45.0
+        };
+        gsm850_entries.push(FrequencyPresetEntry {
+            id: format!(
+                "arfcn_{}_gsm850_{}",
+                if uplink { "ul" } else { "dl" },
+                arfcn
+            ),
+            label: format!(
+                "ARFCN {} {}",
+                arfcn,
+                if uplink { "Uplink" } else { "Downlink" }
+            ),
+            freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
+        });
+    }
+    groups.push(FrequencyPresetGroup {
+        label: "GSM 850".to_string(),
+        entries: gsm850_entries,
+    });
+
+    let mut egsm900_entries = Vec::<FrequencyPresetEntry>::new();
+    for arfcn in 0u16..=124u16 {
+        let uplink_mhz = 890.0 + 0.2 * arfcn as f64;
+        let freq_mhz = if uplink {
+            uplink_mhz
+        } else {
+            uplink_mhz + 45.0
+        };
+        egsm900_entries.push(FrequencyPresetEntry {
+            id: format!(
+                "arfcn_{}_egsm900_{}",
+                if uplink { "ul" } else { "dl" },
+                arfcn
+            ),
+            label: format!(
+                "ARFCN {} {}",
+                arfcn,
+                if uplink { "Uplink" } else { "Downlink" }
+            ),
+            freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
+        });
+    }
+    for arfcn in 975u16..=1023u16 {
+        let uplink_mhz = 890.0 + 0.2 * (arfcn as f64 - 1024.0);
+        let freq_mhz = if uplink {
+            uplink_mhz
+        } else {
+            uplink_mhz + 45.0
+        };
+        egsm900_entries.push(FrequencyPresetEntry {
+            id: format!(
+                "arfcn_{}_egsm900_{}",
+                if uplink { "ul" } else { "dl" },
+                arfcn
+            ),
+            label: format!(
+                "ARFCN {} {}",
+                arfcn,
+                if uplink { "Uplink" } else { "Downlink" }
+            ),
+            freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
+        });
+    }
+    groups.push(FrequencyPresetGroup {
+        label: "E-GSM 900".to_string(),
+        entries: egsm900_entries,
+    });
+
+    let mut dcs1800_entries = Vec::<FrequencyPresetEntry>::new();
+    for arfcn in 512u16..=885u16 {
+        let uplink_mhz = 1710.2 + 0.2 * (arfcn - 512) as f64;
+        let freq_mhz = if uplink {
+            uplink_mhz
+        } else {
+            uplink_mhz + 95.0
+        };
+        dcs1800_entries.push(FrequencyPresetEntry {
+            id: format!(
+                "arfcn_{}_dcs1800_{}",
+                if uplink { "ul" } else { "dl" },
+                arfcn
+            ),
+            label: format!(
+                "ARFCN {} {}",
+                arfcn,
+                if uplink { "Uplink" } else { "Downlink" }
+            ),
+            freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
+        });
+    }
+    groups.push(FrequencyPresetGroup {
+        label: "DCS 1800".to_string(),
+        entries: dcs1800_entries,
+    });
+
+    let mut pcs1900_entries = Vec::<FrequencyPresetEntry>::new();
+    for arfcn in 512u16..=810u16 {
+        let uplink_mhz = 1850.2 + 0.2 * (arfcn - 512) as f64;
+        let freq_mhz = if uplink {
+            uplink_mhz
+        } else {
+            uplink_mhz + 80.0
+        };
+        pcs1900_entries.push(FrequencyPresetEntry {
+            id: format!(
+                "arfcn_{}_pcs1900_{}",
+                if uplink { "ul" } else { "dl" },
+                arfcn
+            ),
+            label: format!(
+                "ARFCN {} {}",
+                arfcn,
+                if uplink { "Uplink" } else { "Downlink" }
+            ),
+            freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
+        });
+    }
+    groups.push(FrequencyPresetGroup {
+        label: "PCS 1900".to_string(),
+        entries: pcs1900_entries,
+    });
+
+    groups
+}
+
 fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
     vec![
         ScannerPresetGroup {
@@ -4779,6 +4914,46 @@ fn build_menubar(
         }
         frequency_menu.append_submenu(Some(&group.label), &group_menu);
     }
+    let cellular_menu = gio::Menu::new();
+    let arfcn_menu = gio::Menu::new();
+    for (uplink, link_label) in [(true, "Uplink Freq"), (false, "Download Freq")] {
+        let link_menu = gio::Menu::new();
+        for group in cellular_arfcn_frequency_groups(uplink) {
+            let group_menu = gio::Menu::new();
+            for entry in group.entries {
+                let action_name = format!("preset_cellular_{}", entry.id);
+                let action_target = format!("app.{}", action_name);
+                let label = format!(
+                    "{} ({:.4} MHz)",
+                    entry.label,
+                    entry.freq_hz as f64 / 1_000_000.0
+                );
+                let state = state.clone();
+                let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
+                let entry_label = entry.label.clone();
+                let freq_hz = entry.freq_hz;
+                let action = gio::SimpleAction::new(&action_name, None);
+                action.connect_activate(move |_, _| {
+                    sdr_center_freq_entry.set_text(&freq_hz.to_string());
+                    let mut s = state.borrow_mut();
+                    if let Some(runtime) = s.sdr_runtime.as_ref() {
+                        runtime.set_center_freq(freq_hz);
+                    }
+                    s.push_status(format!(
+                        "cellular ARFCN preset selected: {} ({:.4} MHz)",
+                        entry_label,
+                        freq_hz as f64 / 1_000_000.0
+                    ));
+                });
+                app.add_action(&action);
+                group_menu.append(Some(&label), Some(&action_target));
+            }
+            link_menu.append_submenu(Some(&group.label), &group_menu);
+        }
+        arfcn_menu.append_submenu(Some(link_label), &link_menu);
+    }
+    cellular_menu.append_submenu(Some("ARFCN"), &arfcn_menu);
+    frequency_menu.append_submenu(Some("Cellular"), &cellular_menu);
     frequency_menu.append(
         Some("FCC Area Explorer (CSV, with Signal Type)"),
         Some("app.preset_fcc_area_explorer"),
@@ -16025,12 +16200,16 @@ fn attach_bluetooth_context_menu(
     let scan_ble_btn = Button::with_label("Scan BLE Data Channels (SDR)");
     let scan_zigbee_btn = Button::with_label("Scan Zigbee 2.4 Channels (SDR)");
     let scan_thread_btn = Button::with_label("Scan Thread 2.4 Channels (SDR)");
+    let scan_ism_863_btn = Button::with_label("Scan 863-870 MHz ISM (SDR)");
+    let scan_ism_902_btn = Button::with_label("Scan 902-928 MHz ISM (SDR)");
     let enumerate_btn = Button::with_label("Connect & Enumerate");
     let disconnect_btn = Button::with_label("Disconnect");
     box_.append(&locate_btn);
     box_.append(&scan_ble_btn);
     box_.append(&scan_zigbee_btn);
     box_.append(&scan_thread_btn);
+    box_.append(&scan_ism_863_btn);
+    box_.append(&scan_ism_902_btn);
     box_.append(&enumerate_btn);
     box_.append(&disconnect_btn);
     popover.set_child(Some(&box_));
@@ -16118,6 +16297,52 @@ fn attach_bluetooth_context_menu(
                 5_000_000,
                 9.0,
                 -84.0,
+            );
+        });
+    }
+
+    {
+        let state = state.clone();
+        let bluetooth_list = bluetooth_list.clone();
+        scan_ism_863_btn.connect_clicked(move |_| {
+            let Some(device) = selected_bluetooth(&state, &bluetooth_list) else {
+                state.borrow_mut().push_status(
+                    "no bluetooth device selected for 863-870 MHz ISM scan profile".to_string(),
+                );
+                return;
+            };
+            apply_sdr_scan_shortcut_from_bluetooth(
+                &state,
+                &device,
+                "863-870 MHz ISM",
+                863_000_000,
+                870_000_000,
+                25_000,
+                7.0,
+                -82.0,
+            );
+        });
+    }
+
+    {
+        let state = state.clone();
+        let bluetooth_list = bluetooth_list.clone();
+        scan_ism_902_btn.connect_clicked(move |_| {
+            let Some(device) = selected_bluetooth(&state, &bluetooth_list) else {
+                state.borrow_mut().push_status(
+                    "no bluetooth device selected for 902-928 MHz ISM scan profile".to_string(),
+                );
+                return;
+            };
+            apply_sdr_scan_shortcut_from_bluetooth(
+                &state,
+                &device,
+                "902-928 MHz ISM",
+                902_000_000,
+                928_000_000,
+                200_000,
+                6.0,
+                -80.0,
             );
         });
     }
@@ -20097,6 +20322,42 @@ mod tests {
         assert!(ids.contains("ble_adv_ch37"));
         assert!(ids.contains("thread_ch11"));
         assert!(ids.contains("thread_ch26"));
+    }
+
+    #[test]
+    fn cellular_arfcn_playlist_groups_include_uplink_and_downlink_frequencies() {
+        let uplink_groups = cellular_arfcn_frequency_groups(true);
+        let downlink_groups = cellular_arfcn_frequency_groups(false);
+        assert_eq!(uplink_groups.len(), 4);
+        assert_eq!(downlink_groups.len(), 4);
+
+        let uplink_entries = uplink_groups
+            .iter()
+            .flat_map(|group| group.entries.iter())
+            .collect::<Vec<_>>();
+        let downlink_entries = downlink_groups
+            .iter()
+            .flat_map(|group| group.entries.iter())
+            .collect::<Vec<_>>();
+
+        assert!(uplink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_ul_gsm850_128" && entry.freq_hz == 824_200_000));
+        assert!(downlink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_dl_gsm850_128" && entry.freq_hz == 869_200_000));
+        assert!(uplink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_ul_egsm900_975" && entry.freq_hz == 880_200_000));
+        assert!(downlink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_dl_dcs1800_512" && entry.freq_hz == 1_805_200_000));
+        assert!(uplink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_ul_pcs1900_512" && entry.freq_hz == 1_850_200_000));
+        assert!(downlink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_dl_pcs1900_512" && entry.freq_hz == 1_930_200_000));
     }
 
     #[test]
