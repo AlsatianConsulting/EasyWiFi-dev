@@ -23,6 +23,7 @@ This repository contains an MVP implementation with:
   - Bluetooth context menu includes `Scan BLE Data Channels (SDR)` to apply a BLE-focused SDR scan profile
   - Bluetooth context menu also includes `Scan Zigbee 2.4 Channels (SDR)` for quick IoT scan-range application
   - Bluetooth context menu also includes `Scan Thread 2.4 Channels (SDR)` for quick Thread scan-range application
+  - Bluetooth context menu also includes `Scan 863-870 MHz ISM (SDR)` and `Scan 902-928 MHz ISM (SDR)` shortcuts
 - Channel Usage tab
   - Channel utilization chart with spectrum dropdown filter
   - Optional inline Channel Usage panel in Access Points tab (toggleable)
@@ -39,6 +40,7 @@ This repository contains an MVP implementation with:
     - `FCC Frequency Explorer (CSV -> Bookmarks)` to import individual FCC-assigned frequencies as bookmarks
     - `FCC Frequency Explorer (CSV URL -> Bookmarks)` to import bookmarks directly from URL
     - `Remove FCC Bookmarks` to prune previously imported FCC bookmark entries
+  - `Presets -> Frequencies -> Cellular -> ARFCN` now provides playlist-style `Uplink Freq` and `Download Freq` entries across GSM850/E-GSM900/DCS1800/PCS1900 ARFCN channels
   - FCC explorers support area token filtering (city/county/state/callsign) and optional signal/service-type filtering
   - FCC area explorers attempt decoder auto-selection from detected signal/service type when possible (for example public safety -> P25, maritime -> AIS)
   - FCC explorers accept broader assignment header aliases, including `*_hz` frequency columns and `tx/rx` frequency pairs

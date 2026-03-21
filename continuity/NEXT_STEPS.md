@@ -104,6 +104,8 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 63. Validate bookmark CSV delimiter auto-detection across comma/semicolon/tab/pipe sources for file and URL import workflows.
 64. Validate new `863-870 MHz ISM` scanner preset stepping/coverage and runtime apply behavior under `Presets -> Scanners`.
 65. Validate bookmark URL extension inference for gzipped suffixes (`.csv.gz`, `.json.gz`, `.jsonl.gz`, `.ndjson.gz`) and parser preselection behavior.
+66. Validate `Cellular -> ARFCN` playlist coverage and frequency mapping for both `Uplink Freq` and `Download Freq` menus (GSM850/E-GSM900/DCS1800/PCS1900).
+67. Validate Bluetooth context-menu ISM scan shortcuts (`863-870 MHz`, `902-928 MHz`) for runtime range apply + preset persistence consistency.
 
 ## Priority 4: requested SDR decoder backlog
 

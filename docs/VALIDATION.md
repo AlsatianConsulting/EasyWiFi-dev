@@ -53,6 +53,7 @@ Current SDR logging can also emit:
 - scanner presets include an additional IoT `863-870 MHz ISM` sweep profile
 - Bluetooth context menu can apply a BLE data-channel SDR scan profile directly from selected device rows
 - Bluetooth context menu can also apply a Zigbee 2.4 SDR scan profile directly from selected device rows
+- Bluetooth context menu can also apply ISM SDR scan shortcuts for `863-870 MHz` and `902-928 MHz`
 - IoT preset catalog now includes explicit Thread 2.4 channel centers (`thread_ch11` through `thread_ch26`)
 - scanner presets include dedicated Thread 2.4 channel sweep profiles, with matching Bluetooth context-menu shortcut
 - bookmark export now emits both CSV and JSON artifacts with source tagging
@@ -69,6 +70,7 @@ Current SDR logging can also emit:
 Preset/Explorer workflow additions:
 
 - `Presets -> Frequencies` includes FCC explorer actions for scan-profile generation and bookmark imports (file CSV + URL modes)
+- `Presets -> Frequencies -> Cellular -> ARFCN` includes playlist-style `Uplink Freq` and `Download Freq` mappings for GSM850/E-GSM900/DCS1800/PCS1900
 - FCC explorer filters support area token matching and optional signal/service-type constraints
 - FCC URL workflows use retry/timeout handling for unstable upstream hosts
 - FCC bookmark imports now summarize added vs skipped duplicates and keep bookmark ordering normalized
