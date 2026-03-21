@@ -21,6 +21,7 @@ This repository contains an MVP implementation with:
   - Detail pane with resolved MFGR IDs/UUIDs (offline bundled SIG mappings where available)
   - Embedded geiger tracker panel for selected Bluetooth device (RSSI + audible tone mapping)
   - Bluetooth context menu includes `Scan BLE Data Channels (SDR)` to apply a BLE-focused SDR scan profile
+  - Bluetooth context menu also includes `Scan Zigbee 2.4 Channels (SDR)` for quick IoT scan-range application
 - Channel Usage tab
   - Channel utilization chart with spectrum dropdown filter
   - Optional inline Channel Usage panel in Access Points tab (toggleable)

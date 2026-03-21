@@ -43,6 +43,7 @@ Current SDR logging can also emit:
 - Bluetooth frequency presets include BLE data channels (`0-36`) in addition to Classic and advertising channels
 - scanner presets include dedicated BLE data-channel and Zigbee 2.4 channel sweep profiles
 - Bluetooth context menu can apply a BLE data-channel SDR scan profile directly from selected device rows
+- Bluetooth context menu can also apply a Zigbee 2.4 SDR scan profile directly from selected device rows
 - bookmark export now emits both CSV and JSON artifacts with source tagging
 - bookmark workflow now includes one-click tune + decoder start (`Decode Bookmark`)
 - aircraft correlation export action emits ADS-B/ACARS correlation JSON + CSV artifacts (`icao_hex`/`callsign` merged identities)

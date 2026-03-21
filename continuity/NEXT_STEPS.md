@@ -86,6 +86,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 45. Validate extended unavailable-decoder hints for RTL AIS and satellite decoder toolchains against real host dependency states.
 46. Validate Bluetooth context-menu BLE scan shortcut updates active SDR runtime scan range and persists reusable BLE operator presets.
 47. Validate ambiguous `frequency` field auto-detection (Hz vs MHz) across CSV/JSON imports and URL/file workflows.
+48. Validate Bluetooth context-menu Zigbee scan shortcut updates active SDR runtime scan range and persists reusable Zigbee operator presets.
 
 ## Priority 4: requested SDR decoder backlog
 
