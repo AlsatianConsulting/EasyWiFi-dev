@@ -67,6 +67,7 @@ This repository contains an MVP implementation with:
   - Bookmark imports now auto-detect CSV vs JSON when file extension/content mismatch occurs
   - Bookmark import parsers accept `freq` as an alias for raw Hz values in both CSV and JSON inputs
   - Ambiguous `frequency` fields now auto-detect Hz vs MHz by magnitude in both CSV and JSON imports
+  - Bookmark imports now ignore out-of-range frequencies outside `100 kHz` to `8 GHz`
   - Duplicate-frequency bookmark imports now upgrade default placeholder labels when richer labels are present
   - Bookmark file import dialogs now include CSV/JSON file filters while still allowing mixed-format autodetection
   - Bookmark controls include `Decode Bookmark` for one-click tune + decoder start on the selected bookmark

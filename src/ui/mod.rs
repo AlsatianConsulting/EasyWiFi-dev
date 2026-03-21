@@ -2891,7 +2891,7 @@ fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
         let Some(frequency_hz) = frequency_hz else {
             continue;
         };
-        if frequency_hz < 100_000 {
+        if !(100_000..=8_000_000_000).contains(&frequency_hz) {
             continue;
         }
         imported.push(SdrBookmarkSetting {
@@ -3021,7 +3021,7 @@ fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> 
         let Some(frequency_hz) = frequency_hz else {
             continue;
         };
-        if frequency_hz < 100_000 {
+        if !(100_000..=8_000_000_000).contains(&frequency_hz) {
             continue;
         }
         imported.push(SdrBookmarkSetting {
@@ -20113,7 +20113,7 @@ mod tests {
     fn import_sdr_bookmarks_csv_deduplicates_and_skips_invalid_rows() {
         let path =
             std::env::temp_dir().join(format!("sdr-bookmarks-import-dup-{}.csv", Uuid::new_v4()));
-        let csv = "label,frequency_hz\nOne,155340000\nDup,155340000\nBad,0\n";
+        let csv = "label,frequency_hz\nOne,155340000\nDup,155340000\nBad,0\nTooHigh,9000000001\n";
         std::fs::write(&path, csv).expect("write csv");
         let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
         assert_eq!(rows.len(), 1);
@@ -20151,6 +20151,7 @@ mod tests {
     {"label":"AIS","freq":"162025000"},
     {"label":"METEOR","frequency":"137.900"},
     {"label":"GOES","frequency":"1694100000"},
+    {"label":"TooHigh","frequency_hz":"9000000001"},
     {"label":"Skip","frequency_hz":"0"}
   ]
 }
