@@ -81,6 +81,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 40. Validate BLE scanner preset behavior (`scan_ble_data`) and ensure stepping/coverage excludes advertising-only center offsets.
 41. Validate enhanced missing-tool decoder hints for `rtl_433`, `ADS-B`, and `GSM/LTE` against real host toolchain states.
 42. Validate duplicate-frequency bookmark imports to confirm placeholder labels are upgraded and persisted in runtime + settings lists.
+43. Validate Zigbee scanner preset behavior (`scan_zigbee24`) and verify expected 2.4 GHz channel stepping coverage.
 
 ## Priority 4: requested SDR decoder backlog
 
