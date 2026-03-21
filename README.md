@@ -77,6 +77,7 @@ This repository contains an MVP implementation with:
   - Duplicate-frequency bookmark imports now upgrade default placeholder labels when richer labels are present
   - Bookmark file import dialogs now include CSV/JSON file filters while still allowing mixed-format autodetection
   - Bookmark controls include `Decode Bookmark` for one-click tune + decoder start on the selected bookmark
+  - `Decode Bookmark` can auto-fallback to a compatible decoder candidate based on bookmark label/protocol hints when the selected decoder is unavailable
   - `Export SDR Health JSON` captures telemetry/rate counters plus satcom/aircraft summaries in one snapshot artifact
   - SDR CSV exports with timestamp fields honor the selected time display mode (Local or Zulu/UTC)
   - SDR decoder text logs also honor the selected Local/Zulu time mode

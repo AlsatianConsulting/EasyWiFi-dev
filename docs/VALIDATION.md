@@ -52,6 +52,7 @@ Current SDR logging can also emit:
 - scanner presets include dedicated Thread 2.4 channel sweep profiles, with matching Bluetooth context-menu shortcut
 - bookmark export now emits both CSV and JSON artifacts with source tagging
 - bookmark workflow now includes one-click tune + decoder start (`Decode Bookmark`)
+- `Decode Bookmark` now applies auto-decoder fallback using bookmark-label/protocol hints when the currently selected decoder is unavailable
 - aircraft correlation export action emits ADS-B/ACARS correlation JSON + CSV artifacts (`icao_hex`/`callsign` merged identities)
 - `Export SDR Health JSON` now emits a telemetry/counter snapshot artifact for runtime monitoring handoff
 - SDR pane now surfaces decoder telemetry counters (`rows`, `map`, `satcom`, `stderr`)
