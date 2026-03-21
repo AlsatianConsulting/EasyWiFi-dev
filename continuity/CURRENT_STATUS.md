@@ -124,6 +124,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 104. Bluetooth context menus now include `Scan BLE Data Channels (SDR)`, which applies runtime BLE scan settings and persists a reusable BLE SDR operator preset entry.
 105. Bookmark import parsers now apply Hz-vs-MHz auto-detection for ambiguous `frequency` fields in CSV/JSON sources (`>= 1_000_000` treated as Hz).
 106. Bluetooth context menus now also include `Scan Zigbee 2.4 Channels (SDR)`, applying runtime Zigbee scan settings and persisting a reusable Zigbee SDR operator preset entry.
+107. Bluetooth SDR scan shortcuts (BLE/Zigbee) now use a shared helper path for consistent preset merge/persist/runtime-apply/status behavior.
 
 ### Bluetooth
 
