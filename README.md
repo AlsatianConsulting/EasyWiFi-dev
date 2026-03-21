@@ -53,6 +53,7 @@ This repository contains an MVP implementation with:
   - IoT frequency presets now include explicit Thread 2.4 channel centers (Ch 11-26)
   - Scanner presets also include a dedicated `Thread 2.4 Channels` sweep profile (2405-2480 MHz, 5 MHz steps)
   - IoT scanner presets also include `863-870 MHz ISM` in addition to existing 315/433/902-928 ranges
+  - Scanner presets also include a `Cellular ARFCN Scans` group for GSM/UMTS/LTE uplink/downlink sweep ranges
   - Save Current as Preset stores user-defined SDR presets in app settings
   - Rename/Delete/Move controls for saved user presets
   - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)
