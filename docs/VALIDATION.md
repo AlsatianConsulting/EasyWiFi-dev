@@ -35,6 +35,7 @@ Current SDR logging can also emit:
 - bookmark management now includes `Import SDR Bookmarks JSON` (array root plus nested envelope keys `bookmarks`/`rows`/`items`/`entries`/`records`/`data`/`payload`/`result`)
 - bookmark JSON parser now also supports newline-delimited JSON object rows (`JSONL`) as a fallback import format
 - bookmark import extension routing now treats `.jsonl`/`.ndjson` as JSON-first inputs for both local files and URL-fetch temp files
+- bookmark CSV parser now auto-detects common delimiters (`comma`/`semicolon`/`tab`/`pipe`)
 - bookmark import field aliases include `freq` (Hz) in addition to `frequency_hz`/`freq_hz`/`hz`
 - CSV import additionally tolerates `name` as a numeric frequency alias when paired with `bookmark` labels
 - ambiguous `frequency` fields are interpreted as Hz when large (`>= 1_000_000`) or MHz otherwise
@@ -48,6 +49,7 @@ Current SDR logging can also emit:
 - duplicate-frequency bookmark imports can upgrade existing default placeholder labels when richer labels are supplied
 - Bluetooth frequency presets include BLE data channels (`0-36`) in addition to Classic and advertising channels
 - scanner presets include dedicated BLE data-channel and Zigbee 2.4 channel sweep profiles
+- scanner presets include an additional IoT `863-870 MHz ISM` sweep profile
 - Bluetooth context menu can apply a BLE data-channel SDR scan profile directly from selected device rows
 - Bluetooth context menu can also apply a Zigbee 2.4 SDR scan profile directly from selected device rows
 - IoT preset catalog now includes explicit Thread 2.4 channel centers (`thread_ch11` through `thread_ch26`)

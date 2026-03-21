@@ -50,6 +50,7 @@ This repository contains an MVP implementation with:
   - Scanner presets also include a dedicated `Zigbee 2.4 Channels` sweep profile (2405-2480 MHz, 5 MHz steps)
   - IoT frequency presets now include explicit Thread 2.4 channel centers (Ch 11-26)
   - Scanner presets also include a dedicated `Thread 2.4 Channels` sweep profile (2405-2480 MHz, 5 MHz steps)
+  - IoT scanner presets also include `863-870 MHz ISM` in addition to existing 315/433/902-928 ranges
   - Save Current as Preset stores user-defined SDR presets in app settings
   - Rename/Delete/Move controls for saved user presets
   - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)
@@ -71,6 +72,7 @@ This repository contains an MVP implementation with:
   - `Presets -> Frequencies` also supports direct bookmark import from remote CSV URL
   - Auto URL bookmark import now infers `.csv`/`.json` from URL path before parser fallback
   - Bookmark imports now auto-detect CSV vs JSON when file extension/content mismatch occurs
+  - CSV bookmark imports auto-detect common delimiters (comma/semicolon/tab/pipe)
   - Bookmark import parsers accept `freq` as an alias for raw Hz values in both CSV and JSON inputs
   - CSV bookmark import also accepts `name` as a numeric frequency field alias in export variants that use `bookmark,name`
   - Ambiguous `frequency` fields now auto-detect Hz vs MHz by magnitude in both CSV and JSON imports

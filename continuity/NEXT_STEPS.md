@@ -101,6 +101,8 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 60. Validate JSON bookmark envelope compatibility for added `records`/`entries` keys across file and URL import paths (including nested object wrappers).
 61. Validate JSONL bookmark import fallback handling (newline-delimited objects) across local files and URL-fetched bookmark data paths.
 62. Validate `.jsonl`/`.ndjson` extension routing for both local and URL bookmark imports (JSON-first parser path and temp extension inference behavior).
+63. Validate bookmark CSV delimiter auto-detection across comma/semicolon/tab/pipe sources for file and URL import workflows.
+64. Validate new `863-870 MHz ISM` scanner preset stepping/coverage and runtime apply behavior under `Presets -> Scanners`.
 
 ## Priority 4: requested SDR decoder backlog
 
