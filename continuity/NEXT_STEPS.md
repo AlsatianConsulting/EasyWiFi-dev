@@ -83,6 +83,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 42. Validate duplicate-frequency bookmark imports to confirm placeholder labels are upgraded and persisted in runtime + settings lists.
 43. Validate Zigbee scanner preset behavior (`scan_zigbee24`) and verify expected 2.4 GHz channel stepping coverage.
 44. Validate bookmark import alias handling for `freq` fields across CSV and JSON data sources.
+45. Validate extended unavailable-decoder hints for RTL AIS and satellite decoder toolchains against real host dependency states.
 
 ## Priority 4: requested SDR decoder backlog
 

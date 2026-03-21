@@ -120,6 +120,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 100. Bookmark file-import actions now use standardized “no file path selected” status messaging across CSV/JSON/Auto entry points.
 101. Scanner presets now include a dedicated Zigbee 2.4 channel sweep profile (`2405-2480 MHz`, `5 MHz` step) alongside BLE and Wi-Fi 2.4 profiles.
 102. Bookmark import parsers now accept `freq` as an additional Hz alias for both CSV and JSON sources to improve third-party dataset compatibility.
+103. Decoder-unavailable hints now also cover RTL AIS fallback requirements and satellite decoder tool dependencies (`iridium-extractor`, `stdc_decoder`/`stdc-decoder`/`inmarsatc-decoder`).
 
 ### Bluetooth
 

@@ -1543,6 +1543,13 @@ fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -
                 return None;
             },
         ),
+        SdrDecoderKind::Ais => {
+            if command_exists("rtl_ais") || resolve_ais_rtl_command(162_025_000).is_some() {
+                None
+            } else {
+                Some("AIS on RTL-SDR requires rtl_ais or rtl_fm + aisdecoder".to_string())
+            }
+        }
         SdrDecoderKind::Pocsag if hardware != SdrHardware::RtlSdr => Some(
             if resolve_multimon_non_rtl_command(hardware, 169_650_000, "pocsag").is_none() {
                 "POCSAG on non-RTL hardware requires csdr + sox + multimon-ng and a compatible capture tool".to_string()
@@ -1550,6 +1557,18 @@ fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -
                 return None;
             },
         ),
+        SdrDecoderKind::Pocsag => {
+            if (command_exists("rtl_fm") && command_exists("multimon-ng"))
+                || resolve_multimon_rtl_command(169_650_000, "pocsag").is_some()
+            {
+                None
+            } else {
+                Some(
+                    "POCSAG on RTL-SDR requires rtl_fm + multimon-ng or rtl_sdr + csdr + sox + multimon-ng"
+                        .to_string(),
+                )
+            }
+        }
         SdrDecoderKind::AprsAx25 if hardware != SdrHardware::RtlSdr => Some(
             if resolve_aprs_ax25_non_rtl_command(hardware, 144_390_000).is_none() {
                 "APRS/AX.25 on non-RTL hardware requires csdr + sox + multimon-ng and a compatible capture tool".to_string()
@@ -1557,6 +1576,18 @@ fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -
                 return None;
             },
         ),
+        SdrDecoderKind::AprsAx25 => {
+            if (command_exists("rtl_fm") && command_exists("multimon-ng"))
+                || resolve_multimon_rtl_command(144_390_000, "aprs").is_some()
+            {
+                None
+            } else {
+                Some(
+                    "APRS/AX.25 on RTL-SDR requires rtl_fm + multimon-ng or rtl_sdr + csdr + sox + multimon-ng"
+                        .to_string(),
+                )
+            }
+        }
         SdrDecoderKind::Dect if hardware != SdrHardware::RtlSdr => Some(
             if resolve_multimon_non_rtl_command(hardware, 1_881_792_000, "dect").is_none() {
                 "DECT on non-RTL hardware requires csdr + sox + multimon-ng and a compatible capture tool".to_string()
@@ -1564,6 +1595,18 @@ fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -
                 return None;
             },
         ),
+        SdrDecoderKind::Dect => {
+            if (command_exists("rtl_fm") && command_exists("multimon-ng"))
+                || resolve_multimon_rtl_command(1_881_792_000, "dect").is_some()
+            {
+                None
+            } else {
+                Some(
+                    "DECT on RTL-SDR requires rtl_fm + multimon-ng or rtl_sdr + csdr + sox + multimon-ng"
+                        .to_string(),
+                )
+            }
+        }
         SdrDecoderKind::Rtl433 => {
             if command_exists("rtl_433") {
                 None
@@ -1590,6 +1633,26 @@ fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -
                 None
             } else {
                 Some("GSM/LTE decoder requires grgsm_livemon_headless or cell_search".to_string())
+            }
+        }
+        SdrDecoderKind::Iridium => {
+            if command_exists("iridium-extractor") {
+                None
+            } else {
+                Some("Iridium decoder requires iridium-extractor".to_string())
+            }
+        }
+        SdrDecoderKind::InmarsatStdc => {
+            if command_exists("stdc_decoder")
+                || command_exists("stdc-decoder")
+                || command_exists("inmarsatc-decoder")
+            {
+                None
+            } else {
+                Some(
+                    "Inmarsat STD-C decoder requires stdc_decoder, stdc-decoder, or inmarsatc-decoder"
+                        .to_string(),
+                )
             }
         }
         _ => None,
@@ -4496,6 +4559,37 @@ mod tests {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("rtl_433"));
+        }
+
+        let iridium_reason =
+            decoder_unavailability_reason(&SdrDecoderKind::Iridium, SdrHardware::RtlSdr);
+        if !command_exists("iridium-extractor") {
+            assert!(iridium_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("iridium-extractor"));
+        }
+
+        let inmarsat_reason =
+            decoder_unavailability_reason(&SdrDecoderKind::InmarsatStdc, SdrHardware::RtlSdr);
+        if !command_exists("stdc_decoder")
+            && !command_exists("stdc-decoder")
+            && !command_exists("inmarsatc-decoder")
+        {
+            assert!(inmarsat_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Inmarsat"));
+        }
+
+        let ais_rtl_reason =
+            decoder_unavailability_reason(&SdrDecoderKind::Ais, SdrHardware::RtlSdr);
+        if !command_exists("rtl_ais") && !(command_exists("rtl_fm") && command_exists("aisdecoder"))
+        {
+            assert!(ais_rtl_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("rtl_ais"));
         }
     }
 

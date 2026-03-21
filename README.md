@@ -78,6 +78,7 @@ This repository contains an MVP implementation with:
   - Decoder launch availability checks now gate right-click/start actions with explicit hardware/toolchain status
   - Right-click decode menu now exposes unavailable-decoder reason text as hover tooltips
   - Unavailable-decoder hints now include explicit missing-tool guidance for `rtl_433`, `ADS-B`, and `GSM/LTE` paths
+  - Unavailable-decoder hints now also cover `AIS` RTL fallback requirements and satellite decoder tooling (`iridium-extractor`, `stdc_decoder` variants)
   - GSM/LTE decoder launch command now carries explicit center frequency and non-RTL Soapy driver arguments for improved multi-device compatibility
   - ADS-B built-in resolver now supports `dump1090-fa` as an additional RTL fallback before `readsb`
   - AIS built-in resolver now uses an explicit RTL fallback pipeline (`rtl_fm -> aisdecoder`) when `rtl_ais` is unavailable
