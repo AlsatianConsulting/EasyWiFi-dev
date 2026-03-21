@@ -2289,9 +2289,15 @@ fn bookmark_data_extension_from_url(url: &str) -> &'static str {
         .split('?')
         .next()
         .unwrap_or(trimmed.as_str());
-    if path.ends_with(".json") || path.ends_with(".jsonl") || path.ends_with(".ndjson") {
+    if path.ends_with(".json")
+        || path.ends_with(".jsonl")
+        || path.ends_with(".ndjson")
+        || path.ends_with(".json.gz")
+        || path.ends_with(".jsonl.gz")
+        || path.ends_with(".ndjson.gz")
+    {
         "json"
-    } else if path.ends_with(".csv") {
+    } else if path.ends_with(".csv") || path.ends_with(".csv.gz") {
         "csv"
     } else {
         "dat"
@@ -20785,6 +20791,18 @@ mod tests {
         );
         assert_eq!(
             bookmark_data_extension_from_url("https://example.com/a/bookmarks.ndjson"),
+            "json"
+        );
+        assert_eq!(
+            bookmark_data_extension_from_url("https://example.com/a/bookmarks.csv.gz"),
+            "csv"
+        );
+        assert_eq!(
+            bookmark_data_extension_from_url("https://example.com/a/bookmarks.json.gz"),
+            "json"
+        );
+        assert_eq!(
+            bookmark_data_extension_from_url("https://example.com/a/bookmarks.jsonl.gz"),
             "json"
         );
         assert_eq!(
