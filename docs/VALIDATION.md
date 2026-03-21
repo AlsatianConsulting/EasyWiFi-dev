@@ -33,6 +33,7 @@ Current SDR logging can also emit:
 - bookmark management now includes `Import SDR Bookmarks CSV` (`frequency_hz` or `frequency_mhz` columns)
 - bookmark management now includes file-based auto import (`CSV`/`JSON`) under `Presets -> Frequencies`
 - bookmark management now includes `Import SDR Bookmarks JSON` (array root plus nested envelope keys `bookmarks`/`rows`/`items`/`entries`/`records`/`data`/`payload`/`result`)
+- bookmark JSON parser now also supports newline-delimited JSON object rows (`JSONL`) as a fallback import format
 - bookmark import field aliases include `freq` (Hz) in addition to `frequency_hz`/`freq_hz`/`hz`
 - CSV import additionally tolerates `name` as a numeric frequency alias when paired with `bookmark` labels
 - ambiguous `frequency` fields are interpreted as Hz when large (`>= 1_000_000`) or MHz otherwise

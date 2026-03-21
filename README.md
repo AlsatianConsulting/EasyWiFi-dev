@@ -64,6 +64,7 @@ This repository contains an MVP implementation with:
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks CSV` (`frequency_hz` or `frequency_mhz` input columns)
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks File (Auto CSV/JSON)` for one-step local ingest
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks JSON` (array root plus nested envelope variants using `bookmarks`/`rows`/`items`/`entries`/`records`/`data`/`payload`/`result`)
+  - JSON bookmark imports also accept newline-delimited JSON object rows (`JSONL`) as a fallback parse mode
   - `Presets -> Frequencies` also supports direct bookmark import from remote JSON URL
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks URL (Auto CSV/JSON)` for one-step remote ingest
   - `Presets -> Frequencies` also supports direct bookmark import from remote CSV URL
