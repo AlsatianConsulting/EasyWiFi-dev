@@ -1862,6 +1862,131 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
             ],
         },
         ScannerPresetGroup {
+            label: "Cellular ARFCN Scans".to_string(),
+            entries: vec![
+                ScannerPresetEntry {
+                    id: "scan_gsm850_ul".to_string(),
+                    label: "GSM 850 Uplink".to_string(),
+                    start_hz: 824_200_000,
+                    end_hz: 848_800_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_gsm850_dl".to_string(),
+                    label: "GSM 850 Download".to_string(),
+                    start_hz: 869_200_000,
+                    end_hz: 893_800_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_egsm900_ul".to_string(),
+                    label: "E-GSM 900 Uplink".to_string(),
+                    start_hz: 880_200_000,
+                    end_hz: 914_800_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_egsm900_dl".to_string(),
+                    label: "E-GSM 900 Download".to_string(),
+                    start_hz: 925_200_000,
+                    end_hz: 959_800_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_dcs1800_ul".to_string(),
+                    label: "DCS 1800 Uplink".to_string(),
+                    start_hz: 1_710_200_000,
+                    end_hz: 1_784_800_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_dcs1800_dl".to_string(),
+                    label: "DCS 1800 Download".to_string(),
+                    start_hz: 1_805_200_000,
+                    end_hz: 1_879_800_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_pcs1900_ul".to_string(),
+                    label: "PCS 1900 Uplink".to_string(),
+                    start_hz: 1_850_200_000,
+                    end_hz: 1_909_800_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_pcs1900_dl".to_string(),
+                    label: "PCS 1900 Download".to_string(),
+                    start_hz: 1_930_200_000,
+                    end_hz: 1_989_800_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_umts_b1_ul".to_string(),
+                    label: "UMTS Band 1 Uplink".to_string(),
+                    start_hz: 1_922_400_000,
+                    end_hz: 1_977_600_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_umts_b1_dl".to_string(),
+                    label: "UMTS Band 1 Download".to_string(),
+                    start_hz: 2_112_400_000,
+                    end_hz: 2_167_600_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_lte_b2_ul".to_string(),
+                    label: "LTE Band 2 Uplink".to_string(),
+                    start_hz: 1_850_000_000,
+                    end_hz: 1_909_900_000,
+                    sample_rate_hz: None,
+                    step_hz: 100_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_lte_b2_dl".to_string(),
+                    label: "LTE Band 2 Download".to_string(),
+                    start_hz: 1_930_000_000,
+                    end_hz: 1_989_900_000,
+                    sample_rate_hz: None,
+                    step_hz: 100_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+            ],
+        },
+        ScannerPresetGroup {
             label: "DECT / Pager / Satcom Scans".to_string(),
             entries: vec![
                 ScannerPresetEntry {
@@ -20446,6 +20571,10 @@ mod tests {
             .iter()
             .any(|entry| entry.id == "scan_weather_apt_137_138"));
         assert!(entries.iter().any(|entry| entry.id == "scan_863_870"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_gsm850_ul"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_gsm850_dl"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b2_ul"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b2_dl"));
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_sat_lband_1525_1660"));
