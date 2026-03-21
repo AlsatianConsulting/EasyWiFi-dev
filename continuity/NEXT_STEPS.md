@@ -98,6 +98,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 57. Validate unit-suffixed bookmark/FCC frequency parsing (`Hz`/`kHz`/`MHz`/`GHz`, plus compact `k`/`M`/`G`) across CSV/JSON/file/URL import workflows.
 58. Validate FCC explorer compatibility with extended assignment header aliases (`frequency_assigned_hz`, lower/upper `*_hz`, `tx_frequency*`, `rx_frequency*`) and confirm midpoint/range derivation behavior.
 59. Validate `Decode Bookmark` auto-decoder fallback behavior (bookmark-label hinting + protocol-priority ordering) across RTL-SDR/HackRF/bladeRF/B210 with unavailable-decoder guardrail messaging.
+60. Validate JSON bookmark envelope compatibility for added `records`/`entries` keys across file and URL import paths (including nested object wrappers).
 
 ## Priority 4: requested SDR decoder backlog
 
