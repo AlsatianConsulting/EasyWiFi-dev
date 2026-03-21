@@ -78,6 +78,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 37. Validate right-click decoder unavailable tooltips for consistency with start-action/status-line failure reasons.
 38. Validate `Import SDR Bookmarks File (Auto CSV/JSON)` with mixed-format local files and mismatched file extensions.
 39. Validate BLE frequency presets against channel mapping expectations (data channels `0-36`, advertising channels `37-39`).
+40. Validate BLE scanner preset behavior (`scan_ble_data`) and ensure stepping/coverage excludes advertising-only center offsets.
 
 ## Priority 4: requested SDR decoder backlog
 

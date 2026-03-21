@@ -1530,6 +1530,16 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     steps_per_sec: 10.0,
                     squelch_dbm: -84.0,
                 },
+                ScannerPresetEntry {
+                    id: "scan_ble_data".to_string(),
+                    label: "BLE Data Channels".to_string(),
+                    start_hz: 2_404_000_000,
+                    end_hz: 2_478_000_000,
+                    sample_rate_hz: None,
+                    step_hz: 2_000_000,
+                    steps_per_sec: 10.0,
+                    squelch_dbm: -84.0,
+                },
             ],
         },
         ScannerPresetGroup {
@@ -19602,6 +19612,7 @@ mod tests {
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_drone_rid_2400_24835"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_ble_data"));
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_drone_rid_5725_5850"));

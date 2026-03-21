@@ -42,6 +42,7 @@ This repository contains an MVP implementation with:
   - Bookmark export now writes both CSV and JSON artifacts
   - One-click operator preset profiles for common bands/workflows
   - Bluetooth frequency presets include Classic channels, BLE data channels (0-36), and BLE advertising channels (37-39)
+  - Scanner presets now include a dedicated `BLE Data Channels` sweep profile (2404-2478 MHz, 2 MHz steps)
   - Save Current as Preset stores user-defined SDR presets in app settings
   - Rename/Delete/Move controls for saved user presets
   - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)
