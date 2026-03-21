@@ -2715,6 +2715,14 @@ struct BookmarkImportSummary {
     skipped_duplicates: usize,
 }
 
+fn should_upgrade_bookmark_label(existing: &str, incoming: &str) -> bool {
+    let is_default = |label: &str| {
+        let normalized = label.trim();
+        normalized.is_empty() || normalized.eq_ignore_ascii_case("imported bookmark")
+    };
+    is_default(existing) && !is_default(incoming)
+}
+
 fn normalize_sdr_bookmark_settings(bookmarks: &mut Vec<SdrBookmarkSetting>) {
     bookmarks.retain(|entry| entry.frequency_hz >= 100_000);
     bookmarks.sort_by_key(|entry| entry.frequency_hz);
@@ -2996,10 +3004,6 @@ fn import_sdr_bookmarks(
     sdr_bookmark_combo: &ComboBoxText,
     imported: Vec<SdrBookmarkSetting>,
 ) -> BookmarkImportSummary {
-    let is_default_label = |label: &str| {
-        let normalized = label.trim();
-        normalized.is_empty() || normalized.eq_ignore_ascii_case("imported bookmark")
-    };
     let mut s = state.borrow_mut();
     let mut added = 0usize;
     let mut skipped_duplicates = 0usize;
@@ -3011,7 +3015,7 @@ fn import_sdr_bookmarks(
             .iter_mut()
             .find(|current| current.frequency_hz == bookmark.frequency_hz)
         {
-            if is_default_label(&current.label) && !is_default_label(&bookmark.label) {
+            if should_upgrade_bookmark_label(&current.label, &bookmark.label) {
                 current.label = bookmark.label.clone();
                 if let Some(runtime_entry) = sdr_bookmarks
                     .borrow_mut()
@@ -19869,6 +19873,27 @@ mod tests {
         assert!(bookmarks[0].frequency_hz < bookmarks[1].frequency_hz);
         assert_eq!(bookmarks[0].frequency_hz, 155_340_000);
         assert_eq!(bookmarks[1].frequency_hz, 460_125_000);
+    }
+
+    #[test]
+    fn should_upgrade_bookmark_label_only_for_placeholder_to_richer_labels() {
+        assert!(should_upgrade_bookmark_label(
+            "Imported Bookmark",
+            "NOAA-19 APT"
+        ));
+        assert!(should_upgrade_bookmark_label("  ", "AIS Ch A"));
+        assert!(!should_upgrade_bookmark_label(
+            "APRS 144.390",
+            "Imported Bookmark"
+        ));
+        assert!(!should_upgrade_bookmark_label(
+            "APRS 144.390",
+            "APRS 144.390"
+        ));
+        assert!(!should_upgrade_bookmark_label(
+            "Imported Bookmark",
+            "Imported Bookmark"
+        ));
     }
 
     #[test]
