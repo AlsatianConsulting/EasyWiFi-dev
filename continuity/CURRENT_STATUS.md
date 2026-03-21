@@ -133,6 +133,8 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 113. CSV bookmark import now accepts `name` as a numeric frequency alias (for `bookmark,name` style datasets) in addition to existing frequency columns.
 114. JSON bookmark imports now also support nested envelope objects (for example `{ "data": { "bookmarks": [...] } }`) in addition to flat array/envelope forms.
 115. JSON bookmark imports now support deeper nested envelope paths using `payload`/`result` in addition to `bookmarks`/`rows`/`items`/`data`.
+116. Bookmark import parsers now accept unit-suffixed frequency strings (for example `Hz`/`kHz`/`MHz`/`GHz`, plus compact `k`/`M`/`G`) across CSV/JSON/FCC workflows.
+117. FCC area/bookmark explorers now accept additional assignment header aliases (`*_hz` forms and `tx/rx` frequency columns), including midpoint/range derivation when only TX/RX values are available.
 
 ### Bluetooth
 

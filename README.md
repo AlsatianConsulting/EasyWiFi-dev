@@ -41,6 +41,7 @@ This repository contains an MVP implementation with:
     - `Remove FCC Bookmarks` to prune previously imported FCC bookmark entries
   - FCC explorers support area token filtering (city/county/state/callsign) and optional signal/service-type filtering
   - FCC area explorers attempt decoder auto-selection from detected signal/service type when possible (for example public safety -> P25, maritime -> AIS)
+  - FCC explorers accept broader assignment header aliases, including `*_hz` frequency columns and `tx/rx` frequency pairs
   - FCC frequency imports now report added vs duplicate-skipped counts and keep bookmark data normalized/sorted
   - Bookmark export now writes both CSV and JSON artifacts
   - One-click operator preset profiles for common bands/workflows
@@ -71,6 +72,7 @@ This repository contains an MVP implementation with:
   - Bookmark import parsers accept `freq` as an alias for raw Hz values in both CSV and JSON inputs
   - CSV bookmark import also accepts `name` as a numeric frequency field alias in export variants that use `bookmark,name`
   - Ambiguous `frequency` fields now auto-detect Hz vs MHz by magnitude in both CSV and JSON imports
+  - Bookmark import parsers also accept explicit unit suffixes (`Hz`/`kHz`/`MHz`/`GHz`, plus compact `k`/`M`/`G`)
   - Bookmark imports now ignore out-of-range frequencies outside `100 kHz` to `8 GHz`
   - Duplicate-frequency bookmark imports now upgrade default placeholder labels when richer labels are present
   - Bookmark file import dialogs now include CSV/JSON file filters while still allowing mixed-format autodetection

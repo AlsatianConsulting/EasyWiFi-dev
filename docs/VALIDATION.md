@@ -36,6 +36,7 @@ Current SDR logging can also emit:
 - bookmark import field aliases include `freq` (Hz) in addition to `frequency_hz`/`freq_hz`/`hz`
 - CSV import additionally tolerates `name` as a numeric frequency alias when paired with `bookmark` labels
 - ambiguous `frequency` fields are interpreted as Hz when large (`>= 1_000_000`) or MHz otherwise
+- bookmark frequency parsers also accept explicit unit suffixes (`Hz`/`kHz`/`MHz`/`GHz`, plus compact `k`/`M`/`G`)
 - bookmark import sanitization now drops frequencies outside `100 kHz` to `8 GHz`
 - bookmark management also includes URL-based JSON import with retry/timeout fetch behavior
 - bookmark management also includes URL-based auto import (`CSV`/`JSON`) with parser auto-detection
@@ -65,6 +66,7 @@ Preset/Explorer workflow additions:
 - FCC explorer filters support area token matching and optional signal/service-type constraints
 - FCC URL workflows use retry/timeout handling for unstable upstream hosts
 - FCC bookmark imports now summarize added vs skipped duplicates and keep bookmark ordering normalized
+- FCC explorer parsers now accept broader frequency-header aliases (`*_hz`, plus `tx/rx` frequency columns with midpoint/range derivation)
 
 KML/KMZ regression coverage now also verifies:
 
