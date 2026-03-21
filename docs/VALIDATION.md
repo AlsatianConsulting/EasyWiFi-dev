@@ -34,6 +34,7 @@ Current SDR logging can also emit:
 - bookmark management now includes file-based auto import (`CSV`/`JSON`) under `Presets -> Frequencies`
 - bookmark management now includes `Import SDR Bookmarks JSON` (array root or `{ "bookmarks": [...] }` envelope)
 - bookmark import field aliases include `freq` (Hz) in addition to `frequency_hz`/`freq_hz`/`hz`
+- ambiguous `frequency` fields are interpreted as Hz when large (`>= 1_000_000`) or MHz otherwise
 - bookmark management also includes URL-based JSON import with retry/timeout fetch behavior
 - bookmark management also includes URL-based auto import (`CSV`/`JSON`) with parser auto-detection
 - bookmark management also includes URL-based CSV import with retry/timeout fetch behavior
