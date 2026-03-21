@@ -2121,19 +2121,67 @@ fn drone_rid_frequency_presets() -> Vec<FrequencyPresetEntry> {
 }
 
 fn parse_fcc_frequency_hz(raw: &str) -> Option<u64> {
-    let cleaned = raw.trim().replace(',', "");
+    parse_frequency_string_hz(raw, FrequencyDefaultUnit::Auto)
+}
+
+enum FrequencyDefaultUnit {
+    Hz,
+    Mhz,
+    Auto,
+}
+
+fn parse_frequency_string_hz(raw: &str, default_unit: FrequencyDefaultUnit) -> Option<u64> {
+    let cleaned = raw
+        .trim()
+        .to_ascii_lowercase()
+        .replace(',', "")
+        .replace('_', "");
     if cleaned.is_empty() {
         return None;
     }
-    let parsed = cleaned.parse::<f64>().ok()?;
+    let (numeric_raw, explicit_multiplier) = if let Some(numeric) = cleaned.strip_suffix("ghz") {
+        (numeric.trim(), Some(1_000_000_000.0))
+    } else if let Some(numeric) = cleaned.strip_suffix("mhz") {
+        (numeric.trim(), Some(1_000_000.0))
+    } else if let Some(numeric) = cleaned.strip_suffix("khz") {
+        (numeric.trim(), Some(1_000.0))
+    } else if let Some(numeric) = cleaned.strip_suffix("hz") {
+        (numeric.trim(), Some(1.0))
+    } else if cleaned.ends_with('g') {
+        (cleaned.trim_end_matches('g').trim(), Some(1_000_000_000.0))
+    } else if cleaned.ends_with('m') {
+        (cleaned.trim_end_matches('m').trim(), Some(1_000_000.0))
+    } else if cleaned.ends_with('k') {
+        (cleaned.trim_end_matches('k').trim(), Some(1_000.0))
+    } else {
+        (cleaned.as_str(), None)
+    };
+    if numeric_raw.is_empty() {
+        return None;
+    }
+    let parsed = numeric_raw.parse::<f64>().ok()?;
     if !parsed.is_finite() || parsed <= 0.0 {
         return None;
     }
-    if parsed >= 1_000_000.0 {
-        Some(parsed.round() as u64)
+    let hz = if let Some(multiplier) = explicit_multiplier {
+        parsed * multiplier
     } else {
-        Some((parsed * 1_000_000.0).round() as u64)
+        match default_unit {
+            FrequencyDefaultUnit::Hz => parsed,
+            FrequencyDefaultUnit::Mhz => parsed * 1_000_000.0,
+            FrequencyDefaultUnit::Auto => {
+                if parsed >= 1_000_000.0 {
+                    parsed
+                } else {
+                    parsed * 1_000_000.0
+                }
+            }
+        }
+    };
+    if !hz.is_finite() || hz <= 0.0 {
+        return None;
     }
+    Some(hz.round() as u64)
 }
 
 fn fetch_text_from_url(
@@ -2906,7 +2954,7 @@ fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
                 row.get(*idx)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .and_then(|value| value.parse::<u64>().ok())
+                    .and_then(|value| parse_frequency_string_hz(value, FrequencyDefaultUnit::Hz))
             })
             .or_else(|| {
                 frequency_indices.iter().find_map(|idx| {
@@ -2921,8 +2969,9 @@ fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
                     row.get(*idx)
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
-                        .and_then(|value| value.parse::<f64>().ok())
-                        .map(|mhz| (mhz * 1_000_000.0).round() as u64)
+                        .and_then(|value| {
+                            parse_frequency_string_hz(value, FrequencyDefaultUnit::Mhz)
+                        })
                 })
             });
 
@@ -2952,12 +3001,7 @@ fn json_frequency_hz(value: &serde_json::Value) -> Option<u64> {
                 .filter(|hz| hz.is_finite() && *hz >= 0.0)
                 .map(|hz| hz.round() as u64)
         }
-        serde_json::Value::String(raw) => raw
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|hz| hz.is_finite() && *hz >= 0.0)
-            .map(|hz| hz.round() as u64),
+        serde_json::Value::String(raw) => parse_frequency_string_hz(raw, FrequencyDefaultUnit::Hz),
         _ => None,
     }
 }
@@ -2968,12 +3012,7 @@ fn json_frequency_mhz(value: &serde_json::Value) -> Option<u64> {
             .as_f64()
             .filter(|mhz| mhz.is_finite() && *mhz >= 0.0)
             .map(|mhz| (mhz * 1_000_000.0).round() as u64),
-        serde_json::Value::String(raw) => raw
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|mhz| mhz.is_finite() && *mhz >= 0.0)
-            .map(|mhz| (mhz * 1_000_000.0).round() as u64),
+        serde_json::Value::String(raw) => parse_frequency_string_hz(raw, FrequencyDefaultUnit::Mhz),
         _ => None,
     }
 }
@@ -2990,18 +3029,9 @@ fn json_frequency_auto(value: &serde_json::Value) -> Option<u64> {
                     (raw * 1_000_000.0).round() as u64
                 }
             }),
-        serde_json::Value::String(raw) => raw
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|parsed| parsed.is_finite() && *parsed >= 0.0)
-            .map(|parsed| {
-                if parsed >= 1_000_000.0 {
-                    parsed.round() as u64
-                } else {
-                    (parsed * 1_000_000.0).round() as u64
-                }
-            }),
+        serde_json::Value::String(raw) => {
+            parse_frequency_string_hz(raw, FrequencyDefaultUnit::Auto)
+        }
         _ => None,
     }
 }
@@ -20212,6 +20242,20 @@ mod tests {
     }
 
     #[test]
+    fn import_sdr_bookmarks_csv_parses_unit_suffixed_frequency_values() {
+        let path =
+            std::env::temp_dir().join(format!("sdr-bookmarks-import-units-{}.csv", Uuid::new_v4()));
+        let csv = "label,frequency_hz,frequency_mhz,frequency\nACARS,131550000 Hz,,\nAIS,,162025 kHz,\nInmarsat,,,1.54145 GHz\n";
+        std::fs::write(&path, csv).expect("write csv");
+        let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 1_541_450_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn import_sdr_bookmarks_csv_deduplicates_and_skips_invalid_rows() {
         let path =
             std::env::temp_dir().join(format!("sdr-bookmarks-import-dup-{}.csv", Uuid::new_v4()));
@@ -20338,6 +20382,39 @@ mod tests {
         assert!(rows.iter().any(|row| row.frequency_hz == 2_425_000_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_json_parses_unit_suffixed_frequency_values() {
+        let path = std::env::temp_dir().join(format!(
+            "sdr-bookmarks-import-json-units-{}.json",
+            Uuid::new_v4()
+        ));
+        let json = r#"
+{
+  "bookmarks": [
+    {"label":"AIS","frequency_hz":"162025000 Hz"},
+    {"label":"ACARS","frequency_mhz":"131550 kHz"},
+    {"label":"Inmarsat","frequency":"1.54145 GHz"}
+  ]
+}
+"#;
+        std::fs::write(&path, json).expect("write json");
+        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 1_541_450_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn parse_fcc_frequency_hz_accepts_unit_suffixes() {
+        assert_eq!(parse_fcc_frequency_hz("155.340"), Some(155_340_000));
+        assert_eq!(parse_fcc_frequency_hz("155.340 MHz"), Some(155_340_000));
+        assert_eq!(parse_fcc_frequency_hz("162025 kHz"), Some(162_025_000));
+        assert_eq!(parse_fcc_frequency_hz("1.54145 GHz"), Some(1_541_450_000));
+        assert_eq!(parse_fcc_frequency_hz("131550000 hz"), Some(131_550_000));
     }
 
     #[test]
