@@ -3106,7 +3106,16 @@ fn bookmark_rows_from_json_value<'a>(
     match value {
         serde_json::Value::Array(rows) => Some(rows),
         serde_json::Value::Object(map) => {
-            for key in ["bookmarks", "rows", "items", "data", "payload", "result"] {
+            for key in [
+                "bookmarks",
+                "rows",
+                "items",
+                "entries",
+                "records",
+                "data",
+                "payload",
+                "result",
+            ] {
                 if let Some(nested) = map.get(key) {
                     if let Some(rows) = bookmark_rows_from_json_value(nested, depth + 1) {
                         return Some(rows);
@@ -3126,7 +3135,7 @@ fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> 
         .with_context(|| format!("failed to parse {}", path.display()))?;
     let rows = bookmark_rows_from_json_value(&parsed, 0).ok_or_else(|| {
         anyhow::anyhow!(
-            "bookmark JSON missing array root or nested bookmarks/rows/items/data/payload/result array"
+            "bookmark JSON missing array root or nested bookmarks/rows/items/entries/records/data/payload/result array"
         )
     })?;
 
@@ -20514,6 +20523,28 @@ mod tests {
         let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_sdr_bookmarks_json_accepts_records_envelope_key() {
+        let path = std::env::temp_dir().join(format!(
+            "sdr-bookmarks-import-records-key-{}.json",
+            Uuid::new_v4()
+        ));
+        let json = r#"
+{
+  "records": [
+    {"label":"ACARS","frequency_hz":"131550000"},
+    {"label":"AIS","frequency":"162.025"}
+  ]
+}
+"#;
+        std::fs::write(&path, json).expect("write json");
+        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
         let _ = std::fs::remove_file(path);
     }
