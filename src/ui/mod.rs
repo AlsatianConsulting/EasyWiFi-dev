@@ -2811,18 +2811,26 @@ fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
         .map(|value| value.trim().to_ascii_lowercase())
         .collect::<Vec<_>>();
 
-    let index_of = |names: &[&str]| -> Option<usize> {
-        names.iter().find_map(|name| {
-            headers
+    let indices_of = |names: &[&str]| -> Vec<usize> {
+        let mut out = Vec::new();
+        for name in names {
+            if let Some(idx) = headers
                 .iter()
                 .position(|header| header == &name.trim().to_ascii_lowercase())
-        })
+            {
+                if !out.contains(&idx) {
+                    out.push(idx);
+                }
+            }
+        }
+        out
     };
+    let index_of = |names: &[&str]| -> Option<usize> { indices_of(names).into_iter().next() };
 
     let label_idx = index_of(&["label", "name", "bookmark"]);
-    let hz_idx = index_of(&["frequency_hz", "freq_hz", "hz"]);
-    let mhz_idx = index_of(&["frequency_mhz", "freq_mhz", "mhz", "frequency"]);
-    if label_idx.is_none() && hz_idx.is_none() && mhz_idx.is_none() {
+    let hz_indices = indices_of(&["frequency_hz", "freq_hz", "hz", "freq"]);
+    let mhz_indices = indices_of(&["frequency_mhz", "freq_mhz", "mhz", "frequency"]);
+    if label_idx.is_none() && hz_indices.is_empty() && mhz_indices.is_empty() {
         return Err(anyhow::anyhow!(
             "bookmark CSV missing expected columns (label/frequency_hz/frequency_mhz)"
         ));
@@ -2838,18 +2846,22 @@ fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
             .map(ToString::to_string)
             .unwrap_or_else(|| "Imported Bookmark".to_string());
 
-        let frequency_hz = hz_idx
-            .and_then(|idx| row.get(idx))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .and_then(|value| value.parse::<u64>().ok())
-            .or_else(|| {
-                mhz_idx
-                    .and_then(|idx| row.get(idx))
+        let frequency_hz = hz_indices
+            .iter()
+            .find_map(|idx| {
+                row.get(*idx)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .and_then(|value| value.parse::<f64>().ok())
-                    .map(|mhz| (mhz * 1_000_000.0).round() as u64)
+                    .and_then(|value| value.parse::<u64>().ok())
+            })
+            .or_else(|| {
+                mhz_indices.iter().find_map(|idx| {
+                    row.get(*idx)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .and_then(|value| value.parse::<f64>().ok())
+                        .map(|mhz| (mhz * 1_000_000.0).round() as u64)
+                })
             });
 
         let Some(frequency_hz) = frequency_hz else {
@@ -2943,6 +2955,7 @@ fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> 
             .get("frequency_hz")
             .or_else(|| object.get("freq_hz"))
             .or_else(|| object.get("hz"))
+            .or_else(|| object.get("freq"))
             .and_then(json_frequency_hz)
             .or_else(|| {
                 object
@@ -19940,12 +19953,13 @@ mod tests {
     fn import_sdr_bookmarks_csv_reads_hz_and_mhz_columns() {
         let path =
             std::env::temp_dir().join(format!("sdr-bookmarks-import-{}.csv", Uuid::new_v4()));
-        let csv = "label,frequency_hz,frequency_mhz\nAPRS,144390000,\nACARS,,131.550\n";
+        let csv = "label,frequency_hz,frequency_mhz,freq\nAPRS,144390000,,\nACARS,,131.550,\nAIS,,,162025000\n";
         std::fs::write(&path, csv).expect("write csv");
         let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
         assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
+        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
         let _ = std::fs::remove_file(path);
     }
 
@@ -19988,14 +20002,16 @@ mod tests {
   "bookmarks": [
     {"name":"One","frequency_mhz":"155.340"},
     {"label":"Dup","frequency_hz":"155340000"},
+    {"label":"AIS","freq":"162025000"},
     {"label":"Skip","frequency_hz":"0"}
   ]
 }
 "#;
         std::fs::write(&path, json).expect("write json");
         let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].frequency_hz, 155_340_000);
+        assert_eq!(rows[1].frequency_hz, 162_025_000);
         let _ = std::fs::remove_file(path);
     }
 

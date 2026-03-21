@@ -119,6 +119,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 99. Bookmark placeholder-label upgrade criteria is now isolated in a dedicated helper with regression tests, improving future import-flow maintainability.
 100. Bookmark file-import actions now use standardized “no file path selected” status messaging across CSV/JSON/Auto entry points.
 101. Scanner presets now include a dedicated Zigbee 2.4 channel sweep profile (`2405-2480 MHz`, `5 MHz` step) alongside BLE and Wi-Fi 2.4 profiles.
+102. Bookmark import parsers now accept `freq` as an additional Hz alias for both CSV and JSON sources to improve third-party dataset compatibility.
 
 ### Bluetooth
 
