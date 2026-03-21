@@ -142,7 +142,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 122. CSV bookmark imports now auto-detect common delimiters (comma/semicolon/tab/pipe), enabling direct import from semicolon-delimited regional exports.
 123. Scanner preset catalog now also includes a dedicated `863-870 MHz ISM` sweep profile under `IoT / ISM Scans`.
 124. Bookmark URL extension inference now recognizes gzipped suffixes (`.csv.gz`, `.json.gz`, `.jsonl.gz`, `.ndjson.gz`) for JSON/CSV parser preselection.
-125. `Presets -> Frequencies` now includes `Cellular -> ARFCN` playlist menus with both `Uplink Freq` and `Download Freq` entries across GSM850/E-GSM900/DCS1800/PCS1900 ARFCN channel sets.
+125. `Presets -> Frequencies` now includes `Cellular -> ARFCN` playlist menus with both `Uplink Freq` and `Download Freq` entries across GSM850/E-GSM900/DCS1800/PCS1900 plus UMTS UARFCN and LTE EARFCN band channel sets.
 126. Bluetooth context menu now also includes direct SDR shortcuts for `863-870 MHz ISM` and `902-928 MHz ISM` scan profiles.
 
 ### Bluetooth
