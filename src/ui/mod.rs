@@ -8528,6 +8528,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
         let sdr_bookmark_combo = sdr_bookmark_combo.clone();
         let sdr_decoder_combo = sdr_decoder_combo.clone();
+        let sdr_decoder_order = sdr_decoder_order.clone();
         let sdr_decoder_lookup = sdr_decoder_lookup.clone();
         let sdr_plugin_defs = sdr_plugin_defs.clone();
         sdr_bookmark_decode_btn.connect_clicked(move |_| {
@@ -8537,16 +8538,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             let Ok(freq_hz) = active_id.as_str().parse::<u64>() else {
                 return;
             };
-            let Some(decoder_id) = sdr_decoder_combo.active_id() else {
+            let Some(selected_decoder_id) = sdr_decoder_combo.active_id() else {
                 return;
             };
-            let Some(decoder) = sdr_decoder_lookup
-                .borrow()
-                .get(decoder_id.as_str())
-                .cloned()
-            else {
-                return;
-            };
+            let bookmark_label = sdr_bookmark_combo
+                .active_text()
+                .map(|text| text.to_string())
+                .unwrap_or_default();
 
             sdr_center_freq_entry.set_text(&freq_hz.to_string());
             let mut config = sdr_config_from_inputs(
@@ -8572,20 +8570,58 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             if s.sdr_runtime.is_none() {
                 s.start_sdr_runtime(config.clone());
             }
-            if let Some(reason) = sdr::decoder_launch_unavailable_reason(
-                &decoder,
-                config.center_freq_hz,
-                config.sample_rate_hz,
-                config.hardware,
-                sdr_plugin_defs.as_slice(),
-            ) {
+
+            let decoder_candidates = {
+                let lookup = sdr_decoder_lookup.borrow();
+                let mut candidates = vec![selected_decoder_id.to_string()];
+                for decoder_id in prioritized_decoder_ids_for_bookmark_label(
+                    sdr_decoder_order.as_slice(),
+                    &lookup,
+                    bookmark_label.as_str(),
+                ) {
+                    if !candidates.contains(&decoder_id) {
+                        candidates.push(decoder_id);
+                    }
+                }
+                candidates
+            };
+            let mut selected_unavailable_reason: Option<String> = None;
+            let mut chosen_decoder: Option<SdrDecoderKind> = None;
+            for decoder_id in decoder_candidates.iter() {
+                let Some(decoder) = sdr_decoder_lookup
+                    .borrow()
+                    .get(decoder_id.as_str())
+                    .cloned()
+                else {
+                    continue;
+                };
+                let unavailable_reason = sdr::decoder_launch_unavailable_reason(
+                    &decoder,
+                    config.center_freq_hz,
+                    config.sample_rate_hz,
+                    config.hardware,
+                    sdr_plugin_defs.as_slice(),
+                );
+                if decoder_id == selected_decoder_id.as_str() {
+                    selected_unavailable_reason = unavailable_reason.clone();
+                }
+                if unavailable_reason.is_none() {
+                    chosen_decoder = Some(decoder);
+                    break;
+                }
+            }
+            let Some(decoder) = chosen_decoder else {
                 s.push_status(format!(
                     "bookmark decode unavailable {} on {}: {}",
-                    decoder.label(),
+                    selected_decoder_id,
                     config.hardware.label(),
-                    reason
+                    selected_unavailable_reason
+                        .unwrap_or_else(|| "no compatible decoder command available".to_string())
                 ));
                 return;
+            };
+            if decoder.id().as_str() != selected_decoder_id.as_str() {
+                let _ = sdr_decoder_combo.set_active_id(Some(decoder.id().as_str()));
             }
             if let Some(runtime) = s.sdr_runtime.as_ref() {
                 runtime.set_center_freq(config.center_freq_hz);
@@ -13647,6 +13683,67 @@ fn prioritized_decoder_ids_for_protocol(
             .unwrap_or(true)
     });
     ordered
+}
+
+fn decoder_hint_id_for_bookmark_label(label: &str) -> Option<&'static str> {
+    let lower = label.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return None;
+    }
+    if lower.contains("public safety") || lower.contains("trunked") || lower.contains("land mobile")
+    {
+        Some("p25")
+    } else if lower.contains("paging") || lower.contains("pager") || lower.contains("pocsag") {
+        Some("pocsag")
+    } else if lower.contains("maritime") || lower.contains("ship") || lower.contains("coast") {
+        Some("ais")
+    } else if lower.contains("aircraft")
+        || lower.contains("aeronautical")
+        || lower.contains("acars")
+    {
+        Some("acars")
+    } else if lower.contains("ads-b") || lower.contains("adsb") || lower.contains("1090") {
+        Some("adsb")
+    } else if lower.contains("aprs") || lower.contains("ax25") || lower.contains("ax.25") {
+        Some("aprs_ax25")
+    } else if lower.contains("dect") {
+        Some("dect")
+    } else if lower.contains("dmr") {
+        Some("dmr")
+    } else if lower.contains("gsm") || lower.contains("lte") {
+        Some("gsm_lte")
+    } else if lower.contains("weather") || lower.contains("apt") || lower.contains("noaa") {
+        Some("weather_noaa_apt")
+    } else if lower.contains("inmarsat") || lower.contains("satellite") || lower.contains("std-c") {
+        Some("inmarsat_stdc")
+    } else if lower.contains("iridium") {
+        Some("iridium")
+    } else if lower.contains("radiosonde") || lower.contains("rs41") {
+        Some("radiosonde_rs41")
+    } else {
+        None
+    }
+}
+
+fn prioritized_decoder_ids_for_bookmark_label(
+    decoder_order: &[String],
+    decoder_lookup: &HashMap<String, SdrDecoderKind>,
+    bookmark_label: &str,
+) -> Vec<String> {
+    let mut out = Vec::<String>::new();
+    if let Some(hint_id) = decoder_hint_id_for_bookmark_label(bookmark_label) {
+        if decoder_lookup.contains_key(hint_id) {
+            out.push(hint_id.to_string());
+        }
+    }
+    for decoder_id in
+        prioritized_decoder_ids_for_protocol(decoder_order, decoder_lookup, bookmark_label)
+    {
+        if !out.contains(&decoder_id) {
+            out.push(decoder_id);
+        }
+    }
+    out
 }
 
 fn decoder_matches_signal_protocol(decoder: &SdrDecoderKind, signal_protocol: &str) -> bool {
@@ -20827,6 +20924,55 @@ mod tests {
             Some("acars")
         );
         assert_eq!(decoder_id_for_fcc_signal_type("Unknown"), None);
+    }
+
+    #[test]
+    fn decoder_hint_id_for_bookmark_label_maps_common_tokens() {
+        assert_eq!(
+            decoder_hint_id_for_bookmark_label("FCC | Public Safety | WQAB123"),
+            Some("p25")
+        );
+        assert_eq!(
+            decoder_hint_id_for_bookmark_label("Maritime Coast Guard"),
+            Some("ais")
+        );
+        assert_eq!(
+            decoder_hint_id_for_bookmark_label("NOAA Weather APT"),
+            Some("weather_noaa_apt")
+        );
+        assert_eq!(
+            decoder_hint_id_for_bookmark_label("APRS 144.390"),
+            Some("aprs_ax25")
+        );
+    }
+
+    #[test]
+    fn prioritized_decoder_ids_for_bookmark_label_uses_hint_first() {
+        let order = vec![
+            "acars".to_string(),
+            "p25".to_string(),
+            "ais".to_string(),
+            "ads_b".to_string(),
+        ];
+        let lookup = HashMap::from([
+            ("acars".to_string(), SdrDecoderKind::Acars),
+            (
+                "p25".to_string(),
+                SdrDecoderKind::Plugin {
+                    id: "p25".to_string(),
+                    label: "P25".to_string(),
+                    command_template: "decoder_p25".to_string(),
+                    protocol: Some("p25".to_string()),
+                },
+            ),
+            ("ais".to_string(), SdrDecoderKind::Ais),
+            ("ads_b".to_string(), SdrDecoderKind::Adsb),
+        ]);
+        let prioritized =
+            prioritized_decoder_ids_for_bookmark_label(order.as_slice(), &lookup, "Public Safety");
+        assert_eq!(prioritized.first().map(String::as_str), Some("p25"));
+        assert!(prioritized.contains(&"acars".to_string()));
+        assert!(prioritized.contains(&"ais".to_string()));
     }
 
     #[test]
