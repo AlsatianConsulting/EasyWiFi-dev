@@ -3032,6 +3032,36 @@ fn import_sdr_bookmarks_from_path_and_report(
     }
 }
 
+fn import_sdr_bookmarks_file_and_report(
+    state: &Rc<RefCell<AppState>>,
+    sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
+    sdr_bookmark_combo: &ComboBoxText,
+    path: &PathBuf,
+) {
+    match import_sdr_bookmarks_path(path) {
+        Ok(imported) => {
+            if imported.is_empty() {
+                state.borrow_mut().push_status(format!(
+                    "SDR bookmark import skipped: no valid rows in {}",
+                    path.display()
+                ));
+            } else {
+                let summary =
+                    import_sdr_bookmarks(state, sdr_bookmarks, sdr_bookmark_combo, imported);
+                state.borrow_mut().push_status(format!(
+                    "imported SDR bookmarks from {} (added={}, duplicates={})",
+                    path.display(),
+                    summary.added,
+                    summary.skipped_duplicates
+                ));
+            }
+        }
+        Err(err) => state
+            .borrow_mut()
+            .push_status(format!("SDR bookmark import failed: {err}")),
+    }
+}
+
 fn add_dialog_filters(dialog: &FileChooserDialog, filters: &[(&str, &[&str])]) {
     for (name, patterns) in filters {
         let filter = gtk::FileFilter::new();
@@ -4455,6 +4485,10 @@ fn build_menubar(
         Some("app.preset_import_sdr_bookmarks_csv"),
     );
     frequency_menu.append(
+        Some("Import SDR Bookmarks File (Auto CSV/JSON)"),
+        Some("app.preset_import_sdr_bookmarks_file"),
+    );
+    frequency_menu.append(
         Some("Import SDR Bookmarks JSON"),
         Some("app.preset_import_sdr_bookmarks_json"),
     );
@@ -5272,32 +5306,12 @@ fn build_menubar(
                         dialog.close();
                         return;
                     };
-                    match import_sdr_bookmarks_path(&path) {
-                        Ok(imported) => {
-                            if imported.is_empty() {
-                                state.borrow_mut().push_status(format!(
-                                    "SDR bookmark import skipped: no valid rows in {}",
-                                    path.display()
-                                ));
-                            } else {
-                                let summary = import_sdr_bookmarks(
-                                    &state,
-                                    &sdr_bookmarks,
-                                    &sdr_bookmark_combo,
-                                    imported,
-                                );
-                                state.borrow_mut().push_status(format!(
-                                    "imported SDR bookmarks from {} (added={}, duplicates={})",
-                                    path.display(),
-                                    summary.added,
-                                    summary.skipped_duplicates
-                                ));
-                            }
-                        }
-                        Err(err) => state
-                            .borrow_mut()
-                            .push_status(format!("SDR bookmark import failed: {err}")),
-                    }
+                    import_sdr_bookmarks_file_and_report(
+                        &state,
+                        &sdr_bookmarks,
+                        &sdr_bookmark_combo,
+                        &path,
+                    );
                 }
                 dialog.close();
             });
@@ -5305,6 +5319,57 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_import_sdr_bookmarks_csv_action);
+
+    let presets_import_sdr_bookmarks_file_action =
+        gio::SimpleAction::new("preset_import_sdr_bookmarks_file", None);
+    {
+        let state = state.clone();
+        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
+        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
+        presets_import_sdr_bookmarks_file_action.connect_activate(move |_, _| {
+            let dialog = FileChooserDialog::new(
+                Some("Import SDR Bookmarks File (Auto CSV/JSON)"),
+                None::<&gtk::Window>,
+                FileChooserAction::Open,
+                &[
+                    ("Cancel", ResponseType::Cancel),
+                    ("Import", ResponseType::Accept),
+                ],
+            );
+            add_dialog_filters(
+                &dialog,
+                &[
+                    ("Data files", &["*.csv", "*.json", "*.txt", "*.dat"]),
+                    ("CSV files", &["*.csv"]),
+                    ("JSON files", &["*.json"]),
+                    ("All files", &["*"]),
+                ],
+            );
+            let state = state.clone();
+            let sdr_bookmarks = sdr_bookmarks.clone();
+            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
+            dialog.connect_response(move |dialog, response| {
+                if response == ResponseType::Accept {
+                    let Some(path) = dialog.file().and_then(|file| file.path()) else {
+                        state.borrow_mut().push_status(
+                            "SDR bookmark import skipped: no file path selected".to_string(),
+                        );
+                        dialog.close();
+                        return;
+                    };
+                    import_sdr_bookmarks_file_and_report(
+                        &state,
+                        &sdr_bookmarks,
+                        &sdr_bookmark_combo,
+                        &path,
+                    );
+                }
+                dialog.close();
+            });
+            dialog.present();
+        });
+    }
+    app.add_action(&presets_import_sdr_bookmarks_file_action);
 
     let presets_import_sdr_bookmarks_json_action =
         gio::SimpleAction::new("preset_import_sdr_bookmarks_json", None);
@@ -5343,32 +5408,12 @@ fn build_menubar(
                         dialog.close();
                         return;
                     };
-                    match import_sdr_bookmarks_path(&path) {
-                        Ok(imported) => {
-                            if imported.is_empty() {
-                                state.borrow_mut().push_status(format!(
-                                    "SDR bookmark import skipped: no valid rows in {}",
-                                    path.display()
-                                ));
-                            } else {
-                                let summary = import_sdr_bookmarks(
-                                    &state,
-                                    &sdr_bookmarks,
-                                    &sdr_bookmark_combo,
-                                    imported,
-                                );
-                                state.borrow_mut().push_status(format!(
-                                    "imported SDR bookmarks from {} (added={}, duplicates={})",
-                                    path.display(),
-                                    summary.added,
-                                    summary.skipped_duplicates
-                                ));
-                            }
-                        }
-                        Err(err) => state
-                            .borrow_mut()
-                            .push_status(format!("SDR bookmark import failed: {err}")),
-                    }
+                    import_sdr_bookmarks_file_and_report(
+                        &state,
+                        &sdr_bookmarks,
+                        &sdr_bookmark_combo,
+                        &path,
+                    );
                 }
                 dialog.close();
             });

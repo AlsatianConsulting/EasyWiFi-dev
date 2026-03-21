@@ -111,6 +111,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 91. `Presets -> Frequencies` now includes `Import SDR Bookmarks URL (Auto CSV/JSON)`, using shared retry/timeout fetch behavior plus parser auto-detection.
 92. SDR right-click decode menus now attach hover tooltips with the exact unavailable-reason text for disabled decoder entries.
 93. Bookmark URL import actions (CSV/JSON/Auto) now use a shared status/reporting path for consistent added/duplicate/skipped/error messaging.
+94. `Presets -> Frequencies` now includes `Import SDR Bookmarks File (Auto CSV/JSON)`, and file-based CSV/JSON actions share the same normalized import/status reporting path.
 
 ### Bluetooth
 

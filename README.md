@@ -53,6 +53,7 @@ This repository contains an MVP implementation with:
   - Decode export now also supports filtered JSON + CSV output using active decode-table filters
   - `Validate Decoder` button performs a dry-run command/dependency readiness check for the selected decoder/hardware profile
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks CSV` (`frequency_hz` or `frequency_mhz` input columns)
+  - `Presets -> Frequencies` now includes `Import SDR Bookmarks File (Auto CSV/JSON)` for one-step local ingest
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks JSON` (array root or `{ "bookmarks": [...] }` with `frequency_hz`/`frequency_mhz`)
   - `Presets -> Frequencies` also supports direct bookmark import from remote JSON URL
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks URL (Auto CSV/JSON)` for one-step remote ingest
