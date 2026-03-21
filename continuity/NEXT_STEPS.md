@@ -91,6 +91,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 50. Validate bookmark import range guard behavior to confirm out-of-range values (`<100 kHz` or `>8 GHz`) are discarded across CSV/JSON paths.
 51. Validate Thread scanner preset (`scan_thread24`) and Bluetooth Thread scan shortcut runtime/preset application behavior.
 52. Validate JSON bookmark envelope compatibility for `bookmarks`/`rows`/`items`/`data` top-level keys.
+53. Validate URL extension inference in auto bookmark URL import (`.csv`/`.json` path endings and extension-less URLs).
 
 ## Priority 4: requested SDR decoder backlog
 

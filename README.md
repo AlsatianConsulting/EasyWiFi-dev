@@ -66,6 +66,7 @@ This repository contains an MVP implementation with:
   - `Presets -> Frequencies` also supports direct bookmark import from remote JSON URL
   - `Presets -> Frequencies` now includes `Import SDR Bookmarks URL (Auto CSV/JSON)` for one-step remote ingest
   - `Presets -> Frequencies` also supports direct bookmark import from remote CSV URL
+  - Auto URL bookmark import now infers `.csv`/`.json` from URL path before parser fallback
   - Bookmark imports now auto-detect CSV vs JSON when file extension/content mismatch occurs
   - Bookmark import parsers accept `freq` as an alias for raw Hz values in both CSV and JSON inputs
   - Ambiguous `frequency` fields now auto-detect Hz vs MHz by magnitude in both CSV and JSON imports

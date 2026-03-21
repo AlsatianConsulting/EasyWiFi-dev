@@ -2212,13 +2212,32 @@ fn fetch_json_from_url(url: &str) -> Result<PathBuf> {
 }
 
 fn fetch_bookmark_data_from_url(url: &str) -> Result<PathBuf> {
+    let extension = bookmark_data_extension_from_url(url);
     fetch_text_from_url(
         url,
         "downloaded bookmark data is empty",
         "wirelessexplorer-bookmarks",
-        "dat",
+        extension,
         "bookmark data",
     )
+}
+
+fn bookmark_data_extension_from_url(url: &str) -> &'static str {
+    let trimmed = url.trim().to_ascii_lowercase();
+    let path = trimmed
+        .split('#')
+        .next()
+        .unwrap_or(trimmed.as_str())
+        .split('?')
+        .next()
+        .unwrap_or(trimmed.as_str());
+    if path.ends_with(".json") {
+        "json"
+    } else if path.ends_with(".csv") {
+        "csv"
+    } else {
+        "dat"
+    }
 }
 
 fn fcc_record_value(
@@ -20253,6 +20272,22 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].frequency_hz, 131_550_000);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn bookmark_data_extension_from_url_detects_csv_json_or_fallback() {
+        assert_eq!(
+            bookmark_data_extension_from_url("https://example.com/a/bookmarks.csv"),
+            "csv"
+        );
+        assert_eq!(
+            bookmark_data_extension_from_url("https://example.com/a/bookmarks.JSON?sig=123"),
+            "json"
+        );
+        assert_eq!(
+            bookmark_data_extension_from_url("https://example.com/bookmarks"),
+            "dat"
+        );
     }
 
     #[test]
