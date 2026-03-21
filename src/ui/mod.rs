@@ -3004,6 +3004,34 @@ fn import_sdr_bookmarks(
     }
 }
 
+fn import_sdr_bookmarks_from_path_and_report(
+    state: &Rc<RefCell<AppState>>,
+    sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
+    sdr_bookmark_combo: &ComboBoxText,
+    path: &PathBuf,
+    source_label: &str,
+) {
+    match import_sdr_bookmarks_path(path) {
+        Ok(imported) => {
+            if imported.is_empty() {
+                state
+                    .borrow_mut()
+                    .push_status(format!("{source_label} import skipped: no valid rows"));
+            } else {
+                let summary =
+                    import_sdr_bookmarks(state, sdr_bookmarks, sdr_bookmark_combo, imported);
+                state.borrow_mut().push_status(format!(
+                    "imported SDR bookmarks from {source_label} (added={}, duplicates={})",
+                    summary.added, summary.skipped_duplicates
+                ));
+            }
+        }
+        Err(err) => state
+            .borrow_mut()
+            .push_status(format!("{source_label} import failed: {err}")),
+    }
+}
+
 fn add_dialog_filters(dialog: &FileChooserDialog, filters: &[(&str, &[&str])]) {
     for (name, patterns) in filters {
         let filter = gtk::FileFilter::new();
@@ -5389,29 +5417,13 @@ fn build_menubar(
                             return;
                         }
                     };
-                    match import_sdr_bookmarks_path(&json_path) {
-                        Ok(imported) => {
-                            if imported.is_empty() {
-                                state.borrow_mut().push_status(
-                                    "bookmark JSON URL import skipped: no valid rows".to_string(),
-                                );
-                            } else {
-                                let summary = import_sdr_bookmarks(
-                                    &state,
-                                    &sdr_bookmarks,
-                                    &sdr_bookmark_combo,
-                                    imported,
-                                );
-                                state.borrow_mut().push_status(format!(
-                                    "imported SDR bookmarks from JSON URL (added={}, duplicates={})",
-                                    summary.added, summary.skipped_duplicates
-                                ));
-                            }
-                        }
-                        Err(err) => state
-                            .borrow_mut()
-                            .push_status(format!("bookmark JSON URL import failed: {err}")),
-                    }
+                    import_sdr_bookmarks_from_path_and_report(
+                        &state,
+                        &sdr_bookmarks,
+                        &sdr_bookmark_combo,
+                        &json_path,
+                        "JSON URL",
+                    );
                     let _ = fs::remove_file(json_path);
                 }
                 dialog.close();
@@ -5461,29 +5473,13 @@ fn build_menubar(
                             return;
                         }
                     };
-                    match import_sdr_bookmarks_path(&path) {
-                        Ok(imported) => {
-                            if imported.is_empty() {
-                                state.borrow_mut().push_status(
-                                    "bookmark URL import skipped: no valid rows".to_string(),
-                                );
-                            } else {
-                                let summary = import_sdr_bookmarks(
-                                    &state,
-                                    &sdr_bookmarks,
-                                    &sdr_bookmark_combo,
-                                    imported,
-                                );
-                                state.borrow_mut().push_status(format!(
-                                    "imported SDR bookmarks from URL (added={}, duplicates={})",
-                                    summary.added, summary.skipped_duplicates
-                                ));
-                            }
-                        }
-                        Err(err) => state
-                            .borrow_mut()
-                            .push_status(format!("bookmark URL import failed: {err}")),
-                    }
+                    import_sdr_bookmarks_from_path_and_report(
+                        &state,
+                        &sdr_bookmarks,
+                        &sdr_bookmark_combo,
+                        &path,
+                        "URL",
+                    );
                     let _ = fs::remove_file(path);
                 }
                 dialog.close();
@@ -5533,29 +5529,13 @@ fn build_menubar(
                             return;
                         }
                     };
-                    match import_sdr_bookmarks_path(&csv_path) {
-                        Ok(imported) => {
-                            if imported.is_empty() {
-                                state.borrow_mut().push_status(
-                                    "bookmark CSV URL import skipped: no valid rows".to_string(),
-                                );
-                            } else {
-                                let summary = import_sdr_bookmarks(
-                                    &state,
-                                    &sdr_bookmarks,
-                                    &sdr_bookmark_combo,
-                                    imported,
-                                );
-                                state.borrow_mut().push_status(format!(
-                                    "imported SDR bookmarks from URL (added={}, duplicates={})",
-                                    summary.added, summary.skipped_duplicates
-                                ));
-                            }
-                        }
-                        Err(err) => state
-                            .borrow_mut()
-                            .push_status(format!("bookmark CSV URL import failed: {err}")),
-                    }
+                    import_sdr_bookmarks_from_path_and_report(
+                        &state,
+                        &sdr_bookmarks,
+                        &sdr_bookmark_combo,
+                        &csv_path,
+                        "CSV URL",
+                    );
                     let _ = fs::remove_file(csv_path);
                 }
                 dialog.close();
