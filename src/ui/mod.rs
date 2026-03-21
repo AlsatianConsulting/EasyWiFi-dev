@@ -1695,6 +1695,16 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     steps_per_sec: 6.0,
                     squelch_dbm: -80.0,
                 },
+                ScannerPresetEntry {
+                    id: "scan_863_870".to_string(),
+                    label: "863-870 MHz ISM".to_string(),
+                    start_hz: 863_000_000,
+                    end_hz: 870_000_000,
+                    sample_rate_hz: None,
+                    step_hz: 25_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -82.0,
+                },
             ],
         },
         ScannerPresetGroup {
@@ -20115,6 +20125,7 @@ mod tests {
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_weather_apt_137_138"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_863_870"));
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_sat_lband_1525_1660"));
