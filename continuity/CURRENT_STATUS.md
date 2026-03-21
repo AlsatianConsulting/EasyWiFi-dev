@@ -121,6 +121,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 101. Scanner presets now include a dedicated Zigbee 2.4 channel sweep profile (`2405-2480 MHz`, `5 MHz` step) alongside BLE and Wi-Fi 2.4 profiles.
 102. Bookmark import parsers now accept `freq` as an additional Hz alias for both CSV and JSON sources to improve third-party dataset compatibility.
 103. Decoder-unavailable hints now also cover RTL AIS fallback requirements and satellite decoder tool dependencies (`iridium-extractor`, `stdc_decoder`/`stdc-decoder`/`inmarsatc-decoder`).
+104. Bluetooth context menus now include `Scan BLE Data Channels (SDR)`, which applies runtime BLE scan settings and persists a reusable BLE SDR operator preset entry.
 
 ### Bluetooth
 

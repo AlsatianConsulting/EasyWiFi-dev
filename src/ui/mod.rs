@@ -15667,9 +15667,11 @@ fn attach_bluetooth_context_menu(
     popover.set_parent(bluetooth_list);
     let box_ = GtkBox::new(Orientation::Vertical, 4);
     let locate_btn = Button::with_label("Locate Device");
+    let scan_ble_btn = Button::with_label("Scan BLE Data Channels (SDR)");
     let enumerate_btn = Button::with_label("Connect & Enumerate");
     let disconnect_btn = Button::with_label("Disconnect");
     box_.append(&locate_btn);
+    box_.append(&scan_ble_btn);
     box_.append(&enumerate_btn);
     box_.append(&disconnect_btn);
     popover.set_child(Some(&box_));
@@ -15689,6 +15691,49 @@ fn attach_bluetooth_context_menu(
                 }
                 start_bluetooth_geiger_tracking(&state, &bluetooth_geiger_state, &device);
             }
+        });
+    }
+
+    {
+        let state = state.clone();
+        let bluetooth_list = bluetooth_list.clone();
+        scan_ble_btn.connect_clicked(move |_| {
+            let Some(device) = selected_bluetooth(&state, &bluetooth_list) else {
+                state
+                    .borrow_mut()
+                    .push_status("no bluetooth device selected for BLE scan profile".to_string());
+                return;
+            };
+            let start_hz = 2_404_000_000u64;
+            let end_hz = 2_478_000_000u64;
+            let step_hz = 2_000_000u64;
+            let center_hz = (start_hz + end_hz) / 2;
+            let preset = SdrOperatorPresetSetting {
+                label: "BLE Data Channels".to_string(),
+                center_freq_hz: center_hz,
+                sample_rate_hz: 2_400_000,
+                scan_enabled: true,
+                scan_start_hz: start_hz,
+                scan_end_hz: end_hz,
+                scan_step_hz: step_hz,
+                scan_steps_per_sec: 10.0,
+                squelch_dbm: -84.0,
+            };
+            let mut s = state.borrow_mut();
+            let added = merge_sdr_operator_presets(&mut s.settings.sdr_operator_presets, vec![preset]);
+            s.save_settings_to_disk();
+            if let Some(runtime) = s.sdr_runtime.as_ref() {
+                runtime.set_center_freq(center_hz);
+                runtime.set_scan_range(true, start_hz, end_hz, step_hz, 10.0);
+            }
+            s.push_status(format!(
+                "applied BLE data scan profile from {} (range {:.3}-{:.3} MHz, step {:.3} MHz, preset_added={})",
+                device.mac,
+                start_hz as f64 / 1_000_000.0,
+                end_hz as f64 / 1_000_000.0,
+                step_hz as f64 / 1_000_000.0,
+                added
+            ));
         });
     }
 

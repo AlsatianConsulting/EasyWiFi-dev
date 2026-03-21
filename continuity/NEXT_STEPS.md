@@ -84,6 +84,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 43. Validate Zigbee scanner preset behavior (`scan_zigbee24`) and verify expected 2.4 GHz channel stepping coverage.
 44. Validate bookmark import alias handling for `freq` fields across CSV and JSON data sources.
 45. Validate extended unavailable-decoder hints for RTL AIS and satellite decoder toolchains against real host dependency states.
+46. Validate Bluetooth context-menu BLE scan shortcut updates active SDR runtime scan range and persists reusable BLE operator presets.
 
 ## Priority 4: requested SDR decoder backlog
 
