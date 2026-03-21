@@ -100,6 +100,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 59. Validate `Decode Bookmark` auto-decoder fallback behavior (bookmark-label hinting + protocol-priority ordering) across RTL-SDR/HackRF/bladeRF/B210 with unavailable-decoder guardrail messaging.
 60. Validate JSON bookmark envelope compatibility for added `records`/`entries` keys across file and URL import paths (including nested object wrappers).
 61. Validate JSONL bookmark import fallback handling (newline-delimited objects) across local files and URL-fetched bookmark data paths.
+62. Validate `.jsonl`/`.ndjson` extension routing for both local and URL bookmark imports (JSON-first parser path and temp extension inference behavior).
 
 ## Priority 4: requested SDR decoder backlog
 

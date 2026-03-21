@@ -138,6 +138,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 118. `Decode Bookmark` now auto-selects a compatible decoder candidate from bookmark-label hints/protocol matching when the currently selected decoder is unavailable, improving cross-device one-click workflow success.
 119. JSON bookmark imports now also accept `records` and `entries` envelope keys (including nested usage) in addition to prior array/envelope variants.
 120. JSON bookmark imports now support JSON Lines (`.jsonl`/newline-delimited objects) as a fallback parse mode when standard JSON document parsing fails.
+121. Bookmark import URL/file extension routing now treats `.jsonl` and `.ndjson` as JSON-first paths for parser selection and temp-file extension inference.
 
 ### Bluetooth
 
