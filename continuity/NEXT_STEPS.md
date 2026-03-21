@@ -79,6 +79,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 38. Validate `Import SDR Bookmarks File (Auto CSV/JSON)` with mixed-format local files and mismatched file extensions.
 39. Validate BLE frequency presets against channel mapping expectations (data channels `0-36`, advertising channels `37-39`).
 40. Validate BLE scanner preset behavior (`scan_ble_data`) and ensure stepping/coverage excludes advertising-only center offsets.
+41. Validate enhanced missing-tool decoder hints for `rtl_433`, `ADS-B`, and `GSM/LTE` against real host toolchain states.
 
 ## Priority 4: requested SDR decoder backlog
 

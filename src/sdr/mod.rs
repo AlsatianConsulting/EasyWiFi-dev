@@ -1564,6 +1564,34 @@ fn decoder_unavailability_reason(kind: &SdrDecoderKind, hardware: SdrHardware) -
                 return None;
             },
         ),
+        SdrDecoderKind::Rtl433 => {
+            if command_exists("rtl_433") {
+                None
+            } else {
+                Some("rtl_433 decoder requires the rtl_433 binary".to_string())
+            }
+        }
+        SdrDecoderKind::Adsb => {
+            if command_exists("dump1090")
+                || command_exists("dump1090-mutability")
+                || command_exists("dump1090-fa")
+                || command_exists("readsb")
+            {
+                None
+            } else {
+                Some(
+                    "ADS-B decoder requires dump1090/dump1090-mutability/dump1090-fa or readsb"
+                        .to_string(),
+                )
+            }
+        }
+        SdrDecoderKind::GsmLte => {
+            if command_exists("grgsm_livemon_headless") || command_exists("cell_search") {
+                None
+            } else {
+                Some("GSM/LTE decoder requires grgsm_livemon_headless or cell_search".to_string())
+            }
+        }
         _ => None,
     }
 }
@@ -4436,6 +4464,39 @@ mod tests {
             &plugin_defs,
         );
         assert!(reason.is_none());
+    }
+
+    #[test]
+    fn decoder_unavailability_reason_reports_missing_core_toolchains() {
+        let gsm_reason =
+            decoder_unavailability_reason(&SdrDecoderKind::GsmLte, SdrHardware::RtlSdr);
+        if !command_exists("grgsm_livemon_headless") && !command_exists("cell_search") {
+            assert!(gsm_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("grgsm_livemon_headless"));
+        }
+
+        let adsb_reason = decoder_unavailability_reason(&SdrDecoderKind::Adsb, SdrHardware::RtlSdr);
+        if !command_exists("dump1090")
+            && !command_exists("dump1090-mutability")
+            && !command_exists("dump1090-fa")
+            && !command_exists("readsb")
+        {
+            assert!(adsb_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("dump1090"));
+        }
+
+        let rtl433_reason =
+            decoder_unavailability_reason(&SdrDecoderKind::Rtl433, SdrHardware::RtlSdr);
+        if !command_exists("rtl_433") {
+            assert!(rtl433_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("rtl_433"));
+        }
     }
 
     #[test]
