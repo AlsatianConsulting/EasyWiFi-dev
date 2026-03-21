@@ -5343,7 +5343,7 @@ fn build_menubar(
                 if response == ResponseType::Accept {
                     let Some(path) = dialog.file().and_then(|file| file.path()) else {
                         state.borrow_mut().push_status(
-                            "SDR bookmark import skipped: no CSV path selected".to_string(),
+                            "SDR bookmark import skipped: no file path selected".to_string(),
                         );
                         dialog.close();
                         return;
@@ -5445,7 +5445,7 @@ fn build_menubar(
                 if response == ResponseType::Accept {
                     let Some(path) = dialog.file().and_then(|file| file.path()) else {
                         state.borrow_mut().push_status(
-                            "SDR bookmark import skipped: no JSON path selected".to_string(),
+                            "SDR bookmark import skipped: no file path selected".to_string(),
                         );
                         dialog.close();
                         return;
