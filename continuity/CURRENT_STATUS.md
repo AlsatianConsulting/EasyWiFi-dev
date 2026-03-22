@@ -145,6 +145,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 125. `Presets -> Frequencies` now includes `Cellular -> ARFCN` playlist menus with both `Uplink Freq` and `Download Freq` entries across GSM850/E-GSM900/DCS1800/PCS1900 plus UMTS UARFCN and LTE EARFCN band channel sets.
 126. Bluetooth context menu now also includes direct SDR shortcuts for `863-870 MHz ISM` and `902-928 MHz ISM` scan profiles.
 127. `Presets -> Scanner Presets` now includes a dedicated `Cellular ARFCN Scans` group covering GSM/UMTS/LTE uplink/downlink sweep ranges for faster cellular metadata survey workflows.
+128. Cellular LTE EARFCN playlists now use explicit uplink EARFCN ranges (not downlink mirrors) and include additional US-focused bands (`66`, `71`) for both uplink and downlink menus.
 
 ### Bluetooth
 

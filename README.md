@@ -40,7 +40,7 @@ This repository contains an MVP implementation with:
     - `FCC Frequency Explorer (CSV -> Bookmarks)` to import individual FCC-assigned frequencies as bookmarks
     - `FCC Frequency Explorer (CSV URL -> Bookmarks)` to import bookmarks directly from URL
     - `Remove FCC Bookmarks` to prune previously imported FCC bookmark entries
-  - `Presets -> Frequencies -> Cellular -> ARFCN` now provides playlist-style `Uplink Freq` and `Download Freq` entries across GSM ARFCN plus UMTS UARFCN and LTE EARFCN channel sets
+  - `Presets -> Frequencies -> Cellular -> ARFCN` now provides playlist-style `Uplink Freq` and `Download Freq` entries across GSM ARFCN plus UMTS UARFCN and LTE EARFCN channel sets (including LTE Bands 66/71 with explicit uplink EARFCN numbering)
   - FCC explorers support area token filtering (city/county/state/callsign) and optional signal/service-type filtering
   - FCC area explorers attempt decoder auto-selection from detected signal/service type when possible (for example public safety -> P25, maritime -> AIS)
   - FCC explorers accept broader assignment header aliases, including `*_hz` frequency columns and `tx/rx` frequency pairs
