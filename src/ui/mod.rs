@@ -1615,20 +1615,123 @@ fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
         });
     }
 
-    for (band_label, band_id, start_earfcn, end_earfcn, uplink_start_mhz, downlink_start_mhz) in [
-        ("LTE Band 2", "lte_b2", 600u16, 1199u16, 1850.0, 1930.0),
-        ("LTE Band 4", "lte_b4", 1950u16, 2399u16, 1710.0, 2110.0),
-        ("LTE Band 5", "lte_b5", 2400u16, 2649u16, 824.0, 869.0),
-        ("LTE Band 12", "lte_b12", 5010u16, 5179u16, 699.0, 729.0),
-        ("LTE Band 13", "lte_b13", 5180u16, 5279u16, 777.0, 746.0),
-        ("LTE Band 14", "lte_b14", 5280u16, 5379u16, 788.0, 758.0),
-        ("LTE Band 17", "lte_b17", 5730u16, 5849u16, 704.0, 734.0),
-        ("LTE Band 25", "lte_b25", 8040u16, 8689u16, 1850.0, 1930.0),
-        ("LTE Band 26", "lte_b26", 8690u16, 9039u16, 814.0, 859.0),
+    for (
+        band_label,
+        band_id,
+        dl_start_earfcn,
+        ul_start_earfcn,
+        count,
+        uplink_start_mhz,
+        downlink_start_mhz,
+    ) in [
+        (
+            "LTE Band 2",
+            "lte_b2",
+            600u32,
+            18_600u32,
+            600u32,
+            1850.0,
+            1930.0,
+        ),
+        (
+            "LTE Band 4",
+            "lte_b4",
+            1950u32,
+            19_950u32,
+            450u32,
+            1710.0,
+            2110.0,
+        ),
+        (
+            "LTE Band 5",
+            "lte_b5",
+            2400u32,
+            20_400u32,
+            250u32,
+            824.0,
+            869.0,
+        ),
+        (
+            "LTE Band 12",
+            "lte_b12",
+            5010u32,
+            23_010u32,
+            170u32,
+            699.0,
+            729.0,
+        ),
+        (
+            "LTE Band 13",
+            "lte_b13",
+            5180u32,
+            23_180u32,
+            100u32,
+            777.0,
+            746.0,
+        ),
+        (
+            "LTE Band 14",
+            "lte_b14",
+            5280u32,
+            23_280u32,
+            100u32,
+            788.0,
+            758.0,
+        ),
+        (
+            "LTE Band 17",
+            "lte_b17",
+            5730u32,
+            23_730u32,
+            120u32,
+            704.0,
+            734.0,
+        ),
+        (
+            "LTE Band 25",
+            "lte_b25",
+            8040u32,
+            26_040u32,
+            650u32,
+            1850.0,
+            1930.0,
+        ),
+        (
+            "LTE Band 26",
+            "lte_b26",
+            8690u32,
+            26_690u32,
+            350u32,
+            814.0,
+            859.0,
+        ),
+        (
+            "LTE Band 66",
+            "lte_b66",
+            66_436u32,
+            131_972u32,
+            900u32,
+            1710.0,
+            2110.0,
+        ),
+        (
+            "LTE Band 71",
+            "lte_b71",
+            68_586u32,
+            133_122u32,
+            350u32,
+            663.0,
+            617.0,
+        ),
     ] {
         let mut entries = Vec::<FrequencyPresetEntry>::new();
-        for earfcn in start_earfcn..=end_earfcn {
-            let offset = (earfcn - start_earfcn) as f64;
+        for offset in 0..count {
+            let earfcn = if uplink {
+                ul_start_earfcn + offset
+            } else {
+                dl_start_earfcn + offset
+            };
+            let offset = offset as f64;
             let freq_mhz = if uplink {
                 uplink_start_mhz + 0.1 * offset
             } else {
@@ -20472,8 +20575,8 @@ mod tests {
     fn cellular_arfcn_playlist_groups_include_uplink_and_downlink_frequencies() {
         let uplink_groups = cellular_arfcn_frequency_groups(true);
         let downlink_groups = cellular_arfcn_frequency_groups(false);
-        assert_eq!(uplink_groups.len(), 17);
-        assert_eq!(downlink_groups.len(), 17);
+        assert_eq!(uplink_groups.len(), 19);
+        assert_eq!(downlink_groups.len(), 19);
 
         let uplink_entries = uplink_groups
             .iter()
@@ -20510,10 +20613,22 @@ mod tests {
             .any(|entry| entry.id == "arfcn_dl_umts_b1_9612" && entry.freq_hz == 2_112_400_000));
         assert!(uplink_entries
             .iter()
-            .any(|entry| entry.id == "arfcn_ul_lte_b2_600" && entry.freq_hz == 1_850_000_000));
+            .any(|entry| entry.id == "arfcn_ul_lte_b2_18600" && entry.freq_hz == 1_850_000_000));
         assert!(downlink_entries
             .iter()
             .any(|entry| entry.id == "arfcn_dl_lte_b2_600" && entry.freq_hz == 1_930_000_000));
+        assert!(downlink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_dl_lte_b66_66436" && entry.freq_hz == 2_110_000_000));
+        assert!(uplink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_ul_lte_b66_131972" && entry.freq_hz == 1_710_000_000));
+        assert!(downlink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_dl_lte_b71_68586" && entry.freq_hz == 617_000_000));
+        assert!(uplink_entries
+            .iter()
+            .any(|entry| entry.id == "arfcn_ul_lte_b71_133122" && entry.freq_hz == 663_000_000));
     }
 
     #[test]
