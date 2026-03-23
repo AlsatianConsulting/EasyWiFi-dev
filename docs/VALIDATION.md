@@ -37,6 +37,7 @@ Current SDR logging can also emit:
 - satcom export action now emits companion CSV + parsed-only JSON + denied-only JSON + summary JSON artifacts
 - decode export action emits decode-row JSON + CSV artifacts
 - decode export now also supports filtered JSON + CSV artifacts based on active decode-table filters
+- SDR satcom summary and SDR health snapshot JSON now include `artifact_contract_version` for schema pinning
 - bookmark management now includes `Import SDR Bookmarks CSV` (`frequency_hz` or `frequency_mhz` columns)
 - bookmark management now includes file-based auto import (`CSV`/`JSON`) under `Presets -> Frequencies`
 - bookmark management now includes `Import SDR Bookmarks JSON` (array root plus nested envelope keys `bookmarks`/`rows`/`items`/`entries`/`records`/`data`/`payload`/`result`)

@@ -91,6 +91,7 @@ This repository contains an MVP implementation with:
   - SDR CSV exports with timestamp fields honor the selected time display mode (Local or Zulu/UTC)
   - SDR decoder text logs also honor the selected Local/Zulu time mode
   - SDR summary JSON artifacts (`generated_at`, first/last windows) honor selected Local/Zulu mode
+  - SDR satcom summary and SDR health snapshot JSON include `artifact_contract_version` for downstream schema compatibility checks
   - Aircraft correlation export now derives ADS-B/ACARS identity joins (`icao_hex`/`callsign`) and writes JSON+CSV artifacts
   - SDR health section includes live aircraft-correlation counts (mixed ADS-B/ACARS + single-source tallies)
   - SDR health section also includes live satcom summary counters (parse state + encryption posture)

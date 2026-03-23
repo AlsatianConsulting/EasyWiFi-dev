@@ -149,6 +149,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 129. Cellular scanner presets now include expanded UMTS (`Band 2/5/8`) and LTE (`Band 4/66/71`) uplink/downlink sweep entries so scanner coverage aligns with the broader ARFCN playlist catalog.
 130. `Presets -> Frequencies` now includes `Export Cellular ARFCN Playlist (CSV + JSON)`, emitting the full uplink/download ARFCN/UARFCN/EARFCN catalog for external use.
 131. Cellular ARFCN playlist groups are now frequency-sorted before menu/render/export paths, fixing E-GSM mixed-range ordering and improving deterministic artifact output.
+132. SDR satcom summary JSON and SDR health snapshot JSON now include `artifact_contract_version` for downstream schema pinning/compat checks.
 
 ### Bluetooth
 

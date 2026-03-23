@@ -110,6 +110,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 69. Validate LTE EARFCN playlist mapping uses correct uplink EARFCN numbering and includes added Band 66 / Band 71 channel sets in both `Uplink Freq` and `Download Freq`.
 70. Validate expanded cellular scanner entry set (UMTS Band 2/5/8 and LTE Band 4/66/71) for expected start/end/step coverage and runtime tuning behavior.
 71. Validate `Export Cellular ARFCN Playlist (CSV + JSON)` artifact schemas/content and downstream parser compatibility.
+72. Validate `artifact_contract_version` field consistency across SDR health snapshot and satcom summary JSON artifacts.
 
 ## Priority 4: requested SDR decoder backlog
 

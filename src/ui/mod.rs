@@ -82,6 +82,7 @@ const MAX_SDR_EVENTS_PER_TICK: usize = 200;
 const MAX_WIFI_GEIGER_UPDATES_PER_TICK: usize = 8;
 const SDR_AUTO_SQUELCH_MIN_INTERVAL_MS: u64 = 400;
 const SDR_AUTO_SQUELCH_MIN_DELTA_DB: f32 = 1.0;
+const SDR_ARTIFACT_CONTRACT_VERSION: &str = "2026.03.23.1";
 const MIN_LIST_REFRESH_INTERVAL_MS: u64 = 140;
 const TABLE_CHAR_WIDTH_PX: i32 = 10;
 const DEFAULT_TABLE_PAGE_SIZE: usize = 50;
@@ -13865,6 +13866,7 @@ fn build_sdr_health_snapshot(
 ) -> serde_json::Value {
     let aircraft = sdr::correlate_aircraft(decode_rows);
     serde_json::json!({
+        "artifact_contract_version": SDR_ARTIFACT_CONTRACT_VERSION,
         "generated_at": format_display_timestamp(Utc::now()),
         "counts": {
             "decode_rows": decode_rows.len(),
@@ -14008,6 +14010,7 @@ fn build_sdr_satcom_summary(rows: &[SdrSatcomObservation]) -> serde_json::Value 
     identifier_hint_types.sort();
 
     serde_json::json!({
+        "artifact_contract_version": SDR_ARTIFACT_CONTRACT_VERSION,
         "generated_at": format_display_timestamp(Utc::now()),
         "total_rows": rows.len(),
         "first_seen": first_seen.map(format_display_timestamp),
@@ -21910,6 +21913,10 @@ mod tests {
         assert!(snapshot.get("decoder_telemetry").is_some());
         assert!(snapshot.get("aircraft_correlation_summary").is_some());
         assert!(snapshot.get("satcom_summary").is_some());
+        assert_eq!(
+            snapshot["artifact_contract_version"].as_str(),
+            Some(SDR_ARTIFACT_CONTRACT_VERSION)
+        );
     }
 
     #[test]
@@ -21936,6 +21943,10 @@ mod tests {
             .as_str()
             .unwrap_or_default()
             .contains("UTC"));
+        assert_eq!(
+            zulu["artifact_contract_version"].as_str(),
+            Some(SDR_ARTIFACT_CONTRACT_VERSION)
+        );
         set_use_zulu_time_display(false);
         let local = build_sdr_satcom_summary(&rows);
         assert!(!local["generated_at"]

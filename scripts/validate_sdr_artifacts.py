@@ -216,7 +216,7 @@ def main() -> int:
 
     summary_json = load_json(json_dir / "sdr_satcom_summary.json", errors)
     if isinstance(summary_json, dict):
-        for key in ("generated_at", "total_rows"):
+        for key in ("artifact_contract_version", "generated_at", "total_rows"):
             if key not in summary_json:
                 errors.append(f"JSON {json_dir / 'sdr_satcom_summary.json'} missing key: {key}")
     elif summary_json is not None:
@@ -227,7 +227,13 @@ def main() -> int:
 
     health_json = load_json(json_dir / "sdr_health_snapshot.json", errors)
     if isinstance(health_json, dict):
-        for key in ("generated_at", "telemetry", "aircraft_correlation", "satcom_summary"):
+        for key in (
+            "artifact_contract_version",
+            "generated_at",
+            "decoder_telemetry",
+            "aircraft_correlation_summary",
+            "satcom_summary",
+        ):
             if key not in health_json:
                 errors.append(f"JSON {json_dir / 'sdr_health_snapshot.json'} missing key: {key}")
     elif health_json is not None:
