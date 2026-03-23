@@ -16,19 +16,21 @@ This folder is the handoff package for moving development to a new Ubuntu system
    - Dated timetable plus active task board with status/evidence tracking.
 6. `DEFECT_LEDGER.md`
    - Severity/owner/ETA tracking for open and resolved defects.
-7. `DEPENDENCIES.md`
+7. `VALIDATION_MATRIX.md`
+   - Grouped validation execution matrix (deterministic vs hardware-bound vs live-RF).
+8. `DEPENDENCIES.md`
    - Build dependencies, runtime tools, optional decoder tools, and hardware notes.
-8. `UBUNTU_BOOTSTRAP.md`
+9. `UBUNTU_BOOTSTRAP.md`
    - Fresh Ubuntu setup procedure.
-9. `REPO_MAP.md`
+10. `REPO_MAP.md`
    - Module map and key entry points.
-10. `LAST_SESSION.md`
+11. `LAST_SESSION.md`
    - Exact state of the project at the point this continuity bundle was created.
-11. `POLICY_RESTRICTIONS.md`
+12. `POLICY_RESTRICTIONS.md`
    - Features explicitly declined due to policy restrictions.
-12. `transfer/`
+13. `transfer/`
    - Scripts and instructions for creating and restoring transfer artifacts.
-13. `bootstrap_ubuntu.sh`
+14. `bootstrap_ubuntu.sh`
    - Fresh-machine bootstrap script.
 
 ## Fastest restore path on a new machine

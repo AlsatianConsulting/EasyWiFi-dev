@@ -38,7 +38,7 @@ Status legend:
 
 | ID | Task | Status | Evidence / Notes |
 |---|---|---|---|
-| A1 | Maintain grouped validation matrix | in_progress | Source: `continuity/NEXT_STEPS.md` |
+| A1 | Maintain grouped validation matrix | in_progress | Added `continuity/VALIDATION_MATRIX.md` seeded from `NEXT_STEPS.md` |
 | A2 | Extend automated tests for cellular/ARFCN exports and scanner coverage | in_progress | Added ARFCN export assertions for LTE 66/71 |
 | A3 | Keep per-change verification (`fmt`, `check`, `test`) | in_progress | Required for every commit |
 | A4 | Keep defect ledger with severity + ETA | in_progress | Initialized `continuity/DEFECT_LEDGER.md` |
