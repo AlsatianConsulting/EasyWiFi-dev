@@ -3467,6 +3467,58 @@ fn export_sdr_bookmarks_csv(path: &PathBuf, bookmarks: &[(String, u64)]) -> Resu
     Ok(())
 }
 
+fn export_cellular_arfcn_playlist_csv(path: &PathBuf) -> Result<usize> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create cellular ARFCN export dir {}",
+                parent.display()
+            )
+        })?;
+    }
+    let mut writer = csv::Writer::from_path(path)
+        .with_context(|| format!("failed to create {}", path.display()))?;
+    writer
+        .write_record([
+            "link",
+            "band",
+            "channel_type",
+            "channel",
+            "frequency_hz",
+            "frequency_mhz",
+        ])
+        .with_context(|| format!("failed to write header to {}", path.display()))?;
+
+    let mut row_count = 0usize;
+    for (link, uplink) in [("uplink", true), ("download", false)] {
+        for group in cellular_arfcn_frequency_groups(uplink) {
+            for entry in group.entries {
+                let mut tokens = entry.label.split_whitespace();
+                let channel_type = tokens.next().unwrap_or("ARFCN");
+                let channel = tokens
+                    .next()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| entry.id.rsplit('_').next().unwrap_or_default().to_string());
+                writer
+                    .write_record([
+                        link,
+                        group.label.as_str(),
+                        channel_type,
+                        channel.as_str(),
+                        &entry.freq_hz.to_string(),
+                        &format!("{:.6}", entry.freq_hz as f64 / 1_000_000.0),
+                    ])
+                    .with_context(|| format!("failed to write row to {}", path.display()))?;
+                row_count += 1;
+            }
+        }
+    }
+    writer
+        .flush()
+        .with_context(|| format!("failed to flush {}", path.display()))?;
+    Ok(row_count)
+}
+
 #[derive(serde::Serialize)]
 struct SdrBookmarkExportRow {
     label: String,
@@ -5346,6 +5398,10 @@ fn build_menubar(
         Some("app.preset_export_sdr_bookmarks_csv"),
     );
     frequency_menu.append(
+        Some("Export Cellular ARFCN Playlist CSV"),
+        Some("app.preset_export_cellular_arfcn_csv"),
+    );
+    frequency_menu.append(
         Some("Import SDR Bookmarks CSV"),
         Some("app.preset_import_sdr_bookmarks_csv"),
     );
@@ -6133,6 +6189,32 @@ fn build_menubar(
         });
     }
     app.add_action(&presets_export_sdr_bookmarks_csv_action);
+
+    let presets_export_cellular_arfcn_csv_action =
+        gio::SimpleAction::new("preset_export_cellular_arfcn_csv", None);
+    {
+        let state = state.clone();
+        presets_export_cellular_arfcn_csv_action.connect_activate(move |_, _| {
+            let export_path = {
+                let s = state.borrow();
+                s.exporter
+                    .paths
+                    .session_dir
+                    .join("csv")
+                    .join("cellular_arfcn_playlist.csv")
+            };
+            let mut s = state.borrow_mut();
+            match export_cellular_arfcn_playlist_csv(&export_path) {
+                Ok(rows) => s.push_status(format!(
+                    "exported cellular ARFCN playlist ({} rows): {}",
+                    rows,
+                    export_path.display()
+                )),
+                Err(err) => s.push_status(format!("cellular ARFCN export failed: {err}")),
+            }
+        });
+    }
+    app.add_action(&presets_export_cellular_arfcn_csv_action);
 
     let presets_import_sdr_bookmarks_csv_action =
         gio::SimpleAction::new("preset_import_sdr_bookmarks_csv", None);
@@ -21122,6 +21204,18 @@ mod tests {
         let content = std::fs::read_to_string(&path).expect("read json");
         assert!(content.contains("\"source\": \"fcc_imported\""));
         assert!(content.contains("\"source\": \"manual_or_default\""));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn export_cellular_arfcn_playlist_csv_writes_rows() {
+        let path = std::env::temp_dir().join(format!("cellular-arfcn-{}.csv", Uuid::new_v4()));
+        let rows = export_cellular_arfcn_playlist_csv(&path).expect("export csv");
+        assert!(rows > 1000);
+        let content = std::fs::read_to_string(&path).expect("read csv");
+        assert!(content.contains("link,band,channel_type,channel,frequency_hz,frequency_mhz"));
+        assert!(content.contains("uplink,GSM 850,ARFCN,128,824200000,824.200000"));
+        assert!(content.contains("download,LTE Band 2,EARFCN,600,1930000000,1930.000000"));
         let _ = std::fs::remove_file(path);
     }
 
