@@ -41,7 +41,7 @@ Status legend:
 | A1 | Maintain grouped validation matrix | in_progress | Source: `continuity/NEXT_STEPS.md` |
 | A2 | Extend automated tests for cellular/ARFCN exports and scanner coverage | in_progress | Added ARFCN export assertions for LTE 66/71 |
 | A3 | Keep per-change verification (`fmt`, `check`, `test`) | in_progress | Required for every commit |
-| A4 | Keep defect ledger with severity + ETA | todo | Add when first open defect appears |
+| A4 | Keep defect ledger with severity + ETA | in_progress | Initialized `continuity/DEFECT_LEDGER.md` |
 
 ## B) SDR Workflow Reliability
 
@@ -72,4 +72,3 @@ Status legend:
 ## Blockers
 
 - None currently logged.
-
