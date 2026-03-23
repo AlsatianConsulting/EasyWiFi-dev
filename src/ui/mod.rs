@@ -1749,6 +1749,9 @@ fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
         });
     }
 
+    for group in &mut groups {
+        group.entries.sort_by_key(|entry| entry.freq_hz);
+    }
     groups
 }
 
@@ -20891,6 +20894,37 @@ mod tests {
         assert!(uplink_entries
             .iter()
             .any(|entry| entry.id == "arfcn_ul_lte_b71_133122" && entry.freq_hz == 663_000_000));
+    }
+
+    #[test]
+    fn cellular_arfcn_playlist_groups_are_sorted_and_unique_per_group() {
+        for uplink in [true, false] {
+            let groups = cellular_arfcn_frequency_groups(uplink);
+            assert!(groups.len() >= 19);
+            for group in groups {
+                assert!(
+                    !group.entries.is_empty(),
+                    "group `{}` had no entries",
+                    group.label
+                );
+                let mut prev = 0u64;
+                let mut ids = std::collections::HashSet::<String>::new();
+                for entry in group.entries {
+                    assert!(
+                        ids.insert(entry.id.clone()),
+                        "duplicate entry id `{}` in group `{}`",
+                        entry.id,
+                        group.label
+                    );
+                    assert!(
+                        entry.freq_hz >= prev,
+                        "group `{}` is not sorted by frequency",
+                        group.label
+                    );
+                    prev = entry.freq_hz;
+                }
+            }
+        }
     }
 
     #[test]
