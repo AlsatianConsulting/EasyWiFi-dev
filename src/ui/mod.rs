@@ -4226,6 +4226,7 @@ struct UiWidgets {
     specialized_tools_detail_label: Label,
     specialized_tools_decoder_label: Label,
     specialized_tools_status_label: Label,
+    specialized_tools_probe_label: Label,
     specialized_tools_devices: Rc<RefCell<Vec<SpecializedToolDevice>>>,
 }
 
@@ -4426,6 +4427,74 @@ fn specialized_device_detail_text(device: &SpecializedToolDevice) -> String {
         device.role,
         spectrum,
         device.interfaces
+    )
+}
+
+fn run_shell_capture(command_line: &str) -> String {
+    match std::process::Command::new("sh")
+        .arg("-lc")
+        .arg(command_line)
+        .output()
+    {
+        Ok(output) => {
+            let mut combined = String::new();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if !stdout.is_empty() {
+                combined.push_str(&stdout);
+            }
+            if !stderr.is_empty() {
+                if !combined.is_empty() {
+                    combined.push('\n');
+                }
+                combined.push_str(&stderr);
+            }
+            if combined.is_empty() {
+                format!("(no output) [{}]", output.status)
+            } else {
+                combined
+            }
+        }
+        Err(err) => format!("command execution failed: {err}"),
+    }
+}
+
+fn specialized_passive_command_hints(usb_id: &str) -> &'static [&'static str] {
+    match usb_id.to_ascii_lowercase().as_str() {
+        "1d50:605b" => &[
+            "rfcat --help",
+            "python3 -m rfcat -r",
+            "inspectrum <captured_iq_file>",
+        ],
+        "0451:16ae" => &[
+            "zbid",
+            "zbdump -f 11",
+            "wireshark (Zigbee/802.15.4 dissectors)",
+        ],
+        "1915:0102" => &[
+            "python3 -m nrf_sniffer_ble --help",
+            "wireshark (Nordic BLE sniffer capture)",
+            "btlejack -h",
+        ],
+        "0403:6015" => &["zbid", "zbdump -f 11", "zbwireshark"],
+        _ => &[],
+    }
+}
+
+fn specialized_probe_output(device: &SpecializedToolDevice) -> String {
+    let header = format!(
+        "Passive probe for {}\nUSB ID: {}\n",
+        device.profile_name, device.usb_id
+    );
+    let lsusb_line = run_shell_capture(&format!("lsusb -d {}", shell_escape(&device.usb_id)));
+    let hints = specialized_passive_command_hints(&device.usb_id);
+    let hints_text = if hints.is_empty() {
+        "none".to_string()
+    } else {
+        hints.join("\n")
+    };
+    format!(
+        "{header}\nlsusb probe:\n{lsusb_line}\n\nRecommended passive command set:\n{hints_text}"
     )
 }
 
@@ -8612,6 +8681,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
 
     let specialized_tools_refresh_btn = Button::with_label("Refresh Devices");
     let specialized_tools_install_plan_btn = Button::with_label("Show Install Plan");
+    let specialized_tools_probe_btn = Button::with_label("Run Passive Probe");
     let specialized_tools_status_label =
         Label::new(Some("Specialized Tools: ready (click Refresh Devices)"));
     specialized_tools_status_label.set_xalign(0.0);
@@ -8628,6 +8698,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     specialized_tools_decoder_label.set_xalign(0.0);
     specialized_tools_decoder_label.set_wrap(true);
     specialized_tools_decoder_label.set_selectable(true);
+    let specialized_tools_probe_label = Label::new(Some("Probe Results: none yet"));
+    specialized_tools_probe_label.set_xalign(0.0);
+    specialized_tools_probe_label.set_wrap(true);
+    specialized_tools_probe_label.set_selectable(true);
 
     let specialized_tools_left = GtkBox::new(Orientation::Vertical, 6);
     specialized_tools_left.append(&specialized_tools_scrolled);
@@ -8636,6 +8710,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let specialized_tools_action_row = GtkBox::new(Orientation::Horizontal, 6);
     specialized_tools_action_row.append(&specialized_tools_refresh_btn);
     specialized_tools_action_row.append(&specialized_tools_install_plan_btn);
+    specialized_tools_action_row.append(&specialized_tools_probe_btn);
     specialized_tools_right.append(&specialized_tools_action_row);
     specialized_tools_right.append(&Label::new(Some("Status")));
     specialized_tools_right.append(&specialized_tools_status_label);
@@ -8643,6 +8718,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     specialized_tools_right.append(&specialized_tools_detail_label);
     specialized_tools_right.append(&Label::new(Some("Decoders / Tooling")));
     specialized_tools_right.append(&specialized_tools_decoder_label);
+    specialized_tools_right.append(&Label::new(Some("Probe Output")));
+    specialized_tools_right.append(&specialized_tools_probe_label);
 
     let specialized_tools_root = Paned::new(Orientation::Horizontal);
     specialized_tools_root.set_wide_handle(true);
@@ -8941,6 +9018,40 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             state
                 .borrow_mut()
                 .push_status("specialized tools install plan copied to status pane".to_string());
+        });
+    }
+
+    {
+        let specialized_tools_devices = specialized_tools_devices.clone();
+        let specialized_tools_list = specialized_tools_list.clone();
+        let specialized_tools_probe_label = specialized_tools_probe_label.clone();
+        let state = state.clone();
+        specialized_tools_probe_btn.connect_clicked(move |_| {
+            let Some(row) = specialized_tools_list.selected_row() else {
+                specialized_tools_probe_label
+                    .set_text("Probe Results: select a specialized device first.");
+                state
+                    .borrow_mut()
+                    .push_status("specialized probe skipped: no device selected".to_string());
+                return;
+            };
+            let key = row.widget_name().to_string();
+            let Some(device) = specialized_tools_devices
+                .borrow()
+                .iter()
+                .find(|entry| entry.key == key)
+                .cloned()
+            else {
+                specialized_tools_probe_label
+                    .set_text("Probe Results: selected device is no longer present.");
+                return;
+            };
+            let output = specialized_probe_output(&device);
+            specialized_tools_probe_label.set_text(&output);
+            state.borrow_mut().push_status(format!(
+                "specialized passive probe completed for {} ({})",
+                device.profile_name, device.usb_id
+            ));
         });
     }
 
@@ -11531,6 +11642,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             specialized_tools_detail_label,
             specialized_tools_decoder_label,
             specialized_tools_status_label,
+            specialized_tools_probe_label,
             specialized_tools_devices,
         },
     )
@@ -11646,6 +11758,7 @@ fn bind_poll_loop(
         specialized_tools_detail_label: _specialized_tools_detail_label,
         specialized_tools_decoder_label: _specialized_tools_decoder_label,
         specialized_tools_status_label: _specialized_tools_status_label,
+        specialized_tools_probe_label: _specialized_tools_probe_label,
         specialized_tools_devices: _specialized_tools_devices,
     } = widgets;
     let window = window.clone();
@@ -21506,6 +21619,15 @@ mod tests {
         let zigbee = specialized_profile_for_usb_id("0451:16ae").expect("cc2531 profile");
         assert!(zigbee.role.to_lowercase().contains("zigbee"));
         assert!(specialized_profile_for_usb_id("ffff:ffff").is_none());
+    }
+
+    #[test]
+    fn specialized_passive_command_hints_include_expected_entries() {
+        let yard_hints = specialized_passive_command_hints("1d50:605b");
+        assert!(yard_hints.iter().any(|line| line.contains("rfcat")));
+        let cc2531_hints = specialized_passive_command_hints("0451:16ae");
+        assert!(cc2531_hints.iter().any(|line| line.contains("zbdump")));
+        assert!(specialized_passive_command_hints("ffff:ffff").is_empty());
     }
 
     #[test]
