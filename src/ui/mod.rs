@@ -2087,6 +2087,126 @@ fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
                     steps_per_sec: 6.0,
                     squelch_dbm: -80.0,
                 },
+                ScannerPresetEntry {
+                    id: "scan_umts_b2_ul".to_string(),
+                    label: "UMTS Band 2 Uplink".to_string(),
+                    start_hz: 1_852_400_000,
+                    end_hz: 1_907_600_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_umts_b2_dl".to_string(),
+                    label: "UMTS Band 2 Download".to_string(),
+                    start_hz: 1_932_400_000,
+                    end_hz: 1_987_600_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_umts_b5_ul".to_string(),
+                    label: "UMTS Band 5 Uplink".to_string(),
+                    start_hz: 824_200_000,
+                    end_hz: 844_400_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_umts_b5_dl".to_string(),
+                    label: "UMTS Band 5 Download".to_string(),
+                    start_hz: 869_200_000,
+                    end_hz: 889_400_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_umts_b8_ul".to_string(),
+                    label: "UMTS Band 8 Uplink".to_string(),
+                    start_hz: 880_200_000,
+                    end_hz: 910_400_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_umts_b8_dl".to_string(),
+                    label: "UMTS Band 8 Download".to_string(),
+                    start_hz: 925_200_000,
+                    end_hz: 955_400_000,
+                    sample_rate_hz: None,
+                    step_hz: 200_000,
+                    steps_per_sec: 7.0,
+                    squelch_dbm: -82.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_lte_b4_ul".to_string(),
+                    label: "LTE Band 4 Uplink".to_string(),
+                    start_hz: 1_710_000_000,
+                    end_hz: 1_754_900_000,
+                    sample_rate_hz: None,
+                    step_hz: 100_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_lte_b4_dl".to_string(),
+                    label: "LTE Band 4 Download".to_string(),
+                    start_hz: 2_110_000_000,
+                    end_hz: 2_154_900_000,
+                    sample_rate_hz: None,
+                    step_hz: 100_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_lte_b66_ul".to_string(),
+                    label: "LTE Band 66 Uplink".to_string(),
+                    start_hz: 1_710_000_000,
+                    end_hz: 1_799_900_000,
+                    sample_rate_hz: None,
+                    step_hz: 100_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_lte_b66_dl".to_string(),
+                    label: "LTE Band 66 Download".to_string(),
+                    start_hz: 2_110_000_000,
+                    end_hz: 2_199_900_000,
+                    sample_rate_hz: None,
+                    step_hz: 100_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_lte_b71_ul".to_string(),
+                    label: "LTE Band 71 Uplink".to_string(),
+                    start_hz: 663_000_000,
+                    end_hz: 697_900_000,
+                    sample_rate_hz: None,
+                    step_hz: 100_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
+                ScannerPresetEntry {
+                    id: "scan_lte_b71_dl".to_string(),
+                    label: "LTE Band 71 Download".to_string(),
+                    start_hz: 617_000_000,
+                    end_hz: 651_900_000,
+                    sample_rate_hz: None,
+                    step_hz: 100_000,
+                    steps_per_sec: 6.0,
+                    squelch_dbm: -80.0,
+                },
             ],
         },
         ScannerPresetGroup {
@@ -20688,8 +20808,14 @@ mod tests {
         assert!(entries.iter().any(|entry| entry.id == "scan_863_870"));
         assert!(entries.iter().any(|entry| entry.id == "scan_gsm850_ul"));
         assert!(entries.iter().any(|entry| entry.id == "scan_gsm850_dl"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_umts_b2_ul"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_umts_b8_dl"));
         assert!(entries.iter().any(|entry| entry.id == "scan_lte_b2_ul"));
         assert!(entries.iter().any(|entry| entry.id == "scan_lte_b2_dl"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b66_ul"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b66_dl"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b71_ul"));
+        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b71_dl"));
         assert!(entries
             .iter()
             .any(|entry| entry.id == "scan_sat_lband_1525_1660"));
