@@ -4498,6 +4498,16 @@ fn specialized_probe_output(device: &SpecializedToolDevice) -> String {
     )
 }
 
+fn specialized_sdr_mirror_defaults(usb_id: &str) -> Option<(u64, u32, &'static str)> {
+    match usb_id.to_ascii_lowercase().as_str() {
+        "1d50:605b" => Some((433_920_000, 2_400_000, "rtl_433")),
+        "0451:16ae" => Some((2_405_000_000, 2_400_000, "gqrx_nfm")),
+        "1915:0102" => Some((2_426_000_000, 2_400_000, "gqrx_nfm")),
+        "0403:6015" => Some((2_405_000_000, 2_400_000, "gqrx_nfm")),
+        _ => None,
+    }
+}
+
 fn refresh_specialized_tools_list(list: &ListBox, devices: &[SpecializedToolDevice]) {
     clear_listbox(list);
     for item in devices {
@@ -8682,6 +8692,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let specialized_tools_refresh_btn = Button::with_label("Refresh Devices");
     let specialized_tools_install_plan_btn = Button::with_label("Show Install Plan");
     let specialized_tools_probe_btn = Button::with_label("Run Passive Probe");
+    let specialized_tools_open_sdr_btn = Button::with_label("Open SDR Mirror");
     let specialized_tools_status_label =
         Label::new(Some("Specialized Tools: ready (click Refresh Devices)"));
     specialized_tools_status_label.set_xalign(0.0);
@@ -8711,6 +8722,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     specialized_tools_action_row.append(&specialized_tools_refresh_btn);
     specialized_tools_action_row.append(&specialized_tools_install_plan_btn);
     specialized_tools_action_row.append(&specialized_tools_probe_btn);
+    specialized_tools_action_row.append(&specialized_tools_open_sdr_btn);
     specialized_tools_right.append(&specialized_tools_action_row);
     specialized_tools_right.append(&Label::new(Some("Status")));
     specialized_tools_right.append(&specialized_tools_status_label);
@@ -9051,6 +9063,59 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             state.borrow_mut().push_status(format!(
                 "specialized passive probe completed for {} ({})",
                 device.profile_name, device.usb_id
+            ));
+        });
+    }
+
+    {
+        let notebook = notebook.clone();
+        let specialized_tools_devices = specialized_tools_devices.clone();
+        let specialized_tools_list = specialized_tools_list.clone();
+        let specialized_tools_status_label = specialized_tools_status_label.clone();
+        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
+        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
+        let sdr_decoder_combo = sdr_decoder_combo.clone();
+        let state = state.clone();
+        specialized_tools_open_sdr_btn.connect_clicked(move |_| {
+            let Some(row) = specialized_tools_list.selected_row() else {
+                specialized_tools_status_label
+                    .set_text("Open SDR Mirror skipped: select a specialized device first.");
+                return;
+            };
+            let key = row.widget_name().to_string();
+            let Some(device) = specialized_tools_devices
+                .borrow()
+                .iter()
+                .find(|entry| entry.key == key)
+                .cloned()
+            else {
+                specialized_tools_status_label
+                    .set_text("Open SDR Mirror failed: selected device no longer present.");
+                return;
+            };
+            let Some((freq_hz, sample_rate_hz, decoder_id)) =
+                specialized_sdr_mirror_defaults(&device.usb_id)
+            else {
+                specialized_tools_status_label.set_text(
+                    "Open SDR Mirror skipped: no SDR mirror defaults are defined for this device.",
+                );
+                return;
+            };
+            sdr_center_freq_entry.set_text(&freq_hz.to_string());
+            sdr_sample_rate_entry.set_text(&sample_rate_hz.to_string());
+            let _ = sdr_decoder_combo.set_active_id(Some(decoder_id));
+            notebook.set_current_page(Some(SDR_TAB_INDEX));
+            specialized_tools_status_label.set_text(&format!(
+                "Opened SDR mirror profile for {} at {:.3} MHz (decoder: {})",
+                device.profile_name,
+                freq_hz as f64 / 1_000_000.0,
+                decoder_id
+            ));
+            state.borrow_mut().push_status(format!(
+                "specialized SDR mirror profile loaded: {} {:.3} MHz {}",
+                device.profile_name,
+                freq_hz as f64 / 1_000_000.0,
+                decoder_id
             ));
         });
     }
@@ -21628,6 +21693,17 @@ mod tests {
         let cc2531_hints = specialized_passive_command_hints("0451:16ae");
         assert!(cc2531_hints.iter().any(|line| line.contains("zbdump")));
         assert!(specialized_passive_command_hints("ffff:ffff").is_empty());
+    }
+
+    #[test]
+    fn specialized_sdr_mirror_defaults_map_known_devices() {
+        let yard = specialized_sdr_mirror_defaults("1d50:605b").expect("yard defaults");
+        assert_eq!(yard.0, 433_920_000);
+        assert_eq!(yard.2, "rtl_433");
+        let cc2531 = specialized_sdr_mirror_defaults("0451:16ae").expect("cc2531 defaults");
+        assert_eq!(cc2531.0, 2_405_000_000);
+        assert_eq!(cc2531.2, "gqrx_nfm");
+        assert!(specialized_sdr_mirror_defaults("ffff:ffff").is_none());
     }
 
     #[test]
