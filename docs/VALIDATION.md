@@ -2,6 +2,10 @@
 
 This document tracks what WirelessExplorer currently outputs, what was validated on this host, what was not collected during live tests, and which areas still need implementation.
 
+Downstream artifact compatibility checks can be run with:
+
+- `scripts/validate_sdr_artifacts.py --session-dir <session_dir>`
+
 ## Current Output Inventory
 
 When file output is enabled, a session directory is created under the configured output root:
