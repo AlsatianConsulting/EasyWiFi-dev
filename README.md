@@ -110,6 +110,11 @@ This repository contains an MVP implementation with:
     - `<decoder_id>_<hardware_id>`
     - `<decoder_id>__<hardware_id>`
     - `<decoder_id>` (global built-in override)
+- Specialized Tools tab
+  - Detects attached specialized USB tooling (`Yard Stick One`, `CC2531`, `nRF Research Firmware`, `KillerBee FTDI`) via `lsusb`
+  - Shows device-role/results list with double-clickable rows to inspect detailed associated metadata
+  - Displays per-device popular RX decoders/demodulators and tooling readiness (`installed` / `missing`)
+  - Includes one-click install-plan guidance for common passive decoder toolchains
 - Settings via File menu
   - Interface/channel mode settings (multi-adapter, hop/lock)
   - Time display mode setting (Local default, optional Zulu/UTC)

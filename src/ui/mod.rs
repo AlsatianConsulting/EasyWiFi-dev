@@ -75,6 +75,7 @@ const CLIENTS_TAB_INDEX: u32 = 1;
 const BLUETOOTH_TAB_INDEX: u32 = 2;
 const CHANNEL_USAGE_TAB_INDEX: u32 = 3;
 const SDR_TAB_INDEX: u32 = 4;
+const SPECIALIZED_TOOLS_TAB_INDEX: u32 = 5;
 const UI_POLL_INTERVAL_MS: u64 = 120;
 const MAX_CAPTURE_EVENTS_PER_TICK: usize = 1200;
 const MAX_BLUETOOTH_EVENTS_PER_TICK: usize = 200;
@@ -4076,6 +4077,32 @@ struct WifiGeigerUiState {
     last_animation_at: Option<Instant>,
 }
 
+#[derive(Debug, Clone)]
+struct SpecializedToolProfile {
+    usb_id: &'static str,
+    name: &'static str,
+    role: &'static str,
+    spectrum_support: bool,
+    interfaces: &'static str,
+    rx_tooling: &'static [&'static str],
+    decoders: &'static [&'static str],
+}
+
+#[derive(Debug, Clone)]
+struct SpecializedToolDevice {
+    key: String,
+    bus: String,
+    device: String,
+    usb_id: String,
+    usb_description: String,
+    profile_name: String,
+    role: String,
+    spectrum_support: bool,
+    interfaces: String,
+    rx_tooling: Vec<String>,
+    decoders: Vec<String>,
+}
+
 #[derive(Debug, Default)]
 struct SdrUiModel {
     current_freq_hz: u64,
@@ -4195,6 +4222,11 @@ struct UiWidgets {
     status_label: Label,
     gps_status_label: Label,
     runtime_activity_label: Label,
+    specialized_tools_list: ListBox,
+    specialized_tools_detail_label: Label,
+    specialized_tools_decoder_label: Label,
+    specialized_tools_status_label: Label,
+    specialized_tools_devices: Rc<RefCell<Vec<SpecializedToolDevice>>>,
 }
 
 #[derive(Clone)]
@@ -4213,6 +4245,244 @@ struct TablePaginationUi {
     filter_columns: Rc<RefCell<Vec<(String, String, i32)>>>,
     filter_summary_label: Label,
     summary_label: Label,
+}
+
+const SPECIALIZED_TOOL_PROFILES: &[SpecializedToolProfile] = &[
+    SpecializedToolProfile {
+        usb_id: "1d50:605b",
+        name: "Yard Stick One (RfCat CC1111)",
+        role: "Sub-GHz ISM / OOK-FSK monitor",
+        spectrum_support: false,
+        interfaces: "Narrowband packet/rx monitor (no wideband FFT API in-app yet)",
+        rx_tooling: &["rfcat", "rfmon", "urh", "inspectrum"],
+        decoders: &[
+            "OOK/ASK remotes",
+            "FSK telemetry",
+            "TPMS",
+            "weather station sensors",
+            "sub-GHz IoT beacons",
+        ],
+    },
+    SpecializedToolProfile {
+        usb_id: "0451:16ae",
+        name: "CC2531 Zigbee / 802.15.4 Dongle",
+        role: "2.4 GHz 802.15.4 (Zigbee/Thread) sniffer",
+        spectrum_support: false,
+        interfaces: "Channelized 802.15.4 capture",
+        rx_tooling: &[
+            "killerbee",
+            "zbdump",
+            "zbwireshark",
+            "wireshark extcap",
+            "scapy-radio",
+        ],
+        decoders: &[
+            "Zigbee NWK/APS",
+            "Thread/6LoWPAN metadata",
+            "802.15.4 MAC frames",
+            "PAN topology metadata",
+        ],
+    },
+    SpecializedToolProfile {
+        usb_id: "1915:0102",
+        name: "nRF Research Firmware Dongle",
+        role: "BLE sniffer / metadata capture",
+        spectrum_support: false,
+        interfaces: "BLE channel hopping capture (metadata-focused)",
+        rx_tooling: &[
+            "nrf-sniffer",
+            "pyshark/wireshark",
+            "btlejack (passive modes)",
+        ],
+        decoders: &[
+            "BLE advertising PDUs",
+            "BLE link-layer metadata",
+            "GATT discovery metadata",
+        ],
+    },
+    SpecializedToolProfile {
+        usb_id: "0403:6015",
+        name: "Riverloop KillerBee (FT231X)",
+        role: "KillerBee-backed 802.15.4 monitor interface",
+        spectrum_support: false,
+        interfaces: "Serial-backed 802.15.4 control/capture",
+        rx_tooling: &["killerbee", "zbid", "zbdump", "zbwireshark"],
+        decoders: &[
+            "802.15.4 packet decode",
+            "Zigbee endpoint/service metadata",
+            "Thread packet metadata",
+        ],
+    },
+];
+
+fn specialized_profile_for_usb_id(usb_id: &str) -> Option<&'static SpecializedToolProfile> {
+    SPECIALIZED_TOOL_PROFILES
+        .iter()
+        .find(|profile| profile.usb_id.eq_ignore_ascii_case(usb_id))
+}
+
+fn command_available(name: &str) -> bool {
+    std::process::Command::new("sh")
+        .arg("-lc")
+        .arg(format!("command -v {} >/dev/null 2>&1", shell_escape(name)))
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn shell_escape(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+}
+
+fn parse_lsusb_line(line: &str) -> Option<(String, String, String, String)> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("Bus ") {
+        return None;
+    }
+    let mut parts = trimmed.split_whitespace();
+    let _ = parts.next()?;
+    let bus = parts.next()?.to_string();
+    let _ = parts.next()?;
+    let device_token = parts.next()?;
+    let device = device_token.trim_end_matches(':').to_string();
+    let _ = parts.next()?;
+    let usb_id = parts.next()?.to_lowercase();
+    let description = parts.collect::<Vec<_>>().join(" ");
+    Some((bus, device, usb_id, description))
+}
+
+fn detect_specialized_tool_devices() -> Result<Vec<SpecializedToolDevice>> {
+    let output = std::process::Command::new("lsusb")
+        .output()
+        .context("failed to execute lsusb")?;
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "lsusb exited with status {}",
+            output.status
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut devices = Vec::new();
+    for line in stdout.lines() {
+        let Some((bus, device, usb_id, description)) = parse_lsusb_line(line) else {
+            continue;
+        };
+        let Some(profile) = specialized_profile_for_usb_id(&usb_id) else {
+            continue;
+        };
+        let installed = profile
+            .rx_tooling
+            .iter()
+            .map(|tool| {
+                if command_available(tool) {
+                    format!("{tool}: installed")
+                } else {
+                    format!("{tool}: missing")
+                }
+            })
+            .collect::<Vec<_>>();
+        devices.push(SpecializedToolDevice {
+            key: format!("{bus}:{device}:{usb_id}"),
+            bus,
+            device,
+            usb_id,
+            usb_description: description,
+            profile_name: profile.name.to_string(),
+            role: profile.role.to_string(),
+            spectrum_support: profile.spectrum_support,
+            interfaces: profile.interfaces.to_string(),
+            rx_tooling: installed,
+            decoders: profile
+                .decoders
+                .iter()
+                .map(|item| item.to_string())
+                .collect(),
+        });
+    }
+    devices.sort_by(|a, b| a.profile_name.cmp(&b.profile_name));
+    Ok(devices)
+}
+
+fn specialized_device_detail_text(device: &SpecializedToolDevice) -> String {
+    let spectrum = if device.spectrum_support {
+        "available"
+    } else {
+        "limited (channelized / external tooling)"
+    };
+    format!(
+        "Device: {}\nUSB: {} ({})\nBus/Dev: {}/{}\nRole: {}\nSpectrum / Flow Graph: {}\nInterfaces: {}",
+        device.profile_name,
+        device.usb_id,
+        device.usb_description,
+        device.bus,
+        device.device,
+        device.role,
+        spectrum,
+        device.interfaces
+    )
+}
+
+fn refresh_specialized_tools_list(list: &ListBox, devices: &[SpecializedToolDevice]) {
+    clear_listbox(list);
+    for item in devices {
+        let row = ListBoxRow::new();
+        row.set_widget_name(&item.key);
+        attach_row_click_selection(&row, list, None);
+        let line = GtkBox::new(Orientation::Horizontal, 14);
+        line.set_hexpand(true);
+        line.append(&label_cell(item.profile_name.clone(), 33));
+        line.append(&label_cell(item.usb_id.clone(), 11));
+        line.append(&label_cell(item.role.clone(), 28));
+        line.append(&label_cell(
+            if item.spectrum_support {
+                "full".to_string()
+            } else {
+                "limited".to_string()
+            },
+            10,
+        ));
+        row.set_child(Some(&line));
+        list.append(&row);
+    }
+}
+
+fn update_specialized_device_detail(
+    selected_key: Option<&str>,
+    devices: &[SpecializedToolDevice],
+    detail_label: &Label,
+    decoder_label: &Label,
+) {
+    let Some(selected_key) = selected_key else {
+        detail_label.set_text("Select or double-click a specialized device to inspect details.");
+        decoder_label.set_text("Popular decoders/demodulators: none selected");
+        return;
+    };
+    let Some(device) = devices.iter().find(|entry| entry.key == selected_key) else {
+        detail_label.set_text("Selected specialized device is no longer available.");
+        decoder_label.set_text("Popular decoders/demodulators: unavailable");
+        return;
+    };
+    detail_label.set_text(&specialized_device_detail_text(device));
+    let decoders = if device.decoders.is_empty() {
+        "none".to_string()
+    } else {
+        device.decoders.join(", ")
+    };
+    let tooling = if device.rx_tooling.is_empty() {
+        "none".to_string()
+    } else {
+        device.rx_tooling.join(", ")
+    };
+    decoder_label.set_text(&format!(
+        "Popular decoders/demodulators: {decoders}\nTooling status: {tooling}"
+    ));
 }
 
 fn pagination_filter_label_columns(
@@ -8329,6 +8599,98 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_root.set_end_child(Some(&sdr_output_notebook));
     notebook.append_page(&sdr_root, Some(&Label::new(Some("SDR"))));
 
+    let specialized_tools_devices: Rc<RefCell<Vec<SpecializedToolDevice>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let specialized_tools_list = ListBox::new();
+    specialized_tools_list.set_selection_mode(gtk::SelectionMode::Single);
+    attach_listbox_click_selection(&specialized_tools_list);
+    let specialized_tools_scrolled = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .child(&specialized_tools_list)
+        .build();
+
+    let specialized_tools_refresh_btn = Button::with_label("Refresh Devices");
+    let specialized_tools_install_plan_btn = Button::with_label("Show Install Plan");
+    let specialized_tools_status_label =
+        Label::new(Some("Specialized Tools: ready (click Refresh Devices)"));
+    specialized_tools_status_label.set_xalign(0.0);
+    specialized_tools_status_label.set_wrap(true);
+    specialized_tools_status_label.set_selectable(true);
+    let specialized_tools_detail_label = Label::new(Some(
+        "Select or double-click a specialized device to inspect details.",
+    ));
+    specialized_tools_detail_label.set_xalign(0.0);
+    specialized_tools_detail_label.set_wrap(true);
+    specialized_tools_detail_label.set_selectable(true);
+    let specialized_tools_decoder_label =
+        Label::new(Some("Popular decoders/demodulators: none selected"));
+    specialized_tools_decoder_label.set_xalign(0.0);
+    specialized_tools_decoder_label.set_wrap(true);
+    specialized_tools_decoder_label.set_selectable(true);
+
+    let specialized_tools_left = GtkBox::new(Orientation::Vertical, 6);
+    specialized_tools_left.append(&specialized_tools_scrolled);
+
+    let specialized_tools_right = GtkBox::new(Orientation::Vertical, 8);
+    let specialized_tools_action_row = GtkBox::new(Orientation::Horizontal, 6);
+    specialized_tools_action_row.append(&specialized_tools_refresh_btn);
+    specialized_tools_action_row.append(&specialized_tools_install_plan_btn);
+    specialized_tools_right.append(&specialized_tools_action_row);
+    specialized_tools_right.append(&Label::new(Some("Status")));
+    specialized_tools_right.append(&specialized_tools_status_label);
+    specialized_tools_right.append(&Label::new(Some("Device Details")));
+    specialized_tools_right.append(&specialized_tools_detail_label);
+    specialized_tools_right.append(&Label::new(Some("Decoders / Tooling")));
+    specialized_tools_right.append(&specialized_tools_decoder_label);
+
+    let specialized_tools_root = Paned::new(Orientation::Horizontal);
+    specialized_tools_root.set_wide_handle(true);
+    specialized_tools_root.set_position(560);
+    specialized_tools_root.set_resize_start_child(true);
+    specialized_tools_root.set_resize_end_child(true);
+    specialized_tools_root.set_shrink_start_child(false);
+    specialized_tools_root.set_shrink_end_child(false);
+    specialized_tools_root.set_start_child(Some(&specialized_tools_left));
+    specialized_tools_root.set_end_child(Some(&specialized_tools_right));
+    notebook.append_page(
+        &specialized_tools_root,
+        Some(&Label::new(Some("Specialized Tools"))),
+    );
+
+    {
+        let specialized_tools_list = specialized_tools_list.clone();
+        let specialized_tools_status_label = specialized_tools_status_label.clone();
+        let specialized_tools_devices = specialized_tools_devices.clone();
+        let specialized_tools_detail_label = specialized_tools_detail_label.clone();
+        let specialized_tools_decoder_label = specialized_tools_decoder_label.clone();
+        let refresh = Rc::new(move || match detect_specialized_tool_devices() {
+            Ok(devices) => {
+                let count = devices.len();
+                *specialized_tools_devices.borrow_mut() = devices.clone();
+                refresh_specialized_tools_list(&specialized_tools_list, &devices);
+                specialized_tools_status_label.set_text(&format!(
+                    "Specialized Tools: detected {count} supported USB devices"
+                ));
+                update_specialized_device_detail(
+                    None,
+                    &devices,
+                    &specialized_tools_detail_label,
+                    &specialized_tools_decoder_label,
+                );
+            }
+            Err(err) => {
+                specialized_tools_status_label
+                    .set_text(&format!("Specialized Tools refresh failed: {err}"));
+            }
+        });
+        (refresh.as_ref())();
+        let refresh_btn = refresh.clone();
+        specialized_tools_refresh_btn.connect_clicked(move |_| {
+            (refresh_btn.as_ref())();
+        });
+    }
+
     let selected_packet_mix: Rc<RefCell<PacketTypeBreakdown>> =
         Rc::new(RefCell::new(PacketTypeBreakdown::default()));
     {
@@ -8538,6 +8900,47 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 return;
             }
             *bluetooth_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
+        });
+    }
+
+    {
+        let specialized_tools_devices = specialized_tools_devices.clone();
+        let specialized_tools_detail_label = specialized_tools_detail_label.clone();
+        let specialized_tools_decoder_label = specialized_tools_decoder_label.clone();
+        specialized_tools_list.connect_row_selected(move |_, row| {
+            let selected_key = row.map(|entry| entry.widget_name().to_string());
+            update_specialized_device_detail(
+                selected_key.as_deref(),
+                specialized_tools_devices.borrow().as_slice(),
+                &specialized_tools_detail_label,
+                &specialized_tools_decoder_label,
+            );
+        });
+    }
+
+    {
+        let specialized_tools_devices = specialized_tools_devices.clone();
+        let specialized_tools_detail_label = specialized_tools_detail_label.clone();
+        let specialized_tools_decoder_label = specialized_tools_decoder_label.clone();
+        specialized_tools_list.connect_row_activated(move |_, row| {
+            update_specialized_device_detail(
+                Some(row.widget_name().as_str()),
+                specialized_tools_devices.borrow().as_slice(),
+                &specialized_tools_detail_label,
+                &specialized_tools_decoder_label,
+            );
+        });
+    }
+
+    {
+        let state = state.clone();
+        let specialized_tools_status_label = specialized_tools_status_label.clone();
+        specialized_tools_install_plan_btn.connect_clicked(move |_| {
+            let plan = "Install plan (RX only): sudo apt install -y rtl-433 wireshark tshark sox multimon-ng direwolf gnuradio gr-osmosdr && pipx install rfcat killerbee btlejack";
+            specialized_tools_status_label.set_text(plan);
+            state
+                .borrow_mut()
+                .push_status("specialized tools install plan copied to status pane".to_string());
         });
     }
 
@@ -11124,6 +11527,11 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             status_label,
             gps_status_label,
             runtime_activity_label,
+            specialized_tools_list,
+            specialized_tools_detail_label,
+            specialized_tools_decoder_label,
+            specialized_tools_status_label,
+            specialized_tools_devices,
         },
     )
 }
@@ -11234,6 +11642,11 @@ fn bind_poll_loop(
         status_label,
         gps_status_label,
         runtime_activity_label,
+        specialized_tools_list: _specialized_tools_list,
+        specialized_tools_detail_label: _specialized_tools_detail_label,
+        specialized_tools_decoder_label: _specialized_tools_decoder_label,
+        specialized_tools_status_label: _specialized_tools_status_label,
+        specialized_tools_devices: _specialized_tools_devices,
     } = widgets;
     let window = window.clone();
     let last_ap_list_refresh = Rc::new(RefCell::new(None::<Instant>));
@@ -11622,6 +12035,7 @@ fn bind_poll_loop(
         let bluetooth_tab_active = active_tab == BLUETOOTH_TAB_INDEX;
         let channel_tab_active = active_tab == CHANNEL_USAGE_TAB_INDEX;
         let sdr_tab_active = active_tab == SDR_TAB_INDEX;
+        let _specialized_tab_active = active_tab == SPECIALIZED_TOOLS_TAB_INDEX;
 
         let ap_selected_key_now = ap_selected_key.borrow().clone();
         let client_selected_key_now = client_selected_key.borrow().clone();
@@ -21073,6 +21487,25 @@ mod tests {
                 && entry.step_hz > 0
                 && entry.steps_per_sec > 0.0
         }));
+    }
+
+    #[test]
+    fn parse_lsusb_line_extracts_bus_device_id_and_description() {
+        let line = "Bus 003 Device 052: ID 1d50:605b OpenMoko, Inc. RfCat YARD Stick One";
+        let parsed = parse_lsusb_line(line).expect("expected parse");
+        assert_eq!(parsed.0, "003");
+        assert_eq!(parsed.1, "052");
+        assert_eq!(parsed.2, "1d50:605b");
+        assert_eq!(parsed.3, "OpenMoko, Inc. RfCat YARD Stick One");
+    }
+
+    #[test]
+    fn specialized_profile_lookup_matches_known_devices() {
+        let yard = specialized_profile_for_usb_id("1d50:605b").expect("yard profile");
+        assert!(yard.name.contains("Yard Stick One"));
+        let zigbee = specialized_profile_for_usb_id("0451:16ae").expect("cc2531 profile");
+        assert!(zigbee.role.to_lowercase().contains("zigbee"));
+        assert!(specialized_profile_for_usb_id("ffff:ffff").is_none());
     }
 
     #[test]
