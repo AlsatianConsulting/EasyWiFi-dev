@@ -109,6 +109,7 @@ This is the recommended follow-on plan after restoring the repo on the new machi
 68. Validate `Cellular ARFCN Scans` scanner-preset group range/step defaults and runtime apply behavior across GSM/UMTS/LTE uplink/downlink entries.
 69. Validate LTE EARFCN playlist mapping uses correct uplink EARFCN numbering and includes added Band 66 / Band 71 channel sets in both `Uplink Freq` and `Download Freq`.
 70. Validate expanded cellular scanner entry set (UMTS Band 2/5/8 and LTE Band 4/66/71) for expected start/end/step coverage and runtime tuning behavior.
+71. Validate `Export Cellular ARFCN Playlist CSV` artifact schema/content and downstream parser compatibility.
 
 ## Priority 4: requested SDR decoder backlog
 
