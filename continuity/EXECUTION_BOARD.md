@@ -57,7 +57,7 @@ Status legend:
 | ID | Task | Status | Evidence / Notes |
 |---|---|---|---|
 | C1 | Validate SDR export artifacts in downstream tools | in_progress | Added `scripts/validate_sdr_artifacts.py` baseline checker |
-| C2 | Validate Local/Zulu timestamp behavior across artifacts | todo | Pending full artifact sweep |
+| C2 | Validate Local/Zulu timestamp behavior across artifacts | in_progress | Added `--time-mode local|zulu` checks to validator script |
 | C3 | Validate cellular ARFCN CSV artifact schema/content | in_progress | Export action + regression test in place |
 | C4 | Freeze artifact contract version | todo | Set after C1/C2 completion |
 

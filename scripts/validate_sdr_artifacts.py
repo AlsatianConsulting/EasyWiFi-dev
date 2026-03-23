@@ -68,6 +68,67 @@ def expect_json_array(path: Path, required_keys: Iterable[str], errors: list[str
         errors.append(f"JSON {path} first row missing keys: {', '.join(missing)}")
 
 
+def timestamp_matches_mode(value: str, mode: str) -> bool:
+    if mode == "any":
+        return True
+    cleaned = value.strip()
+    if not cleaned:
+        return False
+    looks_zulu = cleaned.endswith("Z") or "UTC" in cleaned
+    if mode == "zulu":
+        return looks_zulu
+    if mode == "local":
+        return not looks_zulu
+    return True
+
+
+def expect_csv_timestamp_mode(path: Path, mode: str, errors: list[str]) -> None:
+    if mode == "any":
+        return
+    expect_file(path, errors)
+    if errors:
+        return
+    try:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            first = next(reader, None)
+    except Exception as exc:  # pragma: no cover - defensive
+        errors.append(f"failed to inspect CSV timestamps {path}: {exc}")
+        return
+    if not first:
+        return
+    ts = (first.get("timestamp") or "").strip()
+    if not timestamp_matches_mode(ts, mode):
+        errors.append(
+            f"CSV {path} timestamp mode mismatch (expected {mode}, got `{ts}`)"
+        )
+
+
+def expect_json_timestamp_mode(path: Path, mode: str, errors: list[str]) -> None:
+    if mode == "any":
+        return
+    data = load_json(path, errors)
+    if data is None:
+        return
+    if isinstance(data, list):
+        if not data:
+            return
+        row = data[0]
+        if not isinstance(row, dict):
+            return
+        ts = str(row.get("timestamp", "")).strip()
+        if ts and not timestamp_matches_mode(ts, mode):
+            errors.append(
+                f"JSON {path} timestamp mode mismatch (expected {mode}, got `{ts}`)"
+            )
+    elif isinstance(data, dict):
+        ts = str(data.get("generated_at", "")).strip()
+        if ts and not timestamp_matches_mode(ts, mode):
+            errors.append(
+                f"JSON {path} generated_at mode mismatch (expected {mode}, got `{ts}`)"
+            )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Validate SDR export artifacts produced by WirelessExplorer."
@@ -77,6 +138,12 @@ def main() -> int:
         required=True,
         type=Path,
         help="Path to a WirelessExplorer session directory",
+    )
+    parser.add_argument(
+        "--time-mode",
+        choices=["any", "local", "zulu"],
+        default="any",
+        help="Expected rendered time mode in artifact timestamps",
     )
     args = parser.parse_args()
 
@@ -117,6 +184,10 @@ def main() -> int:
         ["link", "band", "channel_type", "channel", "frequency_hz", "frequency_mhz"],
         errors,
     )
+    expect_csv_timestamp_mode(csv_dir / "sdr_decode_rows.csv", args.time_mode, errors)
+    expect_csv_timestamp_mode(
+        csv_dir / "sdr_satcom_observations.csv", args.time_mode, errors
+    )
 
     expect_json_array(
         json_dir / "sdr_decode_rows.json",
@@ -138,6 +209,10 @@ def main() -> int:
         ["link", "band", "channel_type", "channel", "frequency_hz", "frequency_mhz"],
         errors,
     )
+    expect_json_timestamp_mode(json_dir / "sdr_decode_rows.json", args.time_mode, errors)
+    expect_json_timestamp_mode(
+        json_dir / "sdr_satcom_observations.json", args.time_mode, errors
+    )
 
     summary_json = load_json(json_dir / "sdr_satcom_summary.json", errors)
     if isinstance(summary_json, dict):
@@ -146,6 +221,9 @@ def main() -> int:
                 errors.append(f"JSON {json_dir / 'sdr_satcom_summary.json'} missing key: {key}")
     elif summary_json is not None:
         errors.append(f"JSON {json_dir / 'sdr_satcom_summary.json'} is not an object")
+    expect_json_timestamp_mode(
+        json_dir / "sdr_satcom_summary.json", args.time_mode, errors
+    )
 
     health_json = load_json(json_dir / "sdr_health_snapshot.json", errors)
     if isinstance(health_json, dict):
@@ -154,6 +232,9 @@ def main() -> int:
                 errors.append(f"JSON {json_dir / 'sdr_health_snapshot.json'} missing key: {key}")
     elif health_json is not None:
         errors.append(f"JSON {json_dir / 'sdr_health_snapshot.json'} is not an object")
+    expect_json_timestamp_mode(
+        json_dir / "sdr_health_snapshot.json", args.time_mode, errors
+    )
 
     if errors:
         print("FAIL: artifact validation failed", file=sys.stderr)
@@ -167,4 +248,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

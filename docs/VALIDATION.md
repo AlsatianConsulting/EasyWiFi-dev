@@ -5,6 +5,9 @@ This document tracks what WirelessExplorer currently outputs, what was validated
 Downstream artifact compatibility checks can be run with:
 
 - `scripts/validate_sdr_artifacts.py --session-dir <session_dir>`
+- optional timestamp mode validation:
+  - `scripts/validate_sdr_artifacts.py --session-dir <session_dir> --time-mode local`
+  - `scripts/validate_sdr_artifacts.py --session-dir <session_dir> --time-mode zulu`
 
 ## Current Output Inventory
 
