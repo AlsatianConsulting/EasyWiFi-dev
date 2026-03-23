@@ -21216,6 +21216,10 @@ mod tests {
         assert!(content.contains("link,band,channel_type,channel,frequency_hz,frequency_mhz"));
         assert!(content.contains("uplink,GSM 850,ARFCN,128,824200000,824.200000"));
         assert!(content.contains("download,LTE Band 2,EARFCN,600,1930000000,1930.000000"));
+        assert!(content.contains("download,LTE Band 66,EARFCN,66436,2110000000,2110.000000"));
+        assert!(content.contains("uplink,LTE Band 66,EARFCN,131972,1710000000,1710.000000"));
+        assert!(content.contains("download,LTE Band 71,EARFCN,68586,617000000,617.000000"));
+        assert!(content.contains("uplink,LTE Band 71,EARFCN,133122,663000000,663.000000"));
         let _ = std::fs::remove_file(path);
     }
 
