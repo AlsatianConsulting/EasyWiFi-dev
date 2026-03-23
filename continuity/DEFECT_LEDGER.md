@@ -24,4 +24,4 @@ Status:
 
 | ID | Severity | Area | Summary | Fix Commit | Resolved Date |
 |---|---|---|---|---|---|
-| 2026-03-23-001 | medium | Cellular ARFCN presets | E-GSM 900 ARFCN playlist order was non-monotonic due to mixed ARFCN ranges; could produce confusing menu/export ordering | pending | 2026-03-23 |
+| 2026-03-23-001 | medium | Cellular ARFCN presets | E-GSM 900 ARFCN playlist order was non-monotonic due to mixed ARFCN ranges; could produce confusing menu/export ordering | `6f3fab4` | 2026-03-23 |
