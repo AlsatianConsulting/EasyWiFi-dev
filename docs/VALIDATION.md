@@ -51,7 +51,7 @@ Current SDR logging can also emit:
 - Bluetooth frequency presets include BLE data channels (`0-36`) in addition to Classic and advertising channels
 - scanner presets include dedicated BLE data-channel and Zigbee 2.4 channel sweep profiles
 - scanner presets include an additional IoT `863-870 MHz ISM` sweep profile
-- scanner presets now include a dedicated `Cellular ARFCN Scans` group with GSM/UMTS/LTE uplink/downlink ranges
+- scanner presets now include a dedicated `Cellular ARFCN Scans` group with expanded GSM/UMTS/LTE uplink/downlink ranges (including UMTS Band 2/5/8 and LTE Band 4/66/71)
 - Bluetooth context menu can apply a BLE data-channel SDR scan profile directly from selected device rows
 - Bluetooth context menu can also apply a Zigbee 2.4 SDR scan profile directly from selected device rows
 - Bluetooth context menu can also apply ISM SDR scan shortcuts for `863-870 MHz` and `902-928 MHz`
