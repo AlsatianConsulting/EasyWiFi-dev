@@ -3520,6 +3520,51 @@ fn export_cellular_arfcn_playlist_csv(path: &PathBuf) -> Result<usize> {
 }
 
 #[derive(serde::Serialize)]
+struct CellularArfcnExportRow {
+    link: String,
+    band: String,
+    channel_type: String,
+    channel: String,
+    frequency_hz: u64,
+    frequency_mhz: f64,
+}
+
+fn export_cellular_arfcn_playlist_json(path: &PathBuf) -> Result<usize> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create cellular ARFCN export dir {}",
+                parent.display()
+            )
+        })?;
+    }
+    let mut rows = Vec::<CellularArfcnExportRow>::new();
+    for (link, uplink) in [("uplink", true), ("download", false)] {
+        for group in cellular_arfcn_frequency_groups(uplink) {
+            for entry in group.entries {
+                let mut tokens = entry.label.split_whitespace();
+                let channel_type = tokens.next().unwrap_or("ARFCN").to_string();
+                let channel = tokens
+                    .next()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| entry.id.rsplit('_').next().unwrap_or_default().to_string());
+                rows.push(CellularArfcnExportRow {
+                    link: link.to_string(),
+                    band: group.label.clone(),
+                    channel_type,
+                    channel,
+                    frequency_hz: entry.freq_hz,
+                    frequency_mhz: entry.freq_hz as f64 / 1_000_000.0,
+                });
+            }
+        }
+    }
+    let count = rows.len();
+    write_json_pretty(path, &rows)?;
+    Ok(count)
+}
+
+#[derive(serde::Serialize)]
 struct SdrBookmarkExportRow {
     label: String,
     frequency_hz: u64,
@@ -5398,7 +5443,7 @@ fn build_menubar(
         Some("app.preset_export_sdr_bookmarks_csv"),
     );
     frequency_menu.append(
-        Some("Export Cellular ARFCN Playlist CSV"),
+        Some("Export Cellular ARFCN Playlist (CSV + JSON)"),
         Some("app.preset_export_cellular_arfcn_csv"),
     );
     frequency_menu.append(
@@ -6195,22 +6240,37 @@ fn build_menubar(
     {
         let state = state.clone();
         presets_export_cellular_arfcn_csv_action.connect_activate(move |_, _| {
-            let export_path = {
+            let (csv_export_path, json_export_path) = {
                 let s = state.borrow();
-                s.exporter
-                    .paths
-                    .session_dir
-                    .join("csv")
-                    .join("cellular_arfcn_playlist.csv")
+                (
+                    s.exporter
+                        .paths
+                        .session_dir
+                        .join("csv")
+                        .join("cellular_arfcn_playlist.csv"),
+                    s.exporter
+                        .paths
+                        .session_dir
+                        .join("json")
+                        .join("cellular_arfcn_playlist.json"),
+                )
             };
             let mut s = state.borrow_mut();
-            match export_cellular_arfcn_playlist_csv(&export_path) {
-                Ok(rows) => s.push_status(format!(
-                    "exported cellular ARFCN playlist ({} rows): {}",
-                    rows,
-                    export_path.display()
+            let csv_result = export_cellular_arfcn_playlist_csv(&csv_export_path);
+            let json_result = export_cellular_arfcn_playlist_json(&json_export_path);
+            match (csv_result, json_result) {
+                (Ok(csv_rows), Ok(json_rows)) => s.push_status(format!(
+                    "exported cellular ARFCN playlist artifacts (csv_rows={} json_rows={}): {}, {}",
+                    csv_rows,
+                    json_rows,
+                    csv_export_path.display(),
+                    json_export_path.display()
                 )),
-                Err(err) => s.push_status(format!("cellular ARFCN export failed: {err}")),
+                (csv, json) => s.push_status(format!(
+                    "cellular ARFCN export incomplete: csv_ok={} json_ok={}",
+                    csv.is_ok(),
+                    json.is_ok()
+                )),
             }
         });
     }
@@ -21220,6 +21280,20 @@ mod tests {
         assert!(content.contains("uplink,LTE Band 66,EARFCN,131972,1710000000,1710.000000"));
         assert!(content.contains("download,LTE Band 71,EARFCN,68586,617000000,617.000000"));
         assert!(content.contains("uplink,LTE Band 71,EARFCN,133122,663000000,663.000000"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn export_cellular_arfcn_playlist_json_writes_rows() {
+        let path = std::env::temp_dir().join(format!("cellular-arfcn-{}.json", Uuid::new_v4()));
+        let rows = export_cellular_arfcn_playlist_json(&path).expect("export json");
+        assert!(rows > 1000);
+        let content = std::fs::read_to_string(&path).expect("read json");
+        assert!(content.contains("\"link\": \"uplink\""));
+        assert!(content.contains("\"band\": \"LTE Band 66\""));
+        assert!(content.contains("\"channel_type\": \"EARFCN\""));
+        assert!(content.contains("\"channel\": \"133122\""));
+        assert!(content.contains("\"frequency_hz\": 663000000"));
         let _ = std::fs::remove_file(path);
     }
 

@@ -72,7 +72,7 @@ Preset/Explorer workflow additions:
 
 - `Presets -> Frequencies` includes FCC explorer actions for scan-profile generation and bookmark imports (file CSV + URL modes)
 - `Presets -> Frequencies -> Cellular -> ARFCN` includes playlist-style `Uplink Freq` and `Download Freq` mappings for GSM ARFCN plus UMTS UARFCN and LTE EARFCN sets, including explicit uplink EARFCN numbering and added LTE Bands 66/71
-- `Presets -> Frequencies` now includes `Export Cellular ARFCN Playlist CSV` with link/band/channel/frequency columns for downstream workflows
+- `Presets -> Frequencies` now includes `Export Cellular ARFCN Playlist (CSV + JSON)` with link/band/channel/frequency fields for downstream workflows
 - FCC explorer filters support area token matching and optional signal/service-type constraints
 - FCC URL workflows use retry/timeout handling for unstable upstream hosts
 - FCC bookmark imports now summarize added vs skipped duplicates and keep bookmark ordering normalized
