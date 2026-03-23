@@ -8,6 +8,9 @@ Downstream artifact compatibility checks can be run with:
 - optional timestamp mode validation:
   - `scripts/validate_sdr_artifacts.py --session-dir <session_dir> --time-mode local`
   - `scripts/validate_sdr_artifacts.py --session-dir <session_dir> --time-mode zulu`
+- full validation sequence helper:
+  - `scripts/run_validation_matrix.sh`
+  - `scripts/run_validation_matrix.sh <session_dir> <any|local|zulu>`
 
 ## Current Output Inventory
 
@@ -60,6 +63,7 @@ Current SDR logging can also emit:
 - scanner presets include dedicated BLE data-channel and Zigbee 2.4 channel sweep profiles
 - scanner presets include an additional IoT `863-870 MHz ISM` sweep profile
 - scanner presets now include a dedicated `Cellular ARFCN Scans` group with expanded GSM/UMTS/LTE uplink/downlink ranges (including UMTS Band 2/5/8 and LTE Band 4/66/71)
+- app UI now includes a `Specialized Tools` tab for attached Yard Stick One / CC2531 / nRF Research Firmware / KillerBee FTDI discovery and per-device decoder-tooling guidance
 - Bluetooth context menu can apply a BLE data-channel SDR scan profile directly from selected device rows
 - Bluetooth context menu can also apply a Zigbee 2.4 SDR scan profile directly from selected device rows
 - Bluetooth context menu can also apply ISM SDR scan shortcuts for `863-870 MHz` and `902-928 MHz`
