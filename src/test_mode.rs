@@ -209,6 +209,7 @@ pub fn print_wifi_test_usage() {
     println!("  easywifi --test-wifi --interface <iface1> --interface <iface2> [options]");
     println!();
     println!("Options:");
+    println!("  --interface coconut     Expands to all detected Hak5 WiFi Coconut radios");
     println!("  --channels <csv>        Channel list, default: 1,6,11");
     println!("  --duration-secs <n>     Per-channel capture duration, default: 6");
     println!("  --ht-mode <mode>        HT mode for channel set, default: HT20");
@@ -1057,12 +1058,22 @@ fn parse_interface_list(value: &str) -> Result<Vec<String>> {
         .split(',')
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| value.to_string())
+        .flat_map(|value| {
+            let token = value.to_ascii_lowercase();
+            if matches!(token.as_str(), "coconut" | "wifi-coconut" | "hak5-coconut") {
+                capture::detect_wifi_coconut_interfaces()
+            } else {
+                vec![value.to_string()]
+            }
+        })
         .collect::<Vec<_>>();
     interfaces.sort();
     interfaces.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
     if interfaces.is_empty() {
-        bail!("no valid interfaces in `{}`", value);
+        bail!(
+            "no valid interfaces in `{}` (if using `coconut`, no Hak5 WiFi Coconut radios were detected)",
+            value
+        );
     }
     Ok(interfaces)
 }
