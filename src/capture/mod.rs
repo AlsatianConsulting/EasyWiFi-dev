@@ -137,18 +137,6 @@ pub fn list_interfaces() -> Result<Vec<InterfaceInfo>> {
     Ok(interfaces)
 }
 
-pub fn detect_wifi_coconut_interfaces() -> Vec<String> {
-    let mut detected = list_interfaces()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|iface| iface.name)
-        .filter(|name| interface_has_wifi_coconut_markers(name))
-        .collect::<Vec<_>>();
-    detected.sort();
-    detected.dedup();
-    detected
-}
-
 fn list_sysfs_wireless_interfaces() -> Vec<String> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir("/sys/class/net") else {
@@ -169,61 +157,6 @@ fn list_sysfs_wireless_interfaces() -> Vec<String> {
     out.sort();
     out.dedup();
     out
-}
-
-fn interface_has_wifi_coconut_markers(interface: &str) -> bool {
-    let Ok(mut path) = fs::canonicalize(format!("/sys/class/net/{interface}/device")) else {
-        return false;
-    };
-
-    for _ in 0..8 {
-        let mut marker_text = String::new();
-        let mut id_vendor: Option<String> = None;
-        let mut id_product: Option<String> = None;
-        for field in ["manufacturer", "product", "model", "idVendor", "idProduct"] {
-            let value = path
-                .join(field)
-                .try_exists()
-                .ok()
-                .filter(|exists| *exists)
-                .and_then(|_| fs::read_to_string(path.join(field)).ok())
-                .unwrap_or_default();
-            let normalized_value = value.trim().to_ascii_lowercase();
-            match field {
-                "idVendor" => id_vendor = Some(normalized_value.clone()),
-                "idProduct" => id_product = Some(normalized_value.clone()),
-                _ => {}
-            }
-            marker_text.push_str(&value);
-            marker_text.push(' ');
-        }
-        if let (Some(vendor), Some(product)) = (id_vendor.as_deref(), id_product.as_deref()) {
-            if is_wifi_coconut_usb_id(vendor, product) {
-                return true;
-            }
-        }
-        if is_wifi_coconut_marker_text(&marker_text) {
-            return true;
-        }
-        let Some(parent) = path.parent() else {
-            break;
-        };
-        path = parent.to_path_buf();
-    }
-
-    false
-}
-
-fn is_wifi_coconut_marker_text(text: &str) -> bool {
-    let normalized = text.to_ascii_lowercase();
-    normalized.contains("hak5")
-        || normalized.contains("wifi coconut")
-        || normalized.contains("coconut")
-}
-
-fn is_wifi_coconut_usb_id(vendor: &str, product: &str) -> bool {
-    // Hak5 WiFi Coconut radios are RT5370 modules (USB 148f:5370).
-    vendor.eq_ignore_ascii_case("148f") && product.eq_ignore_ascii_case("5370")
 }
 
 fn interface_type_via_iw(interface: &str) -> Option<String> {
@@ -2943,32 +2876,5 @@ mod tests {
         assert_eq!(parse_geiger_rssi("\t-70"), Some(-70));
         assert_eq!(parse_geiger_rssi("-58"), Some(-58));
         assert_eq!(parse_geiger_rssi("\t"), None);
-    }
-
-    #[test]
-    fn wifi_coconut_marker_text_matches_common_identifiers() {
-        assert!(is_wifi_coconut_marker_text("Hak5 WiFi Coconut"));
-        assert!(is_wifi_coconut_marker_text("WiFi Coconut"));
-        assert!(is_wifi_coconut_marker_text("hak5"));
-        assert!(is_wifi_coconut_marker_text("COCONUT NANO"));
-    }
-
-    #[test]
-    fn wifi_coconut_marker_text_rejects_unrelated_strings() {
-        assert!(!is_wifi_coconut_marker_text("Intel Wireless"));
-        assert!(!is_wifi_coconut_marker_text("Qualcomm Atheros"));
-        assert!(!is_wifi_coconut_marker_text(""));
-    }
-
-    #[test]
-    fn wifi_coconut_usb_id_matches_known_radio_module() {
-        assert!(is_wifi_coconut_usb_id("148f", "5370"));
-        assert!(is_wifi_coconut_usb_id("148F", "5370"));
-    }
-
-    #[test]
-    fn wifi_coconut_usb_id_rejects_other_ids() {
-        assert!(!is_wifi_coconut_usb_id("0bda", "8187"));
-        assert!(!is_wifi_coconut_usb_id("8086", "a0f0"));
     }
 }

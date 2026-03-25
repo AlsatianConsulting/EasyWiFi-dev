@@ -11859,7 +11859,6 @@ fn bind_poll_loop(
     let last_runtime_activity_second = Cell::new(-1i64);
     let last_interface_status_refresh_second = Cell::new(-1i64);
     let cached_attached_interfaces = RefCell::new(Vec::<capture::InterfaceInfo>::new());
-    let cached_coconut_interfaces = RefCell::new(Vec::<String>::new());
 
     glib::timeout_add_local(Duration::from_millis(UI_POLL_INTERVAL_MS), move || {
         let mut refresh = UiRefreshHint::none();
@@ -12830,7 +12829,6 @@ fn bind_poll_loop(
             if last_interface_status_refresh_second.get() != now_second {
                 *cached_attached_interfaces.borrow_mut() =
                     capture::list_interfaces().unwrap_or_default();
-                *cached_coconut_interfaces.borrow_mut() = capture::detect_wifi_coconut_interfaces();
                 last_interface_status_refresh_second.set(now_second);
             }
             let interface_status_text = {
@@ -12838,7 +12836,6 @@ fn bind_poll_loop(
                 format_interface_status_panel_text(
                     &s,
                     &cached_attached_interfaces.borrow(),
-                    &cached_coconut_interfaces.borrow(),
                     wifi_running,
                 )
             };
@@ -18482,58 +18479,6 @@ struct WifiInterfaceCapability {
     ht_modes: Vec<String>,
 }
 
-const WIFI_COCONUT_AUTO_ID: &str = "__wifi_coconut_auto__";
-
-fn is_wifi_coconut_auto_selection(selection: &str) -> bool {
-    selection == WIFI_COCONUT_AUTO_ID
-}
-
-fn wifi_coconut_auto_capability(
-    capabilities: &[WifiInterfaceCapability],
-) -> Option<WifiInterfaceCapability> {
-    let coconut_interfaces = capture::detect_wifi_coconut_interfaces();
-    if coconut_interfaces.is_empty() {
-        return None;
-    }
-
-    let mut monitor_capable = true;
-    let mut channels = Vec::new();
-    let mut ht_modes = Vec::new();
-
-    for iface in &coconut_interfaces {
-        if let Some(cap) = capabilities.iter().find(|cap| &cap.interface_name == iface) {
-            monitor_capable &= cap.monitor_capable;
-            channels.extend(cap.channels.clone());
-            ht_modes.extend(cap.ht_modes.clone());
-        }
-    }
-
-    channels.sort_by_key(|c| (c.frequency_mhz.unwrap_or(0), c.channel));
-    channels.dedup_by(|a, b| a.channel == b.channel && a.frequency_mhz == b.frequency_mhz);
-    ht_modes.sort();
-    ht_modes.dedup();
-    if channels.is_empty() {
-        channels = [1_u16, 6, 11, 36, 40, 44, 48]
-            .into_iter()
-            .map(|ch| capture::SupportedChannel {
-                channel: ch,
-                frequency_mhz: None,
-            })
-            .collect();
-    }
-    if ht_modes.is_empty() {
-        ht_modes = vec!["HT20".to_string(), "HT40+".to_string(), "HT40-".to_string()];
-    }
-
-    Some(WifiInterfaceCapability {
-        interface_name: WIFI_COCONUT_AUTO_ID.to_string(),
-        if_type: format!("hak5 wifi coconut ({} radios)", coconut_interfaces.len()),
-        monitor_capable,
-        channels,
-        ht_modes,
-    })
-}
-
 fn detect_wifi_interface_capabilities() -> Vec<WifiInterfaceCapability> {
     let interfaces = capture::list_interfaces().unwrap_or_default();
     let mut monitor_capable = Vec::new();
@@ -18580,9 +18525,6 @@ fn detect_wifi_interface_capabilities() -> Vec<WifiInterfaceCapability> {
     }
 
     monitor_capable.extend(fallback);
-    if let Some(coconut_capability) = wifi_coconut_auto_capability(&monitor_capable) {
-        monitor_capable.push(coconut_capability);
-    }
     monitor_capable
 }
 
@@ -18872,16 +18814,11 @@ fn open_interface_settings_dialog_inner(
     {
         let caps = capabilities_rc.borrow();
         for cap in caps.iter() {
-            let label = if is_wifi_coconut_auto_selection(&cap.interface_name) {
-                "Hak5 WiFi Coconut (all radios)".to_string()
-            } else {
-                cap.interface_name.clone()
-            };
             interface_combo.append(
                 Some(&cap.interface_name),
                 &format!(
                     "{} ({}){}",
-                    label,
+                    cap.interface_name,
                     cap.if_type,
                     if cap.monitor_capable {
                         " [monitor-capable]"
@@ -19143,14 +19080,9 @@ fn open_interface_settings_dialog_inner(
                     channels_entry.set_text(&default_channels);
                 }
 
-                let selected_label = if is_wifi_coconut_auto_selection(&cap.interface_name) {
-                    "Hak5 WiFi Coconut (all radios)".to_string()
-                } else {
-                    cap.interface_name.clone()
-                };
                 interface_status.set_text(&format!(
                     "Selected {} | monitor mode: {} | {} channels discovered | modes: {}",
-                    selected_label,
+                    cap.interface_name,
                     if cap.monitor_capable { "yes" } else { "no" },
                     cap.channels.len(),
                     cap.ht_modes.join(", ")
@@ -19638,31 +19570,12 @@ fn open_interface_settings_dialog_inner(
                 },
             };
 
-            let selected_interfaces = if is_wifi_coconut_auto_selection(&iface_name) {
-                let coconut_ifaces = capture::detect_wifi_coconut_interfaces();
-                if coconut_ifaces.is_empty() {
-                    state
-                        .borrow_mut()
-                        .push_status("no Hak5 WiFi Coconut interfaces detected".to_string());
-                    return;
-                }
-                coconut_ifaces
-                    .into_iter()
-                    .map(|name| InterfaceSettings {
-                        interface_name: name,
-                        monitor_interface_name: None,
-                        channel_mode: mode.clone(),
-                        enabled: true,
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                vec![InterfaceSettings {
-                    interface_name: iface_name.clone(),
-                    monitor_interface_name: None,
-                    channel_mode: mode.clone(),
-                    enabled: true,
-                }]
-            };
+            let selected_interfaces = vec![InterfaceSettings {
+                interface_name: iface_name.clone(),
+                monitor_interface_name: None,
+                channel_mode: mode.clone(),
+                enabled: true,
+            }];
 
             {
                 let mut s = state.borrow_mut();
@@ -21212,7 +21125,6 @@ fn format_interface_work_mode(mode: &ChannelSelectionMode) -> String {
 fn format_interface_status_panel_text(
     state: &AppState,
     attached_interfaces: &[capture::InterfaceInfo],
-    coconut_interfaces: &[String],
     wifi_running: bool,
 ) -> String {
     let attached = if attached_interfaces.is_empty() {
@@ -21279,15 +21191,9 @@ fn format_interface_status_panel_text(
             .join("\n")
     };
 
-    let coconut = if coconut_interfaces.is_empty() {
-        "none".to_string()
-    } else {
-        coconut_interfaces.join(", ")
-    };
-
     format!(
-        "Attached: {}\nActive: {}\nCoconut: {}\nWork:\n{}",
-        attached, active, coconut, work
+        "Attached: {}\nActive: {}\nWork:\n{}",
+        attached, active, work
     )
 }
 
