@@ -5129,6 +5129,7 @@ fn build_ui(app: &Application) -> Result<()> {
 
     let root = GtkBox::new(Orientation::Vertical, 8);
     let (notebook, widgets) = build_tabs(&window, state.clone());
+    remove_sdr_tab(&notebook, state.clone());
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
     let content_paned = Paned::new(Orientation::Vertical);
@@ -5792,36 +5793,8 @@ fn build_menubar(
         Some("app.preset_fcc_bookmarks_remove"),
     );
     frequency_menu.append(
-        Some("Export SDR Bookmarks (CSV + JSON)"),
-        Some("app.preset_export_sdr_bookmarks_csv"),
-    );
-    frequency_menu.append(
         Some("Export Cellular ARFCN Playlist (CSV + JSON)"),
         Some("app.preset_export_cellular_arfcn_csv"),
-    );
-    frequency_menu.append(
-        Some("Import SDR Bookmarks CSV"),
-        Some("app.preset_import_sdr_bookmarks_csv"),
-    );
-    frequency_menu.append(
-        Some("Import SDR Bookmarks File (Auto CSV/JSON)"),
-        Some("app.preset_import_sdr_bookmarks_file"),
-    );
-    frequency_menu.append(
-        Some("Import SDR Bookmarks JSON"),
-        Some("app.preset_import_sdr_bookmarks_json"),
-    );
-    frequency_menu.append(
-        Some("Import SDR Bookmarks JSON URL"),
-        Some("app.preset_import_sdr_bookmarks_json_url"),
-    );
-    frequency_menu.append(
-        Some("Import SDR Bookmarks URL (Auto CSV/JSON)"),
-        Some("app.preset_import_sdr_bookmarks_url"),
-    );
-    frequency_menu.append(
-        Some("Import SDR Bookmarks CSV URL"),
-        Some("app.preset_import_sdr_bookmarks_csv_url"),
     );
     presets_root_menu.append_submenu(Some("Frequencies"), &frequency_menu);
 
@@ -7003,6 +6976,35 @@ fn set_scan_control_button_sensitivity(
     let all_running = wifi_running && bluetooth_running;
     start_btn.set_sensitive(!all_running);
     stop_btn.set_sensitive(any_running);
+}
+
+fn remove_sdr_tab(notebook: &Notebook, state: Rc<RefCell<AppState>>) {
+    if notebook.n_pages() <= SDR_TAB_INDEX {
+        return;
+    }
+
+    notebook.remove_page(Some(SDR_TAB_INDEX));
+    let placeholder = GtkBox::new(Orientation::Vertical, 8);
+    placeholder.set_margin_top(16);
+    placeholder.set_margin_bottom(16);
+    placeholder.set_margin_start(16);
+    placeholder.set_margin_end(16);
+    let heading = Label::new(Some("SDR Removed"));
+    heading.add_css_class("heading");
+    heading.set_xalign(0.0);
+    let body = Label::new(Some(
+        "SDR support has been removed from EasyWiFi. This build provides Wi-Fi and Bluetooth only.",
+    ));
+    body.set_wrap(true);
+    body.set_xalign(0.0);
+    placeholder.append(&heading);
+    placeholder.append(&body);
+    let tab_label = Label::new(Some("Removed"));
+    notebook.insert_page(&placeholder, Some(&tab_label), Some(SDR_TAB_INDEX));
+
+    state
+        .borrow_mut()
+        .push_status("SDR support removed from this build".to_string());
 }
 
 fn describe_channel_mode(mode: &ChannelSelectionMode) -> String {
@@ -12786,21 +12788,13 @@ fn bind_poll_loop(
             }
         }
 
-        let (
-            status_text,
-            gps_text,
-            wifi_running,
-            bluetooth_running,
-            sdr_running,
-            scan_transition_in_progress,
-        ) = {
+        let (status_text, gps_text, wifi_running, bluetooth_running, scan_transition_in_progress) = {
             let s = state.borrow();
             (
                 s.status_text(),
                 s.gps_status_text(),
                 s.capture_runtime.is_some(),
                 s.bluetooth_runtime.is_some(),
-                s.sdr_runtime.is_some(),
                 s.scan_start_in_progress || s.scan_stop_in_progress,
             )
         };
@@ -12845,7 +12839,7 @@ fn bind_poll_loop(
         if last_runtime_activity_second.get() != now_second {
             last_runtime_activity_second.set(now_second);
             runtime_activity_label.set_text(&format!(
-                "tick {} [{}] | wifi={} bt={} sdr={}",
+                "tick {} [{}] | wifi={} bt={}",
                 format_display_time_hms(now),
                 if using_zulu_time_display() {
                     "ZULU"
@@ -12854,7 +12848,6 @@ fn bind_poll_loop(
                 },
                 if wifi_running { "on" } else { "off" },
                 if bluetooth_running { "on" } else { "off" },
-                if sdr_running { "on" } else { "off" },
             ));
         }
 
