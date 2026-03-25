@@ -5,7 +5,7 @@ Branch: `main`
 
 ## High-level product state
 
-WirelessExplorer is currently a working Rust/GTK desktop application with three mature areas and one expanding area:
+EasyWiFi is currently a working Rust/GTK desktop application with three mature areas and one expanding area:
 
 1. Wi-Fi passive observation
 2. Bluetooth passive observation and enumeration support
@@ -43,7 +43,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 23. Built-in SDR decoders now support hardware-specific plugin command overrides (`<decoder_id>_<hardware_id>` / `<decoder_id>__<hardware_id>`) for cross-device demod customization.
 24. Wi-Fi frame parsing is now an explicit opt-in setting (default off) with capture-only fallback and UI warnings about higher resource usage when enabled.
 25. Satcom observation pipeline now includes unencrypted payload field parsing metadata (`payload_parse_state`, normalized parsed fields) and a built-in Inmarsat STD-C decoder path (`inmarsat_stdc`) when compatible tools are installed.
-26. Satcom parser supports protocol/decoder denylist filtering via `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST` (comma-separated tokens), yielding `denied_by_policy` parse state without disabling full satcom observation.
+26. Satcom parser supports protocol/decoder denylist filtering via `EASYWIFI_SATCOM_PARSE_DENYLIST` (comma-separated tokens), yielding `denied_by_policy` parse state without disabling full satcom observation.
 27. Satcom parser denylist is now configurable from SDR controls and persisted in settings (env fallback remains supported).
 28. SDR pane now shows decoder telemetry counters (`decoded_rows`, `map_points`, `satcom_rows`, `stderr_lines`) for runtime health monitoring.
 29. SDR satcom export now emits JSON + CSV + parsed-only JSON + denied-only JSON artifacts in one action.
@@ -183,7 +183,7 @@ The app is not finished. The Wi-Fi/Bluetooth path is materially ahead of the SDR
 
 1. `scripts/setup_ubuntu.sh` exists.
 2. `scripts/build_deb.sh` exists.
-3. `packaging/wirelessexplorer.desktop` exists.
+3. `packaging/easywifi.desktop` exists.
 4. `.deb` packaging path exists.
 
 ## What is partial

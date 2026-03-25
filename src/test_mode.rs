@@ -202,11 +202,11 @@ fn parse_wifi_test_args(args: &[String]) -> Result<WifiTestOptions> {
 }
 
 pub fn print_wifi_test_usage() {
-    println!("WirelessExplorer non-interactive Wi-Fi test mode");
+    println!("EasyWiFi non-interactive Wi-Fi test mode");
     println!();
     println!("Usage:");
-    println!("  wirelessexplorer --test-wifi --interface <iface>[,<iface>...] [options]");
-    println!("  wirelessexplorer --test-wifi --interface <iface1> --interface <iface2> [options]");
+    println!("  easywifi --test-wifi --interface <iface>[,<iface>...] [options]");
+    println!("  easywifi --test-wifi --interface <iface1> --interface <iface2> [options]");
     println!();
     println!("Options:");
     println!("  --channels <csv>        Channel list, default: 1,6,11");
@@ -217,10 +217,10 @@ pub fn print_wifi_test_usage() {
 }
 
 pub fn print_bluetooth_test_usage() {
-    println!("WirelessExplorer non-interactive Bluetooth test mode");
+    println!("EasyWiFi non-interactive Bluetooth test mode");
     println!();
     println!("Usage:");
-    println!("  wirelessexplorer --test-bluetooth [options]");
+    println!("  easywifi --test-bluetooth [options]");
     println!();
     println!("Options:");
     println!("  --controller <mac|all>  BlueZ controller MAC or all controllers");
@@ -233,10 +233,10 @@ pub fn print_bluetooth_test_usage() {
 }
 
 pub fn print_sdr_test_usage() {
-    println!("WirelessExplorer non-interactive SDR test mode");
+    println!("EasyWiFi non-interactive SDR test mode");
     println!();
     println!("Usage:");
-    println!("  wirelessexplorer --test-sdr [options]");
+    println!("  easywifi --test-sdr [options]");
     println!();
     println!("Options:");
     println!("  --hardware <name>       rtl_sdr|hackrf|bladerf|ettus_b210");
@@ -261,7 +261,7 @@ pub fn print_sdr_test_usage() {
     );
     println!();
     println!("Environment:");
-    println!("  WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST=token1,token2");
+    println!("  EASYWIFI_SATCOM_PARSE_DENYLIST=token1,token2");
     println!("      Optional satcom payload-parser denylist by protocol/decoder token");
 }
 
@@ -623,7 +623,7 @@ fn normalize_decoder_token(value: &str) -> String {
 }
 
 fn run_bluetooth_test(options: &BluetoothTestOptions) -> Result<()> {
-    println!("WirelessExplorer Bluetooth test mode");
+    println!("EasyWiFi Bluetooth test mode");
     println!("source: {}", bluetooth_source_label(options.source));
     println!(
         "controller: {}",
@@ -833,7 +833,7 @@ struct SdrTestSummary {
 }
 
 fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
-    println!("WirelessExplorer SDR test mode");
+    println!("EasyWiFi SDR test mode");
     println!("hardware: {}", options.hardware.label());
     println!("center frequency: {} Hz", options.center_freq_hz);
     println!("sample rate: {} Hz", options.sample_rate_hz);
@@ -1080,13 +1080,13 @@ fn parse_wifi_packet_header_mode(value: &str) -> Result<WifiPacketHeaderMode> {
 
 fn run_wifi_test(options: &WifiTestOptions) -> Result<()> {
     if !capture::running_as_root() {
-        bail!("--test-wifi must be run as root, for example: `sudo -E ./target/debug/wirelessexplorer --test-wifi ...`");
+        bail!("--test-wifi must be run as root, for example: `sudo -E ./target/debug/easywifi --test-wifi ...`");
     }
     if !command_exists("tshark") {
         bail!("tshark is required for --test-wifi");
     }
 
-    println!("WirelessExplorer Wi-Fi test mode");
+    println!("EasyWiFi Wi-Fi test mode");
     println!("privilege mode: {}", capture::privilege_mode_summary());
     println!("interfaces: {}", options.interfaces.join(", "));
     println!(
@@ -1375,8 +1375,6 @@ fn build_tshark_command(
         .arg("wlan.ssid")
         .arg("-e")
         .arg("radiotap.dbm_antsignal")
-        .arg("-e")
-        .arg("ppi.dbm_antsignal")
         .arg("-e")
         .arg("wlan_radio.channel")
         .arg("-e")

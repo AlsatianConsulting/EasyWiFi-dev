@@ -6,8 +6,8 @@ This project evolved substantially after the initial request. This file captures
 
 1. Stack selected: `Rust + GTK`.
 2. Project name history:
-   - initial working name: `SimpleSTG`
-   - final requested name: `WirelessExplorer`
+   - initial working name: `EasyWiFi`
+   - final requested name: `EasyWiFi`
 3. SQLite was accepted as the primary efficient storage path.
 4. OUI source:
    - bundled local database

@@ -7,9 +7,9 @@
    - starts GTK UI or noninteractive test modes
 2. `src/lib.rs`
    - crate module exports
-3. `src/bin/wirelessexplorer-helper.rs`
+3. `src/bin/easywifi-helper.rs`
    - privileged helper used for monitor mode, channel operations, and delegated tshark execution
-4. `src/bin/simplestg-helper.rs`
+4. `src/bin/easywifi-helper.rs`
    - legacy helper binary retained from the older project name
 
 ## Major modules
@@ -60,7 +60,7 @@
    - `.deb` package build
 3. `scripts/run.sh`
    - convenience run script
-4. `packaging/wirelessexplorer.desktop`
+4. `packaging/easywifi.desktop`
    - desktop entry for packaged installation
 
 ## Current structural note

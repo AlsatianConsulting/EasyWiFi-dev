@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=EasyWiFi
+Comment=Passive Wi-Fi and Bluetooth analysis
+Exec=easywifi
+Icon=network-wireless
+Terminal=false
+Categories=Network;Security;Monitor;
+Keywords=wifi;bluetooth;wireless;pcap;monitor;

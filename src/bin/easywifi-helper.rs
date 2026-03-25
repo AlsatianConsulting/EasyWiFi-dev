@@ -4,8 +4,8 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
-use wirelessexplorer::capture;
-use wirelessexplorer::privilege::{HelperRequest, HelperResponse};
+use easywifi::capture;
+use easywifi::privilege::{HelperRequest, HelperResponse};
 
 fn main() -> Result<()> {
     install_parent_death_signal()?;
@@ -16,7 +16,7 @@ fn main() -> Result<()> {
         Some("hop") => run_channel_hop(args.collect()),
         Some("tshark") => run_passthrough("tshark", args.collect()),
         _ => {
-            eprintln!("usage: wirelessexplorer-helper daemon | hop <iface> <dwell_ms> <ht_mode> <channel...> | tshark <args...>");
+            eprintln!("usage: easywifi-helper daemon | hop <iface> <dwell_ms> <ht_mode> <channel...> | tshark <args...>");
             std::process::exit(2);
         }
     }
@@ -53,9 +53,8 @@ fn configure_parent_death_signal(command: &mut Command) {
 }
 
 fn start_origin_parent_watchdog() {
-    let Some(parent_pid) = std::env::var("WIRELESSEXPLORER_PARENT_PID")
+    let Some(parent_pid) = std::env::var("EASYWIFI_PARENT_PID")
         .ok()
-        .or_else(|| std::env::var("SIMPLESTG_PARENT_PID").ok())
         .and_then(|value| value.parse::<u32>().ok())
     else {
         return;
@@ -153,7 +152,7 @@ fn run_passthrough(program: &str, args: Vec<String>) -> Result<()> {
 fn run_channel_hop(args: Vec<String>) -> Result<()> {
     if args.len() < 4 {
         anyhow::bail!(
-            "usage: wirelessexplorer-helper hop <iface> <dwell_ms> <ht_mode> <channel...>"
+            "usage: easywifi-helper hop <iface> <dwell_ms> <ht_mode> <channel...>"
         );
     }
 

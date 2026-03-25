@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=WirelessExplorer
+Name=EasyWiFi
 Comment=Passive Wi-Fi and Bluetooth analysis
-Exec=wirelessexplorer
+Exec=easywifi
 Icon=network-wireless
 Terminal=false
 Categories=Network;Security;Monitor;

@@ -96,7 +96,7 @@ impl OuiDatabase {
         let response = ureq::get(url)
             .set(
                 "User-Agent",
-                "WirelessExplorer/0.1 (+offline OUI cache update)",
+                "EasyWiFi/0.1 (+offline OUI cache update)",
             )
             .set("Accept", "text/csv,text/plain;q=0.9,*/*;q=0.8")
             .call()
@@ -223,18 +223,18 @@ fn parse_manuf_prefix(token: &str) -> (String, usize) {
 
 fn persistent_oui_path() -> Option<PathBuf> {
     let base = dirs::data_local_dir()?;
-    Some(base.join("WirelessExplorer").join("oui.csv"))
+    Some(base.join("EasyWiFi").join("oui.csv"))
 }
 
 fn default_candidate_paths() -> Vec<PathBuf> {
     let mut candidates = vec![
         default_oui_source_path(),
-        PathBuf::from("/usr/share/wirelessexplorer/manuf"),
-        PathBuf::from("/usr/share/wirelessexplorer/oui.csv"),
-        PathBuf::from("/usr/share/wirelessexplorer/assets/oui.csv"),
-        PathBuf::from("/usr/share/WirelessExplorer/manuf"),
-        PathBuf::from("/usr/share/WirelessExplorer/oui.csv"),
-        PathBuf::from("/usr/share/WirelessExplorer/assets/oui.csv"),
+        PathBuf::from("/usr/share/easywifi/manuf"),
+        PathBuf::from("/usr/share/easywifi/oui.csv"),
+        PathBuf::from("/usr/share/easywifi/assets/oui.csv"),
+        PathBuf::from("/usr/share/EasyWiFi/manuf"),
+        PathBuf::from("/usr/share/EasyWiFi/oui.csv"),
+        PathBuf::from("/usr/share/EasyWiFi/assets/oui.csv"),
         PathBuf::from("/usr/share/wireshark/manuf"),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/oui.csv"),
     ];
@@ -242,8 +242,8 @@ fn default_candidate_paths() -> Vec<PathBuf> {
         candidates.push(cache);
     }
     if let Some(base) = dirs::data_local_dir() {
-        candidates.push(base.join("SimpleSTG").join("oui.csv"));
-        candidates.push(base.join("simplestg").join("oui.csv"));
+        candidates.push(base.join("EasyWiFi").join("oui.csv"));
+        candidates.push(base.join("easywifi").join("oui.csv"));
     }
     candidates
 }

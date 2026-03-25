@@ -92,7 +92,7 @@ impl Default for SdrConfig {
             fft_bins: DEFAULT_FFT_BINS,
             refresh_ms: DEFAULT_REFRESH_MS,
             log_output_enabled: false,
-            log_output_dir: std::env::temp_dir().join("wirelessexplorer-sdr-logs"),
+            log_output_dir: std::env::temp_dir().join("easywifi-sdr-logs"),
             plugin_config_path: default_plugin_config_path(),
             scan_range_enabled: false,
             scan_start_hz: 118_000_000,
@@ -483,7 +483,7 @@ impl RunningDecoder {
 
 pub fn default_plugin_config_path() -> Option<PathBuf> {
     let mut candidates = Vec::new();
-    if let Ok(path) = std::env::var("WIRELESSEXPLORER_SDR_PLUGINS") {
+    if let Ok(path) = std::env::var("EASYWIFI_SDR_PLUGINS") {
         let path = path.trim();
         if !path.is_empty() {
             candidates.push(PathBuf::from(path));
@@ -494,12 +494,12 @@ pub fn default_plugin_config_path() -> Option<PathBuf> {
     candidates.push(root.join("sdr-plugins.json"));
 
     if let Some(config_dir) = dirs::config_dir() {
-        candidates.push(config_dir.join("WirelessExplorer/sdr-plugins.json"));
+        candidates.push(config_dir.join("EasyWiFi/sdr-plugins.json"));
         candidates.push(config_dir.join("gqrx/sdr-plugins.json"));
     }
 
     candidates.push(PathBuf::from(
-        "/usr/share/wirelessexplorer/sdr-plugins.json",
+        "/usr/share/easywifi/sdr-plugins.json",
     ));
     candidates.into_iter().find(|path| path.exists())
 }
@@ -1132,7 +1132,7 @@ fn generate_live_spectrum_frame(
     squelch_dbm: f32,
 ) -> Result<SdrSpectrumFrame> {
     let output_path = std::env::temp_dir().join(format!(
-        "wirelessexplorer_spectrum_{}_{}_{}.iq",
+        "easywifi_spectrum_{}_{}_{}.iq",
         std::process::id(),
         center_freq_hz,
         Utc::now().timestamp_millis()
@@ -2345,7 +2345,7 @@ fn satcom_parse_blocked_by_denylist(row: &SdrDecodeRow, denylist: &[String]) -> 
 }
 
 fn satcom_parse_denylist_from_env() -> Vec<String> {
-    let parsed = std::env::var("WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST")
+    let parsed = std::env::var("EASYWIFI_SATCOM_PARSE_DENYLIST")
         .ok()
         .map(|raw| {
             raw.split(',')
@@ -3593,7 +3593,7 @@ fn command_output_reason(output: &std::process::Output) -> String {
 }
 
 fn source_install_timeout_secs() -> u64 {
-    std::env::var("WIRELESSEXPLORER_SDR_SOURCE_TIMEOUT_SECS")
+    std::env::var("EASYWIFI_SDR_SOURCE_TIMEOUT_SECS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .map(|secs| secs.clamp(30, 3600))
@@ -3957,7 +3957,7 @@ mod tests {
     #[test]
     fn append_map_point_log_writes_message_and_raw_fields() {
         let path =
-            std::env::temp_dir().join(format!("wirelessexplorer-map-log-{}.jsonl", Uuid::new_v4()));
+            std::env::temp_dir().join(format!("easywifi-map-log-{}.jsonl", Uuid::new_v4()));
         let file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -3990,7 +3990,7 @@ mod tests {
     #[test]
     fn append_satcom_observation_log_writes_message_and_raw_fields() {
         let path = std::env::temp_dir().join(format!(
-            "wirelessexplorer-satcom-log-{}.jsonl",
+            "easywifi-satcom-log-{}.jsonl",
             Uuid::new_v4()
         ));
         let file = OpenOptions::new()

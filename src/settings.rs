@@ -11,12 +11,12 @@ pub fn default_oui_source_path() -> PathBuf {
         candidates.push(base.join("oui.csv"));
     }
     candidates.extend([
-        PathBuf::from("/usr/share/wirelessexplorer/manuf"),
-        PathBuf::from("/usr/share/wirelessexplorer/oui.csv"),
-        PathBuf::from("/usr/share/wirelessexplorer/assets/oui.csv"),
-        PathBuf::from("/usr/share/WirelessExplorer/manuf"),
-        PathBuf::from("/usr/share/WirelessExplorer/oui.csv"),
-        PathBuf::from("/usr/share/WirelessExplorer/assets/oui.csv"),
+        PathBuf::from("/usr/share/easywifi/manuf"),
+        PathBuf::from("/usr/share/easywifi/oui.csv"),
+        PathBuf::from("/usr/share/easywifi/assets/oui.csv"),
+        PathBuf::from("/usr/share/EasyWiFi/manuf"),
+        PathBuf::from("/usr/share/EasyWiFi/oui.csv"),
+        PathBuf::from("/usr/share/EasyWiFi/assets/oui.csv"),
         PathBuf::from("/usr/share/wireshark/manuf"),
         root.join("manuf"),
         root.join("oui.csv"),
@@ -146,21 +146,21 @@ pub fn default_bluetooth_descriptors_expanded() -> bool {
 pub fn settings_file_path() -> PathBuf {
     app_config_root()
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
-        .join("wirelessexplorer-settings.json")
+        .join("easywifi-settings.json")
 }
 
 pub fn legacy_settings_file_path() -> PathBuf {
     app_config_root()
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
-        .join("simplestg-settings.json")
+        .join("easywifi-settings-legacy.json")
 }
 
 fn app_data_root() -> Option<PathBuf> {
-    dirs::data_local_dir().map(|path| path.join("WirelessExplorer"))
+    dirs::data_local_dir().map(|path| path.join("EasyWiFi"))
 }
 
 fn app_config_root() -> Option<PathBuf> {
-    dirs::config_dir().map(|path| path.join("WirelessExplorer"))
+    dirs::config_dir().map(|path| path.join("EasyWiFi"))
 }
 
 fn first_existing_or(candidates: Vec<PathBuf>, fallback: PathBuf) -> PathBuf {

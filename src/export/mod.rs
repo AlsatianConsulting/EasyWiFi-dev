@@ -1716,7 +1716,7 @@ mod tests {
 
     fn test_export_manager() -> ExportManager {
         let root = std::env::temp_dir().join(format!(
-            "wirelessexplorer-export-tests-{}",
+            "easywifi-export-tests-{}",
             uuid::Uuid::new_v4()
         ));
         let manager = ExportManager::new(&root, "unit-test").expect("create export manager");

@@ -56,7 +56,7 @@ pub fn run() -> Result<()> {
     }
 
     let app = Application::builder()
-        .application_id("com.wirelessexplorer.app")
+        .application_id("com.easywifi.app")
         .build();
 
     app.connect_activate(|app| {
@@ -353,7 +353,7 @@ impl AppState {
         let exporter = ExportManager::new(&output_root, &session_id)?;
         exporter.create_initial_outputs()?;
 
-        let sqlite_path = exporter.paths.session_dir.join("wirelessexplorer.sqlite");
+        let sqlite_path = exporter.paths.session_dir.join("easywifi.sqlite");
         let storage = StorageEngine::open(&sqlite_path)?;
 
         let session_meta = SessionMetadata {
@@ -707,16 +707,8 @@ impl AppState {
         self.enqueue_persistence(PersistenceCommand::AddGpsTrackPoint(point));
     }
 
-    fn start_sdr_runtime(&mut self, config: SdrConfig) {
-        if let Some(runtime) = self.sdr_runtime.take() {
-            runtime.stop();
-        }
-        self.push_status(format!(
-            "starting SDR runtime ({}) at {} Hz",
-            config.hardware.label(),
-            config.center_freq_hz
-        ));
-        self.sdr_runtime = Some(sdr::start_runtime(config, self.sdr_sender.clone()));
+    fn start_sdr_runtime(&mut self, _config: SdrConfig) {
+        self.push_status("SDR runtime is disabled in EasyWiFi".to_string());
     }
 
     fn stop_sdr_runtime(&mut self) {
@@ -1102,7 +1094,7 @@ impl AppState {
 }
 
 fn prepare_live_capture_path(session_id: &str) -> Result<PathBuf> {
-    let live_root = std::env::temp_dir().join("wirelessexplorer-live");
+    let live_root = std::env::temp_dir().join("easywifi-live");
     fs::create_dir_all(&live_root)
         .with_context(|| format!("failed to create {}", live_root.display()))?;
     #[cfg(target_family = "unix")]
@@ -1168,7 +1160,7 @@ fn start_persistence_worker(storage: StorageEngine) -> Sender<PersistenceCommand
 fn internal_runtime_output_root() -> PathBuf {
     let base = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
     let uid = unsafe { libc::geteuid() };
-    base.join(format!("wirelessexplorer-runtime-uid{}", uid))
+    base.join(format!("easywifi-runtime-uid{}", uid))
 }
 
 fn normalize_rssi_fraction(rssi_dbm: i32) -> f64 {
@@ -2760,7 +2752,7 @@ fn fetch_csv_from_url(url: &str) -> Result<PathBuf> {
     fetch_text_from_url(
         url,
         "downloaded CSV is empty",
-        "wirelessexplorer-fcc",
+        "easywifi-fcc",
         "csv",
         "FCC CSV",
     )
@@ -2770,7 +2762,7 @@ fn fetch_json_from_url(url: &str) -> Result<PathBuf> {
     fetch_text_from_url(
         url,
         "downloaded JSON is empty",
-        "wirelessexplorer-bookmarks",
+        "easywifi-bookmarks",
         "json",
         "bookmark JSON",
     )
@@ -2781,7 +2773,7 @@ fn fetch_bookmark_data_from_url(url: &str) -> Result<PathBuf> {
     fetch_text_from_url(
         url,
         "downloaded bookmark data is empty",
-        "wirelessexplorer-bookmarks",
+        "easywifi-bookmarks",
         extension,
         "bookmark data",
     )
@@ -3347,8 +3339,8 @@ fn rebuild_sdr_preset_combo(
 fn sdr_preset_exchange_path() -> PathBuf {
     settings_file_path()
         .parent()
-        .map(|p| p.join("wirelessexplorer-sdr-presets.json"))
-        .unwrap_or_else(|| PathBuf::from("wirelessexplorer-sdr-presets.json"))
+        .map(|p| p.join("easywifi-sdr-presets.json"))
+        .unwrap_or_else(|| PathBuf::from("easywifi-sdr-presets.json"))
 }
 
 fn valid_sdr_operator_preset(preset: &SdrOperatorPresetSetting) -> bool {
@@ -4881,7 +4873,7 @@ fn table_filter_columns(
 fn build_ui(app: &Application) -> Result<()> {
     let window = ApplicationWindow::builder()
         .application(app)
-        .title("WirelessExplorer")
+        .title("EasyWiFi")
         .default_width(DEFAULT_WINDOW_WIDTH)
         .default_height(DEFAULT_WINDOW_HEIGHT)
         .build();
@@ -4965,7 +4957,7 @@ fn build_ui(app: &Application) -> Result<()> {
     let exporter = ExportManager::new(&runtime_output_dir, &session_id)?;
     exporter.create_initial_outputs()?;
 
-    let sqlite_path = exporter.paths.session_dir.join("wirelessexplorer.sqlite");
+    let sqlite_path = exporter.paths.session_dir.join("easywifi.sqlite");
     let storage = StorageEngine::open(&sqlite_path)?;
     let persistence_sender = start_persistence_worker(storage.clone());
     let existing_gps_track = storage.load_gps_track().unwrap_or_default();
@@ -5109,6 +5101,11 @@ fn build_ui(app: &Application) -> Result<()> {
     global_gps_status_label.set_wrap(true);
     global_gps_status_label.set_selectable(true);
 
+    let global_interface_status_label = Label::new(Some("interface status initializing"));
+    global_interface_status_label.set_xalign(0.0);
+    global_interface_status_label.set_wrap(true);
+    global_interface_status_label.set_selectable(true);
+
     let global_status_box = GtkBox::new(Orientation::Vertical, 4);
     global_status_box.set_margin_top(6);
     global_status_box.set_margin_bottom(8);
@@ -5118,6 +5115,8 @@ fn build_ui(app: &Application) -> Result<()> {
     global_status_box.append(&global_status_label);
     global_status_box.append(&Label::new(Some("GPS Status")));
     global_status_box.append(&global_gps_status_label);
+    global_status_box.append(&Label::new(Some("Interface Status")));
+    global_status_box.append(&global_interface_status_label);
 
     let global_status_scrolled = ScrolledWindow::builder()
         .hexpand(true)
@@ -5201,18 +5200,19 @@ fn build_ui(app: &Application) -> Result<()> {
         capture_stop_btn,
         global_status_label,
         global_gps_status_label,
+        global_interface_status_label,
         notebook.clone(),
         &window,
     );
 
-    if std::env::var_os("WIRELESSEXPLORER_AUTOSTART").is_some()
-        || std::env::var_os("SIMPLESTG_AUTOSTART").is_some()
+    if std::env::var_os("EASYWIFI_AUTOSTART").is_some()
+        || std::env::var_os("EASYWIFI_AUTOSTART").is_some()
     {
         state.borrow_mut().start_scanning();
     }
 
-    if let Some(value) = std::env::var_os("WIRELESSEXPLORER_AUTOSTOP_AFTER_SECS")
-        .or_else(|| std::env::var_os("SIMPLESTG_AUTOSTOP_AFTER_SECS"))
+    if let Some(value) = std::env::var_os("EASYWIFI_AUTOSTOP_AFTER_SECS")
+        .or_else(|| std::env::var_os("EASYWIFI_AUTOSTOP_AFTER_SECS"))
     {
         if let Ok(delay_secs) = value.to_string_lossy().parse::<u32>() {
             let state_for_autostop = state.clone();
@@ -7361,12 +7361,12 @@ fn format_wifi_start_failure_text(interface: &str, error_text: &str) -> String {
     let helper_hint = capture::helper_binary_hint();
     if capture::running_as_root() {
         format!(
-            "WirelessExplorer could not prepare {} for Wi-Fi capture.\n\n{}\n\nWi-Fi capture was not started.\n\nWirelessExplorer is already running as root, so no additional privilege prompt was used. Verify the interface name, driver support, and that `ip`/`iw` succeeded under this root session.",
+            "EasyWiFi could not prepare {} for Wi-Fi capture.\n\n{}\n\nWi-Fi capture was not started.\n\nEasyWiFi is already running as root, so no additional privilege prompt was used. Verify the interface name, driver support, and that `ip`/`iw` succeeded under this root session.",
             interface, error_text
         )
     } else {
         format!(
-            "WirelessExplorer could not prepare {} for Wi-Fi capture.\n\n{}\n\nWi-Fi capture was not started.\n\nRun the GUI as your normal user. One of these privilege paths must work:\n1. `pkexec` with a working polkit agent\n2. passwordless `sudo -n` for `{}`\n3. helper capabilities:\n   sudo setcap cap_net_admin,cap_net_raw=eip {}",
+            "EasyWiFi could not prepare {} for Wi-Fi capture.\n\n{}\n\nWi-Fi capture was not started.\n\nRun the GUI as your normal user. One of these privilege paths must work:\n1. `pkexec` with a working polkit agent\n2. passwordless `sudo -n` for `{}`\n3. helper capabilities:\n   sudo setcap cap_net_admin,cap_net_raw=eip {}",
             interface, error_text, helper_hint, helper_hint
         )
     }
@@ -7434,9 +7434,9 @@ fn open_privilege_failure_dialog(window: &ApplicationWindow, message: &str) {
     let wrapper = GtkBox::new(Orientation::Vertical, 8);
 
     let intro = Label::new(Some(if capture::running_as_root() {
-        "WirelessExplorer could not start Wi-Fi capture because a root-level Wi-Fi command failed."
+        "EasyWiFi could not start Wi-Fi capture because a root-level Wi-Fi command failed."
     } else {
-        "WirelessExplorer could not start Wi-Fi capture because privilege escalation failed."
+        "EasyWiFi could not start Wi-Fi capture because privilege escalation failed."
     }));
     intro.set_xalign(0.0);
     intro.set_wrap(true);
@@ -8366,7 +8366,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         if !settings_value.trim().is_empty() {
             settings_value
         } else {
-            std::env::var("WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST")
+            std::env::var("EASYWIFI_SATCOM_PARSE_DENYLIST")
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
@@ -8676,7 +8676,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_root.set_shrink_end_child(false);
     sdr_root.set_start_child(Some(&sdr_top));
     sdr_root.set_end_child(Some(&sdr_output_notebook));
-    notebook.append_page(&sdr_root, Some(&Label::new(Some("SDR"))));
+    sdr_root.set_visible(false);
 
     let specialized_tools_devices: Rc<RefCell<Vec<SpecializedToolDevice>>> =
         Rc::new(RefCell::new(Vec::new()));
@@ -8742,10 +8742,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     specialized_tools_root.set_shrink_end_child(false);
     specialized_tools_root.set_start_child(Some(&specialized_tools_left));
     specialized_tools_root.set_end_child(Some(&specialized_tools_right));
-    notebook.append_page(
-        &specialized_tools_root,
-        Some(&Label::new(Some("Specialized Tools"))),
-    );
+    specialized_tools_root.set_visible(false);
 
     {
         let specialized_tools_list = specialized_tools_list.clone();
@@ -11723,6 +11720,7 @@ fn bind_poll_loop(
     capture_stop_btn: Button,
     global_status_label: Label,
     global_gps_status_label: Label,
+    global_interface_status_label: Label,
     notebook: Notebook,
     window: &ApplicationWindow,
 ) {
@@ -11859,6 +11857,9 @@ fn bind_poll_loop(
         "Aircraft Correlation: no correlated targets".to_string(),
     )));
     let last_runtime_activity_second = Cell::new(-1i64);
+    let last_interface_status_refresh_second = Cell::new(-1i64);
+    let cached_attached_interfaces = RefCell::new(Vec::<capture::InterfaceInfo>::new());
+    let cached_coconut_interfaces = RefCell::new(Vec::<String>::new());
 
     glib::timeout_add_local(Duration::from_millis(UI_POLL_INTERVAL_MS), move || {
         let mut refresh = UiRefreshHint::none();
@@ -12823,6 +12824,27 @@ fn bind_poll_loop(
 
         let now = Utc::now();
         let now_second = now.timestamp();
+        let should_refresh_interface_snapshot =
+            last_interface_status_refresh_second.get() != now_second || refresh.status;
+        if should_refresh_interface_snapshot {
+            if last_interface_status_refresh_second.get() != now_second {
+                *cached_attached_interfaces.borrow_mut() =
+                    capture::list_interfaces().unwrap_or_default();
+                *cached_coconut_interfaces.borrow_mut() = capture::detect_wifi_coconut_interfaces();
+                last_interface_status_refresh_second.set(now_second);
+            }
+            let interface_status_text = {
+                let s = state.borrow();
+                format_interface_status_panel_text(
+                    &s,
+                    &cached_attached_interfaces.borrow(),
+                    &cached_coconut_interfaces.borrow(),
+                    wifi_running,
+                )
+            };
+            global_interface_status_label.set_text(&interface_status_text);
+        }
+
         if last_runtime_activity_second.get() != now_second {
             last_runtime_activity_second.set(now_second);
             runtime_activity_label.set_text(&format!(
@@ -17312,11 +17334,6 @@ fn attach_bluetooth_context_menu(
     let enumerate_btn = Button::with_label("Connect & Enumerate");
     let disconnect_btn = Button::with_label("Disconnect");
     box_.append(&locate_btn);
-    box_.append(&scan_ble_btn);
-    box_.append(&scan_zigbee_btn);
-    box_.append(&scan_thread_btn);
-    box_.append(&scan_ism_863_btn);
-    box_.append(&scan_ism_902_btn);
     box_.append(&enumerate_btn);
     box_.append(&disconnect_btn);
     popover.set_child(Some(&box_));
@@ -18465,6 +18482,58 @@ struct WifiInterfaceCapability {
     ht_modes: Vec<String>,
 }
 
+const WIFI_COCONUT_AUTO_ID: &str = "__wifi_coconut_auto__";
+
+fn is_wifi_coconut_auto_selection(selection: &str) -> bool {
+    selection == WIFI_COCONUT_AUTO_ID
+}
+
+fn wifi_coconut_auto_capability(
+    capabilities: &[WifiInterfaceCapability],
+) -> Option<WifiInterfaceCapability> {
+    let coconut_interfaces = capture::detect_wifi_coconut_interfaces();
+    if coconut_interfaces.is_empty() {
+        return None;
+    }
+
+    let mut monitor_capable = true;
+    let mut channels = Vec::new();
+    let mut ht_modes = Vec::new();
+
+    for iface in &coconut_interfaces {
+        if let Some(cap) = capabilities.iter().find(|cap| &cap.interface_name == iface) {
+            monitor_capable &= cap.monitor_capable;
+            channels.extend(cap.channels.clone());
+            ht_modes.extend(cap.ht_modes.clone());
+        }
+    }
+
+    channels.sort_by_key(|c| (c.frequency_mhz.unwrap_or(0), c.channel));
+    channels.dedup_by(|a, b| a.channel == b.channel && a.frequency_mhz == b.frequency_mhz);
+    ht_modes.sort();
+    ht_modes.dedup();
+    if channels.is_empty() {
+        channels = [1_u16, 6, 11, 36, 40, 44, 48]
+            .into_iter()
+            .map(|ch| capture::SupportedChannel {
+                channel: ch,
+                frequency_mhz: None,
+            })
+            .collect();
+    }
+    if ht_modes.is_empty() {
+        ht_modes = vec!["HT20".to_string(), "HT40+".to_string(), "HT40-".to_string()];
+    }
+
+    Some(WifiInterfaceCapability {
+        interface_name: WIFI_COCONUT_AUTO_ID.to_string(),
+        if_type: format!("hak5 wifi coconut ({} radios)", coconut_interfaces.len()),
+        monitor_capable,
+        channels,
+        ht_modes,
+    })
+}
+
 fn detect_wifi_interface_capabilities() -> Vec<WifiInterfaceCapability> {
     let interfaces = capture::list_interfaces().unwrap_or_default();
     let mut monitor_capable = Vec::new();
@@ -18511,6 +18580,9 @@ fn detect_wifi_interface_capabilities() -> Vec<WifiInterfaceCapability> {
     }
 
     monitor_capable.extend(fallback);
+    if let Some(coconut_capability) = wifi_coconut_auto_capability(&monitor_capable) {
+        monitor_capable.push(coconut_capability);
+    }
     monitor_capable
 }
 
@@ -18693,7 +18765,7 @@ fn open_interface_settings_dialog_for_start(
 
 fn apply_interface_selection(
     state: Rc<RefCell<AppState>>,
-    iface_name: String,
+    interfaces: Vec<InterfaceSettings>,
     mode: ChannelSelectionMode,
     wifi_packet_header_mode: WifiPacketHeaderMode,
     enable_wifi_frame_parsing: bool,
@@ -18708,12 +18780,18 @@ fn apply_interface_selection(
     stop_btn: Option<Button>,
 ) {
     let mut s = state.borrow_mut();
-    s.settings.interfaces = vec![InterfaceSettings {
-        interface_name: iface_name,
-        monitor_interface_name: None,
-        channel_mode: mode,
-        enabled: true,
-    }];
+    if interfaces.is_empty() {
+        s.push_status("no Wi-Fi interfaces selected".to_string());
+        return;
+    }
+    s.settings.interfaces = interfaces
+        .into_iter()
+        .map(|mut iface| {
+            iface.channel_mode = mode.clone();
+            iface.enabled = true;
+            iface
+        })
+        .collect();
     s.settings.bluetooth_enabled = bluetooth_enabled;
     s.settings.bluetooth_scan_source = bluetooth_scan_source;
     s.settings.bluetooth_controller = bluetooth_controller;
@@ -18794,11 +18872,16 @@ fn open_interface_settings_dialog_inner(
     {
         let caps = capabilities_rc.borrow();
         for cap in caps.iter() {
+            let label = if is_wifi_coconut_auto_selection(&cap.interface_name) {
+                "Hak5 WiFi Coconut (all radios)".to_string()
+            } else {
+                cap.interface_name.clone()
+            };
             interface_combo.append(
                 Some(&cap.interface_name),
                 &format!(
                     "{} ({}){}",
-                    cap.interface_name,
+                    label,
                     cap.if_type,
                     if cap.monitor_capable {
                         " [monitor-capable]"
@@ -19060,9 +19143,14 @@ fn open_interface_settings_dialog_inner(
                     channels_entry.set_text(&default_channels);
                 }
 
+                let selected_label = if is_wifi_coconut_auto_selection(&cap.interface_name) {
+                    "Hak5 WiFi Coconut (all radios)".to_string()
+                } else {
+                    cap.interface_name.clone()
+                };
                 interface_status.set_text(&format!(
                     "Selected {} | monitor mode: {} | {} channels discovered | modes: {}",
-                    cap.interface_name,
+                    selected_label,
                     if cap.monitor_capable { "yes" } else { "no" },
                     cap.channels.len(),
                     cap.ht_modes.join(", ")
@@ -19550,6 +19638,32 @@ fn open_interface_settings_dialog_inner(
                 },
             };
 
+            let selected_interfaces = if is_wifi_coconut_auto_selection(&iface_name) {
+                let coconut_ifaces = capture::detect_wifi_coconut_interfaces();
+                if coconut_ifaces.is_empty() {
+                    state
+                        .borrow_mut()
+                        .push_status("no Hak5 WiFi Coconut interfaces detected".to_string());
+                    return;
+                }
+                coconut_ifaces
+                    .into_iter()
+                    .map(|name| InterfaceSettings {
+                        interface_name: name,
+                        monitor_interface_name: None,
+                        channel_mode: mode.clone(),
+                        enabled: true,
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                vec![InterfaceSettings {
+                    interface_name: iface_name.clone(),
+                    monitor_interface_name: None,
+                    channel_mode: mode.clone(),
+                    enabled: true,
+                }]
+            };
+
             {
                 let mut s = state.borrow_mut();
                 if dropped_requested_channels {
@@ -19558,13 +19672,18 @@ fn open_interface_settings_dialog_inner(
                             .to_string(),
                     );
                 }
-                s.push_status(format!("preparing scan setup on {}", iface_name));
+                let summary = selected_interfaces
+                    .iter()
+                    .map(|iface| iface.interface_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                s.push_status(format!("preparing scan setup on {}", summary));
             }
 
             settings_window.close();
             apply_interface_selection(
                 state.clone(),
-                iface_name,
+                selected_interfaces,
                 mode,
                 wifi_packet_header_mode,
                 enable_wifi_frame_parsing,
@@ -21069,6 +21188,109 @@ fn active_interface_name_for_settings(iface: &InterfaceSettings) -> String {
         .unwrap_or_else(|| iface.interface_name.clone())
 }
 
+fn format_interface_work_mode(mode: &ChannelSelectionMode) -> String {
+    match mode {
+        ChannelSelectionMode::HopAll { channels, dwell_ms } => {
+            format!("hop specific ({} ch @ {}ms)", channels.len(), dwell_ms)
+        }
+        ChannelSelectionMode::HopBand {
+            band,
+            channels,
+            dwell_ms,
+        } => format!(
+            "hop {} ({} ch @ {}ms)",
+            band.label(),
+            channels.len(),
+            dwell_ms
+        ),
+        ChannelSelectionMode::Locked { channel, ht_mode } => {
+            format!("locked ch {} ({})", channel, ht_mode)
+        }
+    }
+}
+
+fn format_interface_status_panel_text(
+    state: &AppState,
+    attached_interfaces: &[capture::InterfaceInfo],
+    coconut_interfaces: &[String],
+    wifi_running: bool,
+) -> String {
+    let attached = if attached_interfaces.is_empty() {
+        "none".to_string()
+    } else {
+        attached_interfaces
+            .iter()
+            .map(|iface| format!("{} ({})", iface.name, iface.if_type))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let attached_names = attached_interfaces
+        .iter()
+        .map(|iface| iface.name.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+
+    let configured_enabled = state
+        .settings
+        .interfaces
+        .iter()
+        .filter(|iface| iface.enabled)
+        .collect::<Vec<_>>();
+
+    let active = if configured_enabled.is_empty() {
+        "none".to_string()
+    } else {
+        configured_enabled
+            .iter()
+            .map(|iface| active_interface_name_for_settings(iface))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let work = if configured_enabled.is_empty() {
+        "none".to_string()
+    } else {
+        configured_enabled
+            .iter()
+            .map(|iface| {
+                let configured_name = iface.interface_name.clone();
+                let active_name = active_interface_name_for_settings(iface);
+                let attached_active = attached_names.contains(&active_name.to_ascii_lowercase());
+                let activity = if wifi_running {
+                    if attached_active {
+                        "capturing"
+                    } else {
+                        "not attached"
+                    }
+                } else if attached_active {
+                    "ready"
+                } else {
+                    "not attached"
+                };
+                format!(
+                    "{} -> {} | {} | {}",
+                    configured_name,
+                    active_name,
+                    format_interface_work_mode(&iface.channel_mode),
+                    activity
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let coconut = if coconut_interfaces.is_empty() {
+        "none".to_string()
+    } else {
+        coconut_interfaces.join(", ")
+    };
+
+    format!(
+        "Attached: {}\nActive: {}\nCoconut: {}\nWork:\n{}",
+        attached, active, coconut, work
+    )
+}
+
 fn interface_matches_name(iface: &InterfaceSettings, name: &str) -> bool {
     iface.interface_name.eq_ignore_ascii_case(name)
         || iface
@@ -21360,7 +21582,7 @@ mod tests {
         let path = sdr_preset_exchange_path();
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
-            Some("wirelessexplorer-sdr-presets.json")
+            Some("easywifi-sdr-presets.json")
         );
     }
 
@@ -22719,7 +22941,7 @@ mod tests {
     fn runtime_output_root_uses_effective_uid_namespace() {
         let root = internal_runtime_output_root();
         let uid = unsafe { libc::geteuid() };
-        let marker = format!("wirelessexplorer-runtime-uid{}", uid);
+        let marker = format!("easywifi-runtime-uid{}", uid);
         assert!(
             root.to_string_lossy().contains(&marker),
             "expected runtime output root to include `{}` but got `{}`",

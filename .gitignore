@@ -15,8 +15,8 @@ output/
 /*.png
 /*.bt
 /*.log
-/simplestg-settings.json
-/simplestg-settings.json.bak-*
+/easywifi-settings.json
+/easywifi-settings.json.bak-*
 /continuity/transfer/*.bundle
 /continuity/transfer/*.tar.gz
 /continuity/transfer/SHA256SUMS

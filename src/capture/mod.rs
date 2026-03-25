@@ -137,6 +137,18 @@ pub fn list_interfaces() -> Result<Vec<InterfaceInfo>> {
     Ok(interfaces)
 }
 
+pub fn detect_wifi_coconut_interfaces() -> Vec<String> {
+    let mut detected = list_interfaces()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|iface| iface.name)
+        .filter(|name| interface_has_wifi_coconut_markers(name))
+        .collect::<Vec<_>>();
+    detected.sort();
+    detected.dedup();
+    detected
+}
+
 fn list_sysfs_wireless_interfaces() -> Vec<String> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir("/sys/class/net") else {
@@ -157,6 +169,43 @@ fn list_sysfs_wireless_interfaces() -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+fn interface_has_wifi_coconut_markers(interface: &str) -> bool {
+    let Ok(mut path) = fs::canonicalize(format!("/sys/class/net/{interface}/device")) else {
+        return false;
+    };
+
+    for _ in 0..8 {
+        let mut marker_text = String::new();
+        for field in ["manufacturer", "product", "model", "idVendor", "idProduct"] {
+            let value = path
+                .join(field)
+                .try_exists()
+                .ok()
+                .filter(|exists| *exists)
+                .and_then(|_| fs::read_to_string(path.join(field)).ok())
+                .unwrap_or_default();
+            marker_text.push_str(&value);
+            marker_text.push(' ');
+        }
+        if is_wifi_coconut_marker_text(&marker_text) {
+            return true;
+        }
+        let Some(parent) = path.parent() else {
+            break;
+        };
+        path = parent.to_path_buf();
+    }
+
+    false
+}
+
+fn is_wifi_coconut_marker_text(text: &str) -> bool {
+    let normalized = text.to_ascii_lowercase();
+    normalized.contains("hak5")
+        || normalized.contains("wifi coconut")
+        || normalized.contains("coconut")
 }
 
 fn interface_type_via_iw(interface: &str) -> Option<String> {
@@ -201,11 +250,11 @@ struct PrivilegedPassthroughProcess {
 
 fn helper_binary_path() -> Result<PathBuf> {
     let current = std::env::current_exe().context("failed to resolve current executable path")?;
-    let primary = current.with_file_name("wirelessexplorer-helper");
+    let primary = current.with_file_name("easywifi-helper");
     if primary.exists() {
         return Ok(primary);
     }
-    let legacy = current.with_file_name("simplestg-helper");
+    let legacy = current.with_file_name("easywifi-helper");
     if legacy.exists() {
         return Ok(legacy);
     }
@@ -302,10 +351,10 @@ fn spawn_privileged_helper() -> Result<PrivilegedHelperClient> {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .env(
-                "WIRELESSEXPLORER_PARENT_PID",
+                "EASYWIFI_PARENT_PID",
                 std::process::id().to_string(),
             )
-            .env("SIMPLESTG_PARENT_PID", std::process::id().to_string());
+            .env("EASYWIFI_PARENT_PID", std::process::id().to_string());
         configure_parent_death_signal(&mut command);
         match command.spawn() {
             Ok(mut child) => {
@@ -372,7 +421,7 @@ fn spawn_privileged_helper() -> Result<PrivilegedHelperClient> {
     );
     if is_effective_root() {
         message.push(
-            "WirelessExplorer is already running as root. Direct helper startup still failed."
+            "EasyWiFi is already running as root. Direct helper startup still failed."
                 .to_string(),
         );
         message.push(format!(
@@ -384,7 +433,7 @@ fn spawn_privileged_helper() -> Result<PrivilegedHelperClient> {
             "required: keep the GUI unprivileged and make one privilege path work:".to_string(),
         );
         message.push("1. `pkexec` with a working polkit agent".to_string());
-        message.push("2. passwordless `sudo -n` for `wirelessexplorer-helper`".to_string());
+        message.push("2. passwordless `sudo -n` for `easywifi-helper`".to_string());
         message.push(format!(
             "3. capabilities on the helper: `sudo setcap cap_net_admin,cap_net_raw=eip {}`",
             helper.display()
@@ -463,10 +512,10 @@ fn spawn_privileged_helper_command(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env(
-                "WIRELESSEXPLORER_PARENT_PID",
+                "EASYWIFI_PARENT_PID",
                 std::process::id().to_string(),
             )
-            .env("SIMPLESTG_PARENT_PID", std::process::id().to_string());
+            .env("EASYWIFI_PARENT_PID", std::process::id().to_string());
         configure_parent_death_signal(&mut command);
         match command.spawn() {
             Ok(child) => {
@@ -496,7 +545,7 @@ fn spawn_privileged_helper_command(
     );
     if is_effective_root() {
         message.push(
-            "WirelessExplorer is already running as root. Direct helper launch still failed."
+            "EasyWiFi is already running as root. Direct helper launch still failed."
                 .to_string(),
         );
         message.push(format!(
@@ -506,7 +555,7 @@ fn spawn_privileged_helper_command(
     } else {
         message.push(requirements_title.to_string());
         message.push("1. `pkexec` with a working polkit agent".to_string());
-        message.push("2. passwordless `sudo -n` for `wirelessexplorer-helper`".to_string());
+        message.push("2. passwordless `sudo -n` for `easywifi-helper`".to_string());
         message.push(format!(
             "3. capabilities on the helper: `sudo setcap cap_net_admin,cap_net_raw=eip {}`",
             helper.display()
@@ -648,7 +697,7 @@ fn format_prior_launch_attempts(attempts: &[String]) -> String {
 pub fn helper_binary_hint() -> String {
     helper_binary_path()
         .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "wirelessexplorer-helper".to_string())
+        .unwrap_or_else(|_| "easywifi-helper".to_string())
 }
 
 pub fn list_supported_channels(interface: &str) -> Result<Vec<u16>> {
@@ -2884,5 +2933,20 @@ mod tests {
         assert_eq!(parse_geiger_rssi("\t-70"), Some(-70));
         assert_eq!(parse_geiger_rssi("-58"), Some(-58));
         assert_eq!(parse_geiger_rssi("\t"), None);
+    }
+
+    #[test]
+    fn wifi_coconut_marker_text_matches_common_identifiers() {
+        assert!(is_wifi_coconut_marker_text("Hak5 WiFi Coconut"));
+        assert!(is_wifi_coconut_marker_text("WiFi Coconut"));
+        assert!(is_wifi_coconut_marker_text("hak5"));
+        assert!(is_wifi_coconut_marker_text("COCONUT NANO"));
+    }
+
+    #[test]
+    fn wifi_coconut_marker_text_rejects_unrelated_strings() {
+        assert!(!is_wifi_coconut_marker_text("Intel Wireless"));
+        assert!(!is_wifi_coconut_marker_text("Qualcomm Atheros"));
+        assert!(!is_wifi_coconut_marker_text(""));
     }
 }

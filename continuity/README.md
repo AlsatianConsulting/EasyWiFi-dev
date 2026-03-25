@@ -1,4 +1,4 @@
-# WirelessExplorer Continuity Bundle
+# EasyWiFi Continuity Bundle
 
 This folder is the handoff package for moving development to a new Ubuntu system.
 
@@ -35,11 +35,11 @@ This folder is the handoff package for moving development to a new Ubuntu system
 
 ## Fastest restore path on a new machine
 
-1. Copy `continuity/transfer/WirelessExplorer.bundle` and this `continuity/` folder to the new box.
+1. Copy `continuity/transfer/EasyWiFi.bundle` and this `continuity/` folder to the new box.
 2. Clone from the bundle:
-   - `git clone WirelessExplorer.bundle WirelessExplorer`
+   - `git clone EasyWiFi.bundle EasyWiFi`
 3. Enter the repo:
-   - `cd WirelessExplorer`
+   - `cd EasyWiFi`
 4. Run bootstrap:
    - `bash continuity/bootstrap_ubuntu.sh`
 5. Validate:
@@ -47,15 +47,15 @@ This folder is the handoff package for moving development to a new Ubuntu system
    - `cargo build -q`
 6. Run:
    - `cargo run`
-   - or `sudo -n ./target/debug/wirelessexplorer`
+   - or `sudo -n ./target/debug/easywifi`
 
 ## Project identity
 
-- Current project name: `WirelessExplorer`
-- Previous project name during development: `SimpleSTG`
-- Primary binary: `wirelessexplorer`
-- Privileged helper binary: `wirelessexplorer-helper`
-- Legacy helper still present for compatibility: `src/bin/simplestg-helper.rs`
+- Current project name: `EasyWiFi`
+- Previous project name during development: `EasyWiFi`
+- Primary binary: `easywifi`
+- Privileged helper binary: `easywifi-helper`
+- Legacy helper still present for compatibility: `src/bin/easywifi-helper.rs`
 
 ## Important baseline constraints
 

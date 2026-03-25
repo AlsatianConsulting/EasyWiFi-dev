@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-PACKAGE_NAME="wirelessexplorer"
+PACKAGE_NAME="easywifi"
 PACKAGE_VERSION="${VERSION_OVERRIDE:-$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)}"
 if [[ -z "${PACKAGE_VERSION}" ]]; then
     echo "failed to determine package version from Cargo.toml" >&2
@@ -17,7 +17,7 @@ STAGE_DIR="$BUILD_ROOT/${PACKAGE_NAME}_${PACKAGE_VERSION}_${DEB_ARCH}"
 OUTPUT_DEB="$ROOT_DIR/dist/${PACKAGE_NAME}_${PACKAGE_VERSION}_${DEB_ARCH}.deb"
 
 echo "[1/5] Building release binaries"
-cargo build --release --bin wirelessexplorer --bin wirelessexplorer-helper
+cargo build --release --bin easywifi --bin easywifi-helper
 
 echo "[2/5] Preparing package tree"
 rm -rf "$BUILD_ROOT"
@@ -28,9 +28,9 @@ mkdir -p \
     "$STAGE_DIR/usr/share/doc/${PACKAGE_NAME}" \
     "$STAGE_DIR/usr/share/${PACKAGE_NAME}/assets"
 
-install -m755 "target/release/wirelessexplorer" "$STAGE_DIR/usr/bin/wirelessexplorer"
-install -m755 "target/release/wirelessexplorer-helper" "$STAGE_DIR/usr/bin/wirelessexplorer-helper"
-install -m644 "packaging/wirelessexplorer.desktop" "$STAGE_DIR/usr/share/applications/wirelessexplorer.desktop"
+install -m755 "target/release/easywifi" "$STAGE_DIR/usr/bin/easywifi"
+install -m755 "target/release/easywifi-helper" "$STAGE_DIR/usr/bin/easywifi-helper"
+install -m644 "packaging/easywifi.desktop" "$STAGE_DIR/usr/share/applications/easywifi.desktop"
 install -m644 "README.md" "$STAGE_DIR/usr/share/doc/${PACKAGE_NAME}/README.md"
 
 for file in assets/bt_company_ids.csv assets/bt_service_uuids.csv assets/oui.csv; do
@@ -57,11 +57,11 @@ Version: ${PACKAGE_VERSION}
 Section: net
 Priority: optional
 Architecture: ${DEB_ARCH}
-Maintainer: WirelessExplorer Maintainers <noreply@wirelessexplorer.local>
+Maintainer: EasyWiFi Maintainers <noreply@easywifi.local>
 Depends: libc6 (>= 2.34), libgtk-4-1, libglib2.0-0, libgdk-pixbuf-2.0-0, libpango-1.0-0, libgraphene-1.0-0, libcairo2, libbluetooth3, bluez, iw, tshark
 Recommends: gpsd, gpsd-clients, ubertooth
 Description: Passive Wi-Fi/Bluetooth observer and mapper
- WirelessExplorer is a passive Linux RF observability application for
+ EasyWiFi is a passive Linux RF observability application for
  monitor-mode Wi-Fi and Bluetooth/BLE collection, analysis, and export.
 EOF
 
@@ -69,7 +69,7 @@ cat >"$STAGE_DIR/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
 if command -v setcap >/dev/null 2>&1; then
-    setcap cap_net_admin,cap_net_raw=eip /usr/bin/wirelessexplorer-helper || true
+    setcap cap_net_admin,cap_net_raw=eip /usr/bin/easywifi-helper || true
 fi
 exit 0
 EOF

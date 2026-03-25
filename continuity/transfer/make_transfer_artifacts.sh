@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT_DIR="$ROOT_DIR/continuity/transfer"
-BUNDLE_PATH="$OUT_DIR/WirelessExplorer.bundle"
-TARBALL_PATH="$OUT_DIR/WirelessExplorer-working-tree.tar.gz"
+BUNDLE_PATH="$OUT_DIR/EasyWiFi.bundle"
+TARBALL_PATH="$OUT_DIR/EasyWiFi-working-tree.tar.gz"
 SHA_PATH="$OUT_DIR/SHA256SUMS"
 
 mkdir -p "$OUT_DIR"

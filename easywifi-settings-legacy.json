@@ -1,0 +1,559 @@
+{
+  "show_status_bar": false,
+  "show_detail_pane": true,
+  "show_device_pane": true,
+  "default_rows_per_page": 50,
+  "geoip_city_db_path": "/home/user/EasyWiFi/GeoLite2-City.mmdb",
+  "oui_source_path": "/home/user/EasyWiFi/manuf",
+  "output_to_files": false,
+  "output_root": "/home/user/EasyWiFi/output",
+  "interfaces": [
+    {
+      "interface_name": "wlx1cbfcef8e928",
+      "monitor_interface_name": null,
+      "channel_mode": {
+        "HopAll": {
+          "channels": [
+            1,
+            6,
+            11
+          ],
+          "dwell_ms": 200
+        }
+      },
+      "enabled": true
+    }
+  ],
+  "bluetooth_enabled": true,
+  "bluetooth_controller": "D0:C6:37:4D:3E:05",
+  "bluetooth_scan_timeout_secs": 4,
+  "bluetooth_scan_pause_ms": 500,
+  "gps": "Disabled",
+  "ap_table_layout": {
+    "columns": [
+      {
+        "id": "watchlist_entry",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "ssid",
+        "visible": true,
+        "width_chars": 16
+      },
+      {
+        "id": "bssid",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "oui",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "channel",
+        "visible": true,
+        "width_chars": 10
+      },
+      {
+        "id": "encryption",
+        "visible": true,
+        "width_chars": 16
+      },
+      {
+        "id": "rssi",
+        "visible": true,
+        "width_chars": 10
+      },
+      {
+        "id": "wps",
+        "visible": true,
+        "width_chars": 10
+      },
+      {
+        "id": "clients",
+        "visible": true,
+        "width_chars": 10
+      },
+      {
+        "id": "first_seen",
+        "visible": true,
+        "width_chars": 12
+      },
+      {
+        "id": "last_seen",
+        "visible": true,
+        "width_chars": 12
+      },
+      {
+        "id": "handshakes",
+        "visible": true,
+        "width_chars": 12
+      },
+      {
+        "id": "band",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "frequency",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "country",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "full_encryption",
+        "visible": false,
+        "width_chars": 28
+      },
+      {
+        "id": "hidden_ssid",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "uptime",
+        "visible": false,
+        "width_chars": 16
+      },
+      {
+        "id": "observation_count",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "avg_rssi",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "min_rssi",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "max_rssi",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "packet_total",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "notes",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "first_location",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "last_location",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "strongest_location",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "band",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "channel",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "frequency",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "uplink_bytes",
+        "visible": false,
+        "width_chars": 14
+      },
+      {
+        "id": "downlink_bytes",
+        "visible": false,
+        "width_chars": 14
+      },
+      {
+        "id": "retry_count",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "retry_rate",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "power_save",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "eapol_frames",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "pmkid_count",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "ipv4_addresses",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "ipv6_addresses",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "dhcp_hostnames",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "dns_names",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "remote_endpoints",
+        "visible": false,
+        "width_chars": 28
+      }
+    ]
+  },
+  "client_table_layout": {
+    "columns": [
+      {
+        "id": "watchlist_entry",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "mac",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "oui",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "associated_ap",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "rssi",
+        "visible": true,
+        "width_chars": 10
+      },
+      {
+        "id": "wps",
+        "visible": true,
+        "width_chars": 10
+      },
+      {
+        "id": "probes",
+        "visible": true,
+        "width_chars": 28
+      },
+      {
+        "id": "first_heard",
+        "visible": true,
+        "width_chars": 12
+      },
+      {
+        "id": "last_heard",
+        "visible": true,
+        "width_chars": 12
+      },
+      {
+        "id": "data_transferred",
+        "visible": false,
+        "width_chars": 18
+      },
+      {
+        "id": "probe_count",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "seen_ap_count",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "handshake_network_count",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "observation_count",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "avg_rssi",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "min_rssi",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "max_rssi",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "seen_aps",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "handshake_networks",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "first_location",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "last_location",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "strongest_location",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "associated_ssid",
+        "visible": true,
+        "width_chars": 18
+      }
+    ]
+  },
+  "assoc_client_table_layout": {
+    "columns": [
+      {
+        "id": "mac",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "oui",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "data_transferred",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "rssi",
+        "visible": true,
+        "width_chars": 10
+      },
+      {
+        "id": "first_heard",
+        "visible": true,
+        "width_chars": 12
+      },
+      {
+        "id": "last_heard",
+        "visible": true,
+        "width_chars": 12
+      },
+      {
+        "id": "wps",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "probe_count",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "seen_ap_count",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "handshake_network_count",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "status",
+        "visible": false,
+        "width_chars": 12
+      },
+      {
+        "id": "current_ap",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "current_ssid",
+        "visible": true,
+        "width_chars": 18
+      }
+    ]
+  },
+  "bluetooth_table_layout": {
+    "columns": [
+      {
+        "id": "watchlist_entry",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "transport",
+        "visible": true,
+        "width_chars": 8
+      },
+      {
+        "id": "mac",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "oui",
+        "visible": true,
+        "width_chars": 18
+      },
+      {
+        "id": "type",
+        "visible": true,
+        "width_chars": 16
+      },
+      {
+        "id": "first_seen",
+        "visible": true,
+        "width_chars": 12
+      },
+      {
+        "id": "last_seen",
+        "visible": true,
+        "width_chars": 12
+      },
+      {
+        "id": "rssi",
+        "visible": false,
+        "width_chars": 10
+      },
+      {
+        "id": "advertised_name",
+        "visible": false,
+        "width_chars": 22
+      },
+      {
+        "id": "alias",
+        "visible": false,
+        "width_chars": 20
+      },
+      {
+        "id": "address_type",
+        "visible": false,
+        "width_chars": 14
+      },
+      {
+        "id": "class_of_device",
+        "visible": false,
+        "width_chars": 18
+      },
+      {
+        "id": "mfgr_ids",
+        "visible": false,
+        "width_chars": 18
+      },
+      {
+        "id": "uuids",
+        "visible": false,
+        "width_chars": 24
+      },
+      {
+        "id": "name",
+        "visible": true,
+        "width_chars": 22
+      },
+      {
+        "id": "mfgr_names",
+        "visible": false,
+        "width_chars": 20
+      }
+    ]
+  },
+  "bluetooth_detail_view": {
+    "identity_expanded": true,
+    "passive_expanded": true,
+    "active_summary_expanded": true,
+    "readable_expanded": true,
+    "services_expanded": false,
+    "characteristics_expanded": false,
+    "descriptors_expanded": false
+  },
+  "watchlists": {
+    "entries": [
+      {
+        "label": "Home AP",
+        "device_type": "wifi",
+        "mac": "",
+        "name": "HomeNetwork",
+        "color_hex": "#ff6b6b"
+      },
+      {
+        "label": "Watched Client",
+        "device_type": "wifi",
+        "mac": "2E:67:BE:6E:D9:F9",
+        "name": "",
+        "color_hex": "#f1c40f"
+      },
+      {
+        "label": "Laptop BT",
+        "device_type": "bluetooth",
+        "mac": "F4:02:28:08:01:93",
+        "name": "NEWLAPTOP",
+        "color_hex": "#4ecdc4"
+      }
+    ],
+    "networks": [],
+    "devices": []
+  },
+  "enable_handshake_alerts": true,
+  "enable_watchlist_alerts": true,
+  "store_sqlite": true,
+  "auto_create_exports_on_startup": true,
+  "auto_check_oui_updates": true
+}

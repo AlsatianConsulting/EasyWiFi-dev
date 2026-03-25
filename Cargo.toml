@@ -1,10 +1,21 @@
 [package]
-name = "wirelessexplorer"
+name = "easywifi"
 version = "0.1.0"
 edition = "2021"
-description = "Passive Wi-Fi analysis and mapping app"
+description = "EasyWiFi passive Wi-Fi and Bluetooth analysis app"
 license = "MIT"
-default-run = "wirelessexplorer"
+default-run = "easywifi"
+
+[lib]
+name = "easywifi"
+
+[[bin]]
+name = "easywifi"
+path = "src/main.rs"
+
+[[bin]]
+name = "easywifi-helper"
+path = "src/bin/easywifi-helper.rs"
 
 [dependencies]
 anyhow = "1.0"

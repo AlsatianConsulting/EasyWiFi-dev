@@ -2447,8 +2447,8 @@ fn short_assigned_number(uuid: &str) -> Option<String> {
 
 fn manifest_asset(name: &str) -> PathBuf {
     let candidates = [
-        PathBuf::from("/usr/share/wirelessexplorer/assets").join(name),
-        PathBuf::from("/usr/share/WirelessExplorer/assets").join(name),
+        PathBuf::from("/usr/share/easywifi/assets").join(name),
+        PathBuf::from("/usr/share/EasyWiFi/assets").join(name),
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("assets")
             .join(name),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate WirelessExplorer SDR export artifacts for downstream compatibility."""
+"""Validate EasyWiFi SDR export artifacts for downstream compatibility."""
 
 from __future__ import annotations
 
@@ -131,13 +131,13 @@ def expect_json_timestamp_mode(path: Path, mode: str, errors: list[str]) -> None
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate SDR export artifacts produced by WirelessExplorer."
+        description="Validate SDR export artifacts produced by EasyWiFi."
     )
     parser.add_argument(
         "--session-dir",
         required=True,
         type=Path,
-        help="Path to a WirelessExplorer session directory",
+        help="Path to a EasyWiFi session directory",
     )
     parser.add_argument(
         "--time-mode",

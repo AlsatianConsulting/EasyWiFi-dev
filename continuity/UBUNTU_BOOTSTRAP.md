@@ -14,7 +14,7 @@ Use this when bringing the repository up on a clean Ubuntu system.
 ## Fast path
 
 ```bash
-cd WirelessExplorer
+cd EasyWiFi
 bash continuity/bootstrap_ubuntu.sh
 ```
 
@@ -83,7 +83,7 @@ ubertooth-util -v
 ```bash
 cargo test -q
 cargo build -q
-./target/debug/wirelessexplorer --help
+./target/debug/easywifi --help
 ```
 
 ## Packaging

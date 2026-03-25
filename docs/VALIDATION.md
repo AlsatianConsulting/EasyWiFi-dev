@@ -1,6 +1,6 @@
 # Validation Ledger
 
-This document tracks what WirelessExplorer currently outputs, what was validated on this host, what was not collected during live tests, and which areas still need implementation.
+This document tracks what EasyWiFi currently outputs, what was validated on this host, what was not collected during live tests, and which areas still need implementation.
 
 Downstream artifact compatibility checks can be run with:
 
@@ -36,7 +36,7 @@ Current SDR logging can also emit:
 - per-decoder map logs (including `message` + `raw` fields)
 - per-decoder satcom audit logs (including `message` + `raw` fields; redacted in no-payload mode)
 - satcom audit records now include `payload_capture_mode`, `payload_parse_state`, and normalized `payload_fields` for unencrypted frames
-- optional satcom parser denylist control via `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST` (protocol/decoder token match)
+- optional satcom parser denylist control via `EASYWIFI_SATCOM_PARSE_DENYLIST` (protocol/decoder token match)
 - satcom export action now emits companion CSV + parsed-only JSON + denied-only JSON + summary JSON artifacts
 - decode export action emits decode-row JSON + CSV artifacts
 - decode export now also supports filtered JSON + CSV artifacts based on active decode-table filters
@@ -78,7 +78,7 @@ Current SDR logging can also emit:
 - SDR pane now surfaces live aircraft-correlation and satcom-summary status counters for operator monitoring
 - SDR controls now include a dry-run decoder validation check for selected decoder/hardware/frequency settings
 - IQ sample files captured on demand
-- user SDR preset exchange file at config path: `wirelessexplorer-sdr-presets.json` (via SDR preset import/export controls)
+- user SDR preset exchange file at config path: `easywifi-sdr-presets.json` (via SDR preset import/export controls)
 
 Preset/Explorer workflow additions:
 

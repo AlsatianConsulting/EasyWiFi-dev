@@ -23,7 +23,7 @@ Generated: 2026-03-15T21:39:10+00:00
 ### Wi-Fi
 
 ```bash
-sudo -n ./target/debug/wirelessexplorer --test-wifi --interface wlx1cbfcef8e928,wlp0s20f3 --channels 1,6,11 --duration-secs 6 --max-networks 25
+sudo -n ./target/debug/easywifi --test-wifi --interface wlx1cbfcef8e928,wlp0s20f3 --channels 1,6,11 --duration-secs 6 --max-networks 25
 ```
 
 Sample result at continuity time:
@@ -34,8 +34,8 @@ Sample result at continuity time:
 ### Bluetooth
 
 ```bash
-./target/debug/wirelessexplorer --test-bluetooth --source bluez --controller all --duration-secs 10
-./target/debug/wirelessexplorer --test-bluetooth --source both --controller all --ubertooth-device all --duration-secs 10
+./target/debug/easywifi --test-bluetooth --source bluez --controller all --duration-secs 10
+./target/debug/easywifi --test-bluetooth --source both --controller all --ubertooth-device all --duration-secs 10
 ```
 
 Sample result at continuity time:
@@ -46,7 +46,7 @@ Sample result at continuity time:
 ### SDR
 
 ```bash
-./target/debug/wirelessexplorer --test-sdr --duration-secs 3
+./target/debug/easywifi --test-sdr --duration-secs 3
 ```
 
 Sample result at continuity time:

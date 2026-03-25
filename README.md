@@ -1,4 +1,4 @@
-# WirelessExplorer (Rust + GTK)
+# EasyWiFi (Rust + GTK)
 
 Linux desktop application inspired by Sparrow Wi-Fi, focused on **100% passive** Wi-Fi observation with a refined multi-tab workflow.
 
@@ -57,11 +57,11 @@ This repository contains an MVP implementation with:
   - Scanner presets also include a `Cellular ARFCN Scans` group with expanded GSM/UMTS/LTE uplink/downlink sweep ranges (including UMTS Band 2/5/8 and LTE Band 4/66/71)
   - Save Current as Preset stores user-defined SDR presets in app settings
   - Rename/Delete/Move controls for saved user presets
-  - Import/Export saved user presets via JSON (`wirelessexplorer-sdr-presets.json`)
+  - Import/Export saved user presets via JSON (`easywifi-sdr-presets.json`)
   - Map and satcom audit entries now carry both parsed `message` and `raw` decoder text (redacted when satellite payload capture is disabled)
   - Satcom audit includes payload mode + parsed unencrypted metadata (`payload_capture_mode`, `payload_parse_state`, normalized `payload_fields`)
   - Built-in `Inmarsat STD-C` decoder (`inmarsat_stdc`) is available when `stdc_decoder`/`stdc-decoder`/`inmarsatc-decoder` is installed
-  - Satcom parser denylist is configurable in SDR controls (persisted in settings), with env fallback `WIRELESSEXPLORER_SATCOM_PARSE_DENYLIST`
+  - Satcom parser denylist is configurable in SDR controls (persisted in settings), with env fallback `EASYWIFI_SATCOM_PARSE_DENYLIST`
   - Satcom export now writes full audit JSON plus companion CSV/parsed-only JSON/denied-only JSON/summary JSON artifacts
   - Decode export writes full decode-row JSON + CSV artifacts
   - Decode export now also supports filtered JSON + CSV output using active decode-table filters
