@@ -178,6 +178,8 @@ fn interface_has_wifi_coconut_markers(interface: &str) -> bool {
 
     for _ in 0..8 {
         let mut marker_text = String::new();
+        let mut id_vendor: Option<String> = None;
+        let mut id_product: Option<String> = None;
         for field in ["manufacturer", "product", "model", "idVendor", "idProduct"] {
             let value = path
                 .join(field)
@@ -186,8 +188,19 @@ fn interface_has_wifi_coconut_markers(interface: &str) -> bool {
                 .filter(|exists| *exists)
                 .and_then(|_| fs::read_to_string(path.join(field)).ok())
                 .unwrap_or_default();
+            let normalized_value = value.trim().to_ascii_lowercase();
+            match field {
+                "idVendor" => id_vendor = Some(normalized_value.clone()),
+                "idProduct" => id_product = Some(normalized_value.clone()),
+                _ => {}
+            }
             marker_text.push_str(&value);
             marker_text.push(' ');
+        }
+        if let (Some(vendor), Some(product)) = (id_vendor.as_deref(), id_product.as_deref()) {
+            if is_wifi_coconut_usb_id(vendor, product) {
+                return true;
+            }
         }
         if is_wifi_coconut_marker_text(&marker_text) {
             return true;
@@ -206,6 +219,11 @@ fn is_wifi_coconut_marker_text(text: &str) -> bool {
     normalized.contains("hak5")
         || normalized.contains("wifi coconut")
         || normalized.contains("coconut")
+}
+
+fn is_wifi_coconut_usb_id(vendor: &str, product: &str) -> bool {
+    // Hak5 WiFi Coconut radios are RT5370 modules (USB 148f:5370).
+    vendor.eq_ignore_ascii_case("148f") && product.eq_ignore_ascii_case("5370")
 }
 
 fn interface_type_via_iw(interface: &str) -> Option<String> {
@@ -350,10 +368,7 @@ fn spawn_privileged_helper() -> Result<PrivilegedHelperClient> {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .env(
-                "EASYWIFI_PARENT_PID",
-                std::process::id().to_string(),
-            )
+            .env("EASYWIFI_PARENT_PID", std::process::id().to_string())
             .env("EASYWIFI_PARENT_PID", std::process::id().to_string());
         configure_parent_death_signal(&mut command);
         match command.spawn() {
@@ -421,8 +436,7 @@ fn spawn_privileged_helper() -> Result<PrivilegedHelperClient> {
     );
     if is_effective_root() {
         message.push(
-            "EasyWiFi is already running as root. Direct helper startup still failed."
-                .to_string(),
+            "EasyWiFi is already running as root. Direct helper startup still failed.".to_string(),
         );
         message.push(format!(
             "verify that the helper binary exists and is executable: {}",
@@ -511,10 +525,7 @@ fn spawn_privileged_helper_command(
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .env(
-                "EASYWIFI_PARENT_PID",
-                std::process::id().to_string(),
-            )
+            .env("EASYWIFI_PARENT_PID", std::process::id().to_string())
             .env("EASYWIFI_PARENT_PID", std::process::id().to_string());
         configure_parent_death_signal(&mut command);
         match command.spawn() {
@@ -545,8 +556,7 @@ fn spawn_privileged_helper_command(
     );
     if is_effective_root() {
         message.push(
-            "EasyWiFi is already running as root. Direct helper launch still failed."
-                .to_string(),
+            "EasyWiFi is already running as root. Direct helper launch still failed.".to_string(),
         );
         message.push(format!(
             "verify that the helper binary exists and is executable: {}",
@@ -2948,5 +2958,17 @@ mod tests {
         assert!(!is_wifi_coconut_marker_text("Intel Wireless"));
         assert!(!is_wifi_coconut_marker_text("Qualcomm Atheros"));
         assert!(!is_wifi_coconut_marker_text(""));
+    }
+
+    #[test]
+    fn wifi_coconut_usb_id_matches_known_radio_module() {
+        assert!(is_wifi_coconut_usb_id("148f", "5370"));
+        assert!(is_wifi_coconut_usb_id("148F", "5370"));
+    }
+
+    #[test]
+    fn wifi_coconut_usb_id_rejects_other_ids() {
+        assert!(!is_wifi_coconut_usb_id("0bda", "8187"));
+        assert!(!is_wifi_coconut_usb_id("8086", "a0f0"));
     }
 }
