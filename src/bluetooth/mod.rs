@@ -9,6 +9,7 @@ use chrono::Utc;
 use crossbeam_channel::Sender;
 use rand::Rng;
 use regex::Regex;
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
@@ -146,6 +147,7 @@ struct SigResolver {
 
 impl SigResolver {
     fn load_default() -> Self {
+        refresh_sig_allocation_cache_if_needed();
         let mut resolver = Self {
             company_names: HashMap::new(),
             uuid_names: HashMap::new(),
@@ -204,7 +206,7 @@ impl SigResolver {
             let uuid = normalize_assigned_uuid(uuid_raw);
             let name = name_raw.trim().trim_matches('"');
             if !uuid.is_empty() && !name.is_empty() {
-                self.uuid_names.insert(uuid, name.to_string());
+                self.insert_uuid_name(uuid, name.to_string());
             }
         }
     }
@@ -234,11 +236,21 @@ impl SigResolver {
             let uuid = normalize_assigned_uuid(&id_raw);
             let name = name_raw.trim();
             if !uuid.is_empty() && !name.is_empty() {
-                self.uuid_names
-                    .entry(uuid)
-                    .or_insert_with(|| name.to_string());
+                self.insert_uuid_name(uuid, name.to_string());
             }
         }
+    }
+
+    fn insert_uuid_name(&mut self, uuid: String, name: String) {
+        if uuid.is_empty() || name.trim().is_empty() {
+            return;
+        }
+        self.uuid_names
+            .entry(uuid)
+            .and_modify(|existing| {
+                *existing = merge_resolution_labels(existing, &name);
+            })
+            .or_insert(name);
     }
 
     fn company_name(&self, id: u16) -> Option<String> {
@@ -247,11 +259,295 @@ impl SigResolver {
 
     fn uuid_name(&self, uuid: &str) -> Option<String> {
         let normalized = normalize_assigned_uuid(uuid);
-        self.uuid_names
-            .get(&normalized)
-            .cloned()
-            .or_else(|| fallback_uuid_name(&normalized))
+        let resolved = self.uuid_names.get(&normalized).cloned();
+        let fallback = fallback_uuid_name(&normalized);
+        match (resolved, fallback) {
+            (Some(primary), Some(secondary)) => Some(merge_resolution_labels(&primary, &secondary)),
+            (Some(primary), None) => Some(primary),
+            (None, Some(secondary)) => Some(secondary),
+            (None, None) => None,
+        }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct SigCompanyJson {
+    code: u16,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SigUuidJson {
+    uuid: String,
+    name: String,
+}
+
+fn refresh_sig_allocation_cache_if_needed() {
+    let company_path = manifest_asset("bt_company_ids.csv");
+    let uuid_path = manifest_asset("bt_service_uuids.csv");
+    let company_rows = fs::read_to_string(&company_path)
+        .ok()
+        .map(|raw| raw.lines().count().saturating_sub(1))
+        .unwrap_or(0);
+    let uuid_rows = fs::read_to_string(&uuid_path)
+        .ok()
+        .map(|raw| raw.lines().count().saturating_sub(1))
+        .unwrap_or(0);
+
+    // Skip network refresh when local data already contains substantive allocation tables.
+    if company_rows >= 1000 && uuid_rows >= 500 {
+        return;
+    }
+
+    let Some(cache_dir) = dirs::data_local_dir().map(|path| path.join("EasyWiFi").join("assets"))
+    else {
+        return;
+    };
+    if fs::create_dir_all(&cache_dir).is_err() {
+        return;
+    }
+
+    let company_cache = cache_dir.join("bt_company_ids.csv");
+    let uuid_cache = cache_dir.join("bt_service_uuids.csv");
+    if refresh_sig_company_cache(&company_cache).is_ok() {
+        let _ = refresh_sig_uuid_cache(&uuid_cache);
+    }
+}
+
+fn refresh_sig_company_cache(path: &std::path::Path) -> Result<()> {
+    let url = "https://raw.githubusercontent.com/NordicSemiconductor/bluetooth-numbers-database/master/v1/company_ids.json";
+    let response = ureq::get(url)
+        .set(
+            "User-Agent",
+            "EasyWiFi/0.1 (+bluetooth allocation cache update)",
+        )
+        .call()
+        .context("failed to fetch bluetooth company id allocations")?;
+    let raw = response
+        .into_string()
+        .context("failed to read bluetooth company id allocation response body")?;
+    let entries: Vec<SigCompanyJson> = serde_json::from_str(&raw)
+        .context("failed to parse bluetooth company id allocation JSON")?;
+
+    let mut writer = csv::Writer::from_writer(Vec::new());
+    writer.write_record(["id", "name"])?;
+    for entry in entries {
+        if entry.name.trim().is_empty() {
+            continue;
+        }
+        writer.write_record([
+            format!("0x{:04X}", entry.code),
+            entry.name.trim().to_string(),
+        ])?;
+    }
+
+    let data = writer
+        .into_inner()
+        .map_err(|err| err.into_error())
+        .context("failed to finalize bluetooth company id CSV")?;
+    fs::write(path, data).with_context(|| {
+        format!(
+            "failed to write bluetooth company id cache {}",
+            path.display()
+        )
+    })
+}
+
+fn refresh_sig_uuid_cache(path: &std::path::Path) -> Result<()> {
+    const SIG_ASSIGNED_NUMBERS_URL: &str =
+        "https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Assigned_Numbers/out/en/index-en.html";
+    let github_urls = [
+        "https://raw.githubusercontent.com/NordicSemiconductor/bluetooth-numbers-database/master/v1/service_uuids.json",
+        "https://raw.githubusercontent.com/NordicSemiconductor/bluetooth-numbers-database/master/v1/characteristic_uuids.json",
+        "https://raw.githubusercontent.com/NordicSemiconductor/bluetooth-numbers-database/master/v1/descriptor_uuids.json",
+    ];
+
+    let mut uuid_map = HashMap::<String, String>::new();
+    let mut source_errors = Vec::<String>::new();
+
+    match fetch_sig_uuid_map_from_assigned_numbers_html(SIG_ASSIGNED_NUMBERS_URL) {
+        Ok(entries) => {
+            for (uuid, name) in entries {
+                insert_uuid_resolution(&mut uuid_map, &uuid, &name);
+            }
+        }
+        Err(err) => source_errors.push(format!(
+            "failed to fetch Bluetooth SIG Assigned Numbers UUID table: {err}"
+        )),
+    }
+
+    for url in github_urls {
+        let response_result = ureq::get(url)
+            .set(
+                "User-Agent",
+                "EasyWiFi/0.1 (+bluetooth allocation cache update)",
+            )
+            .call()
+            .with_context(|| format!("failed to fetch bluetooth UUID allocations from {}", url));
+        let response = match response_result {
+            Ok(response) => response,
+            Err(err) => {
+                source_errors.push(err.to_string());
+                continue;
+            }
+        };
+        let raw_result = response
+            .into_string()
+            .with_context(|| format!("failed to read bluetooth UUID response body from {}", url));
+        let raw = match raw_result {
+            Ok(raw) => raw,
+            Err(err) => {
+                source_errors.push(err.to_string());
+                continue;
+            }
+        };
+        let entries: Vec<SigUuidJson> = match serde_json::from_str(&raw) {
+            Ok(entries) => entries,
+            Err(err) => {
+                source_errors.push(format!(
+                    "failed to parse bluetooth UUID JSON from {}: {}",
+                    url, err
+                ));
+                continue;
+            }
+        };
+        for entry in entries {
+            insert_uuid_resolution(&mut uuid_map, &entry.uuid, entry.name.trim());
+        }
+    }
+
+    if uuid_map.is_empty() {
+        anyhow::bail!(
+            "failed to build bluetooth UUID allocation cache from all sources: {}",
+            source_errors.join(" | ")
+        );
+    }
+
+    let mut sorted = uuid_map.into_iter().collect::<Vec<_>>();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+    let mut writer = csv::Writer::from_writer(Vec::new());
+    writer.write_record(["uuid", "name"])?;
+    for (uuid, name) in sorted {
+        writer.write_record([uuid, name])?;
+    }
+    let data = writer
+        .into_inner()
+        .map_err(|err| err.into_error())
+        .context("failed to finalize bluetooth UUID CSV")?;
+    fs::write(path, data)
+        .with_context(|| format!("failed to write bluetooth UUID cache {}", path.display()))
+}
+
+fn fetch_sig_uuid_map_from_assigned_numbers_html(url: &str) -> Result<HashMap<String, String>> {
+    let response = ureq::get(url)
+        .set(
+            "User-Agent",
+            "EasyWiFi/0.1 (+bluetooth allocation cache update)",
+        )
+        .set("Accept", "text/html,application/xhtml+xml")
+        .call()
+        .with_context(|| format!("failed to fetch {}", url))?;
+    let raw = response
+        .into_string()
+        .with_context(|| format!("failed to read response body from {}", url))?;
+    let out = parse_sig_uuid_map_from_assigned_numbers_html(&raw);
+    if out.is_empty() {
+        anyhow::bail!("no UUID rows parsed from {}", url);
+    }
+    Ok(out)
+}
+
+fn parse_sig_uuid_map_from_assigned_numbers_html(raw: &str) -> HashMap<String, String> {
+    let mut out = HashMap::<String, String>::new();
+    for section_title in [
+        "3.4.2 Services by UUID",
+        "3.7 Descriptors",
+        "3.8.2 Characteristics by UUID",
+    ] {
+        let Some(start) = raw.find(section_title) else {
+            continue;
+        };
+        let section = &raw[start..];
+        let section_end = section.find("</section>").unwrap_or(section.len());
+        extract_sig_uuid_rows_from_html(&section[..section_end], &mut out);
+    }
+    out
+}
+
+fn extract_sig_uuid_rows_from_html(raw: &str, out: &mut HashMap<String, String>) {
+    let row_re = Regex::new(
+        r"(?is)<tr>\s*<td[^>]*>\s*<p>\s*<code[^>]*>\s*(0x?[0-9a-f]{4,8})\s*</code>\s*</p>\s*</td>\s*<td[^>]*>\s*<p>(.*?)</p>\s*</td>\s*</tr>",
+    )
+    .unwrap();
+    let tag_re = Regex::new(r"(?is)<[^>]+>").unwrap();
+
+    for caps in row_re.captures_iter(raw) {
+        let uuid_raw = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+        let name_raw = caps.get(2).map(|m| m.as_str()).unwrap_or_default();
+        let name_without_tags = tag_re.replace_all(name_raw, " ");
+        let name_decoded = decode_basic_html_entities(&name_without_tags);
+        let name = collapse_whitespace(&name_decoded);
+        insert_uuid_resolution(out, uuid_raw, &name);
+    }
+}
+
+fn insert_uuid_resolution(map: &mut HashMap<String, String>, uuid_raw: &str, name_raw: &str) {
+    let uuid = normalize_assigned_uuid(uuid_raw);
+    let name = collapse_whitespace(name_raw);
+    if uuid.is_empty() || name.is_empty() {
+        return;
+    }
+    map.entry(uuid)
+        .and_modify(|existing| {
+            *existing = merge_resolution_labels(existing, &name);
+        })
+        .or_insert(name);
+}
+
+fn decode_basic_html_entities(value: &str) -> String {
+    value
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+}
+
+fn collapse_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn merge_resolution_labels(existing: &str, incoming: &str) -> String {
+    const JOINER: &str = " / ";
+    let incoming = collapse_whitespace(incoming).trim().to_string();
+    if incoming.is_empty() {
+        return collapse_whitespace(existing);
+    }
+
+    let mut labels = collapse_whitespace(existing)
+        .split(JOINER)
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if labels.is_empty() {
+        return incoming;
+    }
+
+    let incoming_key = normalize_resolution_label(&incoming);
+    if !labels
+        .iter()
+        .any(|label| normalize_resolution_label(label) == incoming_key)
+    {
+        labels.push(incoming);
+    }
+    labels.join(JOINER)
+}
+
+fn normalize_resolution_label(value: &str) -> String {
+    collapse_whitespace(value).to_ascii_lowercase()
 }
 
 pub fn list_controllers() -> Result<Vec<BluetoothControllerInfo>> {
@@ -2255,17 +2551,44 @@ fn format_hex_bytes(bytes: &[u8]) -> String {
 }
 
 fn parse_uuid_line(raw: &str) -> Option<(String, String)> {
-    let open = raw.rfind('(')?;
-    let close = raw.rfind(')')?;
-    if close <= open + 1 {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
         return None;
     }
-    let name = raw[..open].trim().to_string();
-    let uuid = raw[open + 1..close].trim().to_string();
-    if uuid.is_empty() {
-        None
+
+    if let (Some(open), Some(close)) = (trimmed.rfind('('), trimmed.rfind(')')) {
+        if close > open + 1 {
+            let name = trimmed[..open].trim().to_string();
+            let uuid = trimmed[open + 1..close].trim().to_string();
+            if !uuid.is_empty() {
+                return Some((name, uuid));
+            }
+        }
+    }
+
+    for token in trimmed.split_whitespace() {
+        let candidate = token
+            .trim_matches(|c: char| matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'));
+        if candidate.is_empty() {
+            continue;
+        }
+        let normalized = normalize_assigned_uuid(candidate);
+        if normalized_assigned_uuid_like(&normalized) {
+            let name = trimmed
+                .replace(token, "")
+                .trim()
+                .trim_matches(|c: char| matches!(c, ':' | '-' | ',' | ';'))
+                .trim()
+                .to_string();
+            return Some((name, candidate.to_string()));
+        }
+    }
+
+    let normalized = normalize_assigned_uuid(trimmed);
+    if normalized_assigned_uuid_like(&normalized) {
+        Some((String::new(), trimmed.to_string()))
     } else {
-        Some((name, uuid))
+        None
     }
 }
 
@@ -2331,8 +2654,46 @@ fn strip_ansi(input: &str) -> String {
 }
 
 fn parse_company_id(raw: &str) -> Option<u16> {
-    let text = raw.trim().trim_start_matches("0x");
-    u16::from_str_radix(text, 16).ok()
+    let text = raw.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    if let Some(index) = text.to_ascii_lowercase().find("0x") {
+        let hex = text[index + 2..]
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit())
+            .collect::<String>();
+        if !hex.is_empty() {
+            if let Ok(value) = u16::from_str_radix(&hex, 16) {
+                return Some(value);
+            }
+        }
+    }
+
+    if let Ok(value) = text.parse::<u16>() {
+        return Some(value);
+    }
+
+    let decimal = text
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>();
+    if !decimal.is_empty() {
+        if let Ok(value) = decimal.parse::<u16>() {
+            return Some(value);
+        }
+    }
+
+    let hex = text
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .collect::<String>();
+    if !hex.is_empty() {
+        u16::from_str_radix(&hex, 16).ok()
+    } else {
+        None
+    }
 }
 
 fn fallback_uuid_name(uuid: &str) -> Option<String> {
@@ -2425,7 +2786,13 @@ fn appearance_name(code: u16) -> &'static str {
 }
 
 fn normalize_assigned_uuid(value: &str) -> String {
-    let v = value.trim().to_ascii_lowercase();
+    let mut v = value
+        .trim()
+        .trim_matches(|c: char| matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'))
+        .to_ascii_lowercase();
+    if let Some(hex) = v.strip_prefix("0x") {
+        v = hex.to_string();
+    }
     if v.len() == 4 {
         format!("0000{}-0000-1000-8000-00805f9b34fb", v)
     } else if v.len() == 8 && !v.contains('-') {
@@ -2433,6 +2800,22 @@ fn normalize_assigned_uuid(value: &str) -> String {
     } else {
         v
     }
+}
+
+fn normalized_assigned_uuid_like(value: &str) -> bool {
+    if value.len() != 36 {
+        return false;
+    }
+    for (index, ch) in value.chars().enumerate() {
+        if matches!(index, 8 | 13 | 18 | 23) {
+            if ch != '-' {
+                return false;
+            }
+        } else if !ch.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
 }
 
 fn short_assigned_number(uuid: &str) -> Option<String> {
@@ -2446,13 +2829,17 @@ fn short_assigned_number(uuid: &str) -> Option<String> {
 }
 
 fn manifest_asset(name: &str) -> PathBuf {
-    let candidates = [
+    let mut candidates = Vec::new();
+    if let Some(cache) = dirs::data_local_dir() {
+        candidates.push(cache.join("EasyWiFi").join("assets").join(name));
+    }
+    candidates.extend([
         PathBuf::from("/usr/share/easywifi/assets").join(name),
         PathBuf::from("/usr/share/EasyWiFi/assets").join(name),
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("assets")
             .join(name),
-    ];
+    ]);
     candidates
         .into_iter()
         .find(|path| path.exists())
@@ -2467,8 +2854,9 @@ fn manifest_asset(name: &str) -> PathBuf {
 mod tests {
     use super::{
         appearance_name, decode_characteristic_value, decode_descriptor_value, fallback_uuid_name,
-        normalize_assigned_uuid, parse_tab_separated_mappings, resolve_bluez_targets,
-        resolve_ubertooth_targets,
+        merge_resolution_labels, normalize_assigned_uuid, parse_company_id,
+        parse_sig_uuid_map_from_assigned_numbers_html, parse_tab_separated_mappings,
+        parse_uuid_line, resolve_bluez_targets, resolve_ubertooth_targets,
     };
 
     #[test]
@@ -2540,6 +2928,89 @@ mod tests {
         assert_eq!(
             decode_descriptor_value("2907", &[0x4B, 0x2A]),
             "00002a4b-0000-1000-8000-00805f9b34fb"
+        );
+    }
+
+    #[test]
+    fn parse_uuid_line_accepts_named_and_plain_uuid_lines() {
+        assert_eq!(
+            parse_uuid_line("Generic Access (00001800-0000-1000-8000-00805f9b34fb)"),
+            Some((
+                "Generic Access".to_string(),
+                "00001800-0000-1000-8000-00805f9b34fb".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_uuid_line("0000180f-0000-1000-8000-00805f9b34fb"),
+            Some((
+                String::new(),
+                "0000180f-0000-1000-8000-00805f9b34fb".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_company_id_handles_hex_decimal_and_mixed_tokens() {
+        assert_eq!(parse_company_id("0x004C"), Some(0x004C));
+        assert_eq!(parse_company_id("76"), Some(76));
+        assert_eq!(parse_company_id("0x004C (76)"), Some(0x004C));
+    }
+
+    #[test]
+    fn normalize_assigned_uuid_accepts_0x_prefixed_values() {
+        assert_eq!(
+            normalize_assigned_uuid("0x180f"),
+            "0000180f-0000-1000-8000-00805f9b34fb"
+        );
+        assert_eq!(
+            normalize_assigned_uuid("0x12345678"),
+            "12345678-0000-1000-8000-00805f9b34fb"
+        );
+    }
+
+    #[test]
+    fn merge_resolution_labels_keeps_unique_conflicts() {
+        assert_eq!(
+            merge_resolution_labels("Battery Level", "Battery Charge Level"),
+            "Battery Level / Battery Charge Level"
+        );
+        assert_eq!(
+            merge_resolution_labels("Battery Level / Battery Charge Level", "battery level"),
+            "Battery Level / Battery Charge Level"
+        );
+    }
+
+    #[test]
+    fn parses_sig_assigned_number_html_uuid_tables() {
+        let html = r#"
+<section><h4 class="title">3.4.2 Services by UUID</h4>
+<table><tbody>
+<tr><td><p><code class="code">0x180F</code></p></td><td><p>Battery Service</p></td></tr>
+</tbody></table></section>
+<section><h3 class="title">3.7 Descriptors</h3>
+<table><tbody>
+<tr><td><p><code class="code">0x2902</code></p></td><td><p>Client Characteristic Configuration</p></td></tr>
+</tbody></table></section>
+<section><h4 class="title">3.8.2 Characteristics by UUID</h4>
+<table><tbody>
+<tr><td><p><code class="code">0x2A19</code></p></td><td><p>Battery Level</p></td></tr>
+</tbody></table></section>
+"#;
+        let map = parse_sig_uuid_map_from_assigned_numbers_html(html);
+        assert_eq!(
+            map.get(&normalize_assigned_uuid("180F"))
+                .map(String::as_str),
+            Some("Battery Service")
+        );
+        assert_eq!(
+            map.get(&normalize_assigned_uuid("2902"))
+                .map(String::as_str),
+            Some("Client Characteristic Configuration")
+        );
+        assert_eq!(
+            map.get(&normalize_assigned_uuid("2A19"))
+                .map(String::as_str),
+            Some("Battery Level")
         );
     }
 

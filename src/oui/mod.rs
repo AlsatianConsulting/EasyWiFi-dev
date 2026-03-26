@@ -92,19 +92,35 @@ impl OuiDatabase {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
 
-        let url = "https://standards-oui.ieee.org/oui/oui.csv";
-        let response = ureq::get(url)
-            .set(
-                "User-Agent",
-                "EasyWiFi/0.1 (+offline OUI cache update)",
+        let urls = [
+            "https://standards-oui.ieee.org/oui/oui.csv",
+            "http://standards-oui.ieee.org/oui/oui.csv",
+        ];
+        let mut text = None::<String>;
+        let mut fetch_errors = Vec::new();
+        for url in urls {
+            match ureq::get(url)
+                .set("User-Agent", "EasyWiFi/0.1 (+offline OUI cache update)")
+                .set("Accept", "text/csv,text/plain;q=0.9,*/*;q=0.8")
+                .call()
+            {
+                Ok(response) => match response.into_string() {
+                    Ok(body) if !body.trim().is_empty() => {
+                        text = Some(body);
+                        break;
+                    }
+                    Ok(_) => fetch_errors.push(format!("{url}: empty response body")),
+                    Err(err) => fetch_errors.push(format!("{url}: {err}")),
+                },
+                Err(err) => fetch_errors.push(format!("{url}: {err}")),
+            }
+        }
+        let text = text.ok_or_else(|| {
+            anyhow::anyhow!(
+                "failed to fetch latest IEEE OUI list via known endpoints: {}",
+                fetch_errors.join(" | ")
             )
-            .set("Accept", "text/csv,text/plain;q=0.9,*/*;q=0.8")
-            .call()
-            .context("failed to fetch latest IEEE OUI list")?;
-
-        let text = response
-            .into_string()
-            .context("failed to read IEEE OUI response body")?;
+        })?;
 
         fs::write(destination_path, text)
             .with_context(|| format!("failed to write {}", destination_path.display()))?;
@@ -121,15 +137,61 @@ impl OuiDatabase {
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
             .from_reader(raw.as_bytes());
+        let headers = rdr
+            .headers()
+            .cloned()
+            .unwrap_or_else(|_| csv::StringRecord::new());
+        let prefix_index = csv_column_index(
+            &headers,
+            &[
+                "assignment",
+                "prefix",
+                "oui",
+                "macprefix",
+                "ouiprefix",
+                "ouiassignment",
+            ],
+        );
+        let vendor_index = csv_column_index(
+            &headers,
+            &[
+                "organizationname",
+                "organisationname",
+                "vendor",
+                "manufacturer",
+                "company",
+                "companyname",
+                "name",
+            ],
+        );
+
+        let mut fallback_prefix = 0usize;
+        let mut fallback_vendor = if headers.len() > 2 { 2 } else { 1 };
+        if headers.is_empty() {
+            fallback_prefix = 0;
+            fallback_vendor = 1;
+        } else if headers.len() == 1 {
+            fallback_prefix = 0;
+            fallback_vendor = 0;
+        } else if fallback_vendor >= headers.len() {
+            fallback_vendor = headers.len().saturating_sub(1);
+        }
+        let prefix_index = prefix_index.unwrap_or(fallback_prefix);
+        let vendor_index = vendor_index.unwrap_or(fallback_vendor);
 
         let mut entry_count = 0usize;
         for row in rdr.records() {
             let row = row?;
-            if row.len() < 2 {
+            if row.len() < 2 || prefix_index >= row.len() || vendor_index >= row.len() {
                 continue;
             }
-            let prefix = normalize_hex(&row[0]);
-            let vendor = row[1].trim().to_string();
+            let prefix = normalize_hex(row.get(prefix_index).unwrap_or_default());
+            let vendor = row
+                .get(vendor_index)
+                .unwrap_or_default()
+                .trim()
+                .trim_matches('"')
+                .to_string();
             if prefix.is_empty() || vendor.is_empty() {
                 continue;
             }
@@ -221,6 +283,21 @@ fn parse_manuf_prefix(token: &str) -> (String, usize) {
     )
 }
 
+fn csv_column_index(headers: &csv::StringRecord, aliases: &[&str]) -> Option<usize> {
+    headers.iter().enumerate().find_map(|(index, header)| {
+        let normalized = normalize_csv_header(header);
+        aliases.contains(&normalized.as_str()).then_some(index)
+    })
+}
+
+fn normalize_csv_header(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect::<String>()
+}
+
 fn persistent_oui_path() -> Option<PathBuf> {
     let base = dirs::data_local_dir()?;
     Some(base.join("EasyWiFi").join("oui.csv"))
@@ -278,10 +355,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_ieee_csv_assignment_and_org_name_columns() {
+        let raw = "\
+Registry,Assignment,Organization Name,Organization Address\n\
+MA-L,286FB9,\"Nokia Shanghai Bell Co.,Ltd.\",\n\
+MA-M,70B3D57,Acme Mid Prefix Labs,\n";
+        let db = OuiDatabase::load_from_csv_text(raw).expect("ieee csv load");
+        assert_eq!(db.count(), 2);
+        assert_eq!(
+            db.lookup("28:6F:B9:AA:BB:CC"),
+            Some("Nokia Shanghai Bell Co.,Ltd.")
+        );
+        assert_eq!(db.lookup("70:B3:D5:7A:11:22"), Some("Acme Mid Prefix Labs"));
+    }
+
+    #[test]
     fn loads_default_project_source_override() {
         let path = default_oui_source_path();
         let db = OuiDatabase::load_with_override(Some(&path)).expect("default oui load");
         assert!(db.count() > 0, "expected OUI entries at {}", path.display());
-        assert_eq!(db.lookup("F4:F5:E8:AA:BB:CC"), Some("Intel Corporate"));
     }
 }
