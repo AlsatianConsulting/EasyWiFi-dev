@@ -31,6 +31,20 @@ pub fn default_output_root() -> PathBuf {
         .join("output")
 }
 
+pub fn default_geoip_city_db_path() -> PathBuf {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut candidates = Vec::new();
+    if let Some(base) = app_data_root() {
+        candidates.push(base.join("GeoLite2-City.mmdb"));
+    }
+    candidates.extend([
+        PathBuf::from("/usr/share/easywifi/GeoLite2-City.mmdb"),
+        PathBuf::from("/usr/share/EasyWiFi/GeoLite2-City.mmdb"),
+        root.join("GeoLite2-City.mmdb"),
+    ]);
+    first_existing_or(candidates, root.join("GeoLite2-City.mmdb"))
+}
+
 pub fn default_show_status_bar() -> bool {
     false
 }
@@ -52,7 +66,7 @@ pub fn default_show_ap_inline_channel_usage() -> bool {
 }
 
 pub fn default_default_rows_per_page() -> usize {
-    50
+    200
 }
 
 pub fn default_bluetooth_enabled() -> bool {
@@ -100,15 +114,7 @@ pub fn default_wifi_packet_header_mode() -> WifiPacketHeaderMode {
 }
 
 pub fn default_enable_wifi_frame_parsing() -> bool {
-    false
-}
-
-pub fn default_sdr_satcom_parse_denylist() -> Vec<String> {
-    Vec::new()
-}
-
-pub fn default_sdr_satcom_payload_capture_enabled() -> bool {
-    false
+    true
 }
 
 pub fn default_use_zulu_time() -> bool {
@@ -221,36 +227,6 @@ pub struct WatchlistEntry {
     pub name: String,
     #[serde(default = "default_watchlist_color_hex")]
     pub color_hex: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct SdrBookmarkSetting {
-    #[serde(default)]
-    pub label: String,
-    #[serde(default)]
-    pub frequency_hz: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SdrOperatorPresetSetting {
-    #[serde(default)]
-    pub label: String,
-    #[serde(default)]
-    pub center_freq_hz: u64,
-    #[serde(default)]
-    pub sample_rate_hz: u32,
-    #[serde(default)]
-    pub scan_enabled: bool,
-    #[serde(default)]
-    pub scan_start_hz: u64,
-    #[serde(default)]
-    pub scan_end_hz: u64,
-    #[serde(default)]
-    pub scan_step_hz: u64,
-    #[serde(default)]
-    pub scan_steps_per_sec: f64,
-    #[serde(default)]
-    pub squelch_dbm: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -746,12 +722,12 @@ pub fn default_bluetooth_table_layout() -> TableLayout {
             },
             TableColumnLayout {
                 id: "mfgr_names".to_string(),
-                visible: false,
+                visible: true,
                 width_chars: 20,
             },
             TableColumnLayout {
                 id: "uuids".to_string(),
-                visible: false,
+                visible: true,
                 width_chars: 24,
             },
         ],
@@ -778,7 +754,7 @@ pub enum ChannelSelectionMode {
 impl Default for ChannelSelectionMode {
     fn default() -> Self {
         Self::HopAll {
-            channels: vec![1, 6, 11, 36, 40, 44, 48],
+            channels: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 36, 40, 44, 48],
             dwell_ms: 200,
         }
     }
@@ -859,6 +835,8 @@ pub struct AppSettings {
     pub output_to_files: bool,
     #[serde(default = "default_output_root")]
     pub output_root: PathBuf,
+    #[serde(default = "default_geoip_city_db_path")]
+    pub geoip_city_db_path: PathBuf,
     #[serde(default)]
     pub interfaces: Vec<InterfaceSettings>,
     #[serde(default = "default_bluetooth_enabled")]
@@ -897,14 +875,6 @@ pub struct AppSettings {
     pub auto_create_exports_on_startup: bool,
     #[serde(default = "default_auto_check_oui_updates")]
     pub auto_check_oui_updates: bool,
-    #[serde(default)]
-    pub sdr_bookmarks: Vec<SdrBookmarkSetting>,
-    #[serde(default)]
-    pub sdr_operator_presets: Vec<SdrOperatorPresetSetting>,
-    #[serde(default = "default_sdr_satcom_payload_capture_enabled")]
-    pub sdr_satcom_payload_capture_enabled: bool,
-    #[serde(default = "default_sdr_satcom_parse_denylist")]
-    pub sdr_satcom_parse_denylist: Vec<String>,
     #[serde(default = "default_use_zulu_time")]
     pub use_zulu_time: bool,
 }
@@ -923,6 +893,7 @@ impl Default for AppSettings {
             enable_wifi_frame_parsing: default_enable_wifi_frame_parsing(),
             output_to_files: false,
             output_root: default_output_root(),
+            geoip_city_db_path: default_geoip_city_db_path(),
             interfaces: Vec::new(),
             bluetooth_enabled: default_bluetooth_enabled(),
             bluetooth_scan_source: default_bluetooth_scan_source(),
@@ -942,10 +913,6 @@ impl Default for AppSettings {
             store_sqlite: default_store_sqlite(),
             auto_create_exports_on_startup: default_auto_create_exports_on_startup(),
             auto_check_oui_updates: default_auto_check_oui_updates(),
-            sdr_bookmarks: Vec::new(),
-            sdr_operator_presets: Vec::new(),
-            sdr_satcom_payload_capture_enabled: default_sdr_satcom_payload_capture_enabled(),
-            sdr_satcom_parse_denylist: default_sdr_satcom_parse_denylist(),
             use_zulu_time: default_use_zulu_time(),
         }
     }
@@ -1021,25 +988,8 @@ mod tests {
         settings.bluetooth_enabled = false;
         settings.enable_wifi_frame_parsing = true;
         settings.use_zulu_time = true;
-        settings.sdr_satcom_payload_capture_enabled = true;
-        settings.sdr_satcom_parse_denylist = vec!["inmarsat".to_string(), "iridium".to_string()];
         settings.oui_source_path = PathBuf::from("/tmp/test-manuf");
         settings.bluetooth_detail_view.descriptors_expanded = true;
-        settings.sdr_bookmarks = vec![SdrBookmarkSetting {
-            label: "Test Bookmark".to_string(),
-            frequency_hz: 915_000_000,
-        }];
-        settings.sdr_operator_presets = vec![SdrOperatorPresetSetting {
-            label: "Airband Fast".to_string(),
-            center_freq_hz: 127_500_000,
-            sample_rate_hz: 2_400_000,
-            scan_enabled: true,
-            scan_start_hz: 118_000_000,
-            scan_end_hz: 137_000_000,
-            scan_step_hz: 25_000,
-            scan_steps_per_sec: 8.0,
-            squelch_dbm: -72.0,
-        }];
         settings.save_to_disk().expect("save settings");
 
         let loaded = AppSettings::load_from_disk().expect("load settings");
@@ -1050,34 +1000,8 @@ mod tests {
         assert!(!loaded.bluetooth_enabled);
         assert!(loaded.enable_wifi_frame_parsing);
         assert!(loaded.use_zulu_time);
-        assert!(loaded.sdr_satcom_payload_capture_enabled);
-        assert_eq!(
-            loaded.sdr_satcom_parse_denylist,
-            vec!["inmarsat".to_string(), "iridium".to_string()]
-        );
         assert_eq!(loaded.oui_source_path, PathBuf::from("/tmp/test-manuf"));
         assert!(loaded.bluetooth_detail_view.descriptors_expanded);
-        assert_eq!(
-            loaded.sdr_bookmarks,
-            vec![SdrBookmarkSetting {
-                label: "Test Bookmark".to_string(),
-                frequency_hz: 915_000_000,
-            }]
-        );
-        assert_eq!(
-            loaded.sdr_operator_presets,
-            vec![SdrOperatorPresetSetting {
-                label: "Airband Fast".to_string(),
-                center_freq_hz: 127_500_000,
-                sample_rate_hz: 2_400_000,
-                scan_enabled: true,
-                scan_start_hz: 118_000_000,
-                scan_end_hz: 137_000_000,
-                scan_step_hz: 25_000,
-                scan_steps_per_sec: 8.0,
-                squelch_dbm: -72.0,
-            }]
-        );
 
         let _ = fs::remove_file(&path);
         if backup_path.exists() {

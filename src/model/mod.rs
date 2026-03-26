@@ -63,6 +63,13 @@ pub struct WpsInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ClientNetworkIntel {
+    pub local_ipv4_addresses: Vec<String>,
+    pub local_ipv6_addresses: Vec<String>,
+    pub dhcp_hostnames: Vec<String>,
+    pub dhcp_fqdns: Vec<String>,
+    pub dhcp_vendor_classes: Vec<String>,
+    pub dns_names: Vec<String>,
+    pub remote_endpoints: Vec<ClientEndpointRecord>,
     pub packet_mix: PacketTypeBreakdown,
     pub uplink_bytes: u64,
     pub downlink_bytes: u64,
@@ -79,6 +86,18 @@ pub struct ClientNetworkIntel {
     pub last_reason_code: Option<u16>,
     pub last_status_code: Option<u16>,
     pub listen_interval: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientEndpointRecord {
+    pub ip_address: String,
+    pub protocol: String,
+    pub port: Option<u16>,
+    pub domain: Option<String>,
+    pub geo_city: Option<String>,
+    pub first_seen: DateTime<Utc>,
+    pub last_seen: DateTime<Utc>,
+    pub packet_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

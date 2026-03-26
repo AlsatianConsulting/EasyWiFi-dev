@@ -1,11 +1,11 @@
 use anyhow::Result;
+use easywifi::capture;
+use easywifi::privilege::{HelperRequest, HelperResponse};
 use std::io::{self, BufRead, Write};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
-use easywifi::capture;
-use easywifi::privilege::{HelperRequest, HelperResponse};
 
 fn main() -> Result<()> {
     install_parent_death_signal()?;
@@ -151,9 +151,7 @@ fn run_passthrough(program: &str, args: Vec<String>) -> Result<()> {
 
 fn run_channel_hop(args: Vec<String>) -> Result<()> {
     if args.len() < 4 {
-        anyhow::bail!(
-            "usage: easywifi-helper hop <iface> <dwell_ms> <ht_mode> <channel...>"
-        );
+        anyhow::bail!("usage: easywifi-helper hop <iface> <dwell_ms> <ht_mode> <channel...>");
     }
 
     let interface = &args[0];

@@ -8,21 +8,15 @@ use crate::model::{
     SessionMetadata, SpectrumBand,
 };
 use crate::oui::OuiDatabase;
-use crate::sdr::{
-    self, SdrAircraftCorrelation, SdrConfig, SdrDecodeRow, SdrDecoderKind, SdrDecoderTelemetry,
-    SdrDependencyStatus, SdrEvent, SdrHardware, SdrMapPoint, SdrRuntime, SdrSatcomObservation,
-    SdrSpectrumFrame,
-};
 use crate::settings::{
     default_ap_table_layout, default_assoc_client_table_layout, default_bluetooth_table_layout,
-    default_client_table_layout, settings_file_path, AppSettings, BluetoothScanSource,
-    ChannelSelectionMode, GpsSettings, InterfaceSettings, SdrBookmarkSetting,
-    SdrOperatorPresetSetting, StreamProtocol, TableColumnLayout, TableLayout, WatchlistDeviceType,
-    WatchlistEntry, WatchlistSettings, WifiPacketHeaderMode,
+    default_client_table_layout, settings_file_path, AppSettings, ChannelSelectionMode,
+    GpsSettings, InterfaceSettings, StreamProtocol, TableColumnLayout, TableLayout,
+    WatchlistDeviceType, WatchlistEntry, WatchlistSettings, WifiPacketHeaderMode,
 };
 use crate::storage::StorageEngine;
 use anyhow::{Context, Result};
-use chrono::{Local, Utc};
+use chrono::Utc;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use gtk::cairo;
 use gtk::gdk;
@@ -32,9 +26,9 @@ use gtk::prelude::*;
 use gtk::{
     Application, ApplicationWindow, Box as GtkBox, Button, CheckButton, ComboBoxText, Dialog,
     DrawingArea, Entry, EventControllerKey, Expander, FileChooserAction, FileChooserDialog,
-    GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned, Popover,
-    ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
-    ToggleButton, Window as GtkWindow,
+    GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned,
+    Popover, ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
+    Window as GtkWindow,
 };
 use gtk4 as gtk;
 use std::cell::{Cell, RefCell};
@@ -74,78 +68,25 @@ const ACCESS_POINTS_TAB_INDEX: u32 = 0;
 const CLIENTS_TAB_INDEX: u32 = 1;
 const BLUETOOTH_TAB_INDEX: u32 = 2;
 const CHANNEL_USAGE_TAB_INDEX: u32 = 3;
-const SDR_TAB_INDEX: u32 = 4;
 const UI_POLL_INTERVAL_MS: u64 = 120;
 const MAX_CAPTURE_EVENTS_PER_TICK: usize = 1200;
 const MAX_BLUETOOTH_EVENTS_PER_TICK: usize = 200;
-const MAX_SDR_EVENTS_PER_TICK: usize = 200;
 const MAX_WIFI_GEIGER_UPDATES_PER_TICK: usize = 8;
-const SDR_AUTO_SQUELCH_MIN_INTERVAL_MS: u64 = 400;
-const SDR_AUTO_SQUELCH_MIN_DELTA_DB: f32 = 1.0;
-const SDR_ARTIFACT_CONTRACT_VERSION: &str = "2026.03.23.1";
 const MIN_LIST_REFRESH_INTERVAL_MS: u64 = 140;
 const TABLE_CHAR_WIDTH_PX: i32 = 10;
-const DEFAULT_TABLE_PAGE_SIZE: usize = 200;
-const TABLE_PAGE_SIZE_OPTIONS: &[usize] = &[25, 50, 100, 200, 500, 1000];
+const DEFAULT_TABLE_PAGE_SIZE: usize = 50;
+const TABLE_PAGE_SIZE_OPTIONS: &[usize] = &[25, 50, 100, 200];
 const DEFAULT_WINDOW_WIDTH: i32 = 1500;
 const DEFAULT_WINDOW_HEIGHT: i32 = 950;
 const DEFAULT_CONTENT_PANE_POSITION: i32 = 760;
-const DEFAULT_AP_ROOT_POSITION: i32 = 620;
+const DEFAULT_AP_ROOT_POSITION: i32 = 330;
 const DEFAULT_AP_SUMMARY_ROW_POSITION: i32 = 760;
 const DEFAULT_AP_DETAIL_SECTIONS_POSITION: i32 = 470;
 const DEFAULT_AP_BOTTOM_POSITION: i32 = 820;
-const DEFAULT_CLIENT_ROOT_POSITION: i32 = 620;
+const DEFAULT_CLIENT_ROOT_POSITION: i32 = 380;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 360;
-const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 620;
+const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 360;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 430;
-const DEFAULT_SDR_ROOT_POSITION: i32 = 420;
-const FAKE_GPS_LATITUDE: f64 = 35.145_395_7;
-const FAKE_GPS_LONGITUDE: f64 = -79.474_718_1;
-static USE_ZULU_TIME_DISPLAY: AtomicBool = AtomicBool::new(false);
-
-fn set_use_zulu_time_display(enabled: bool) {
-    USE_ZULU_TIME_DISPLAY.store(enabled, Ordering::Relaxed);
-}
-
-fn using_zulu_time_display() -> bool {
-    USE_ZULU_TIME_DISPLAY.load(Ordering::Relaxed)
-}
-
-fn format_display_timestamp(value: chrono::DateTime<Utc>) -> String {
-    if using_zulu_time_display() {
-        value.format("%Y-%m-%d %H:%M:%S UTC").to_string()
-    } else {
-        value
-            .with_timezone(&Local)
-            .format("%Y-%m-%d %H:%M:%S %Z")
-            .to_string()
-    }
-}
-
-fn format_display_time_hms(value: chrono::DateTime<Utc>) -> String {
-    if using_zulu_time_display() {
-        value.format("%H:%M:%SZ").to_string()
-    } else {
-        value.with_timezone(&Local).format("%H:%M:%S").to_string()
-    }
-}
-
-fn static_output_gps_coordinates() -> (f64, f64) {
-    (FAKE_GPS_LATITUDE, FAKE_GPS_LONGITUDE)
-}
-
-fn output_gps_coordinates_for_settings(settings: &AppSettings) -> (f64, f64) {
-    match &settings.gps {
-        GpsSettings::Static {
-            latitude,
-            longitude,
-            ..
-        } if (-90.0..=90.0).contains(latitude) && (-180.0..=180.0).contains(longitude) => {
-            (*latitude, *longitude)
-        }
-        _ => static_output_gps_coordinates(),
-    }
-}
 
 #[derive(Clone)]
 enum PersistenceCommand {
@@ -203,8 +144,6 @@ struct AppState {
     capture_sender: Sender<CaptureEvent>,
     bluetooth_runtime: Option<BluetoothRuntime>,
     bluetooth_sender: Sender<BluetoothEvent>,
-    sdr_runtime: Option<SdrRuntime>,
-    _sdr_sender: Sender<SdrEvent>,
     session_capture_path: PathBuf,
     gps_track: Vec<GeoObservation>,
     last_gps_track_point_at: Option<chrono::DateTime<Utc>>,
@@ -219,8 +158,8 @@ struct AppState {
     assoc_sort: TableSortState,
     bluetooth_sort: TableSortState,
     pending_privilege_alert: Option<String>,
-    wifi_lock_restore_modes: HashMap<String, ChannelSelectionMode>,
-    wifi_locked_targets: HashMap<String, String>,
+    wifi_lock_restore_mode: Option<ChannelSelectionMode>,
+    wifi_locked_target: Option<String>,
     wifi_interface_restore_types: HashMap<String, String>,
     scan_start_in_progress: bool,
     scan_stop_in_progress: bool,
@@ -230,25 +169,6 @@ struct AppState {
 }
 
 impl AppState {
-    fn fixed_gps_observation(&self, rssi_dbm: Option<i32>) -> GeoObservation {
-        let (latitude, longitude) = output_gps_coordinates_for_settings(&self.settings);
-        GeoObservation {
-            timestamp: Utc::now(),
-            latitude,
-            longitude,
-            altitude_m: None,
-            rssi_dbm,
-        }
-    }
-
-    fn gps_track_for_export(&self) -> Vec<GeoObservation> {
-        if self.gps_track.is_empty() {
-            vec![self.fixed_gps_observation(None)]
-        } else {
-            self.gps_track.clone()
-        }
-    }
-
     fn enqueue_persistence(&self, command: PersistenceCommand) {
         let _ = self.persistence_sender.send(command);
     }
@@ -293,15 +213,8 @@ impl AppState {
     }
 
     fn reload_oui_from_settings(&mut self) -> Result<usize> {
-        let mut db = OuiDatabase::load_with_override(Some(&self.settings.oui_source_path))
+        let db = OuiDatabase::load_with_override(Some(&self.settings.oui_source_path))
             .or_else(|_| OuiDatabase::load_default())?;
-        if db.count() < 1000 {
-            if let Ok(fallback_db) = OuiDatabase::load_default() {
-                if fallback_db.count() > db.count() {
-                    db = fallback_db;
-                }
-            }
-        }
         let count = db.count();
         self.oui = db;
         self.backfill_oui_labels();
@@ -320,8 +233,6 @@ impl AppState {
 
     fn gps_status_text(&self) -> String {
         let status = self.gps_provider.status();
-        let (output_latitude, output_longitude) =
-            output_gps_coordinates_for_settings(&self.settings);
         let state = if status.connected {
             "Connected"
         } else {
@@ -329,12 +240,12 @@ impl AppState {
         };
         let last_fix = status
             .last_fix_timestamp
-            .map(format_display_timestamp)
+            .map(|ts| ts.format("%Y-%m-%d %H:%M:%S UTC").to_string())
             .unwrap_or_else(|| "No fix".to_string());
 
         format!(
-            "GPS {} | {} | Last Fix: {} | {} | Output GPS: {}, {}",
-            status.mode, state, last_fix, status.detail, output_latitude, output_longitude
+            "GPS {} | {} | Last Fix: {} | {}",
+            status.mode, state, last_fix, status.detail
         )
     }
 
@@ -548,7 +459,7 @@ impl AppState {
                     &handshake.bssid,
                     &handshake.client_mac,
                     handshake.timestamp,
-                    &self.gps_track_for_export(),
+                    &self.gps_track,
                 ) {
                     Ok(path) => self.push_status(format!(
                         "saved handshake capture: {}",
@@ -685,14 +596,17 @@ impl AppState {
     }
 
     fn build_geo_observation(&self, rssi_dbm: Option<i32>) -> Option<GeoObservation> {
-        Some(self.fixed_gps_observation(rssi_dbm))
+        let fix = self.gps_provider.current_fix()?;
+        Some(GeoObservation {
+            timestamp: Utc::now(),
+            latitude: fix.latitude,
+            longitude: fix.longitude,
+            altitude_m: fix.altitude_m,
+            rssi_dbm,
+        })
     }
 
     fn maybe_record_gps_track_point(&mut self) {
-        if self.capture_runtime.is_none() && self.bluetooth_runtime.is_none() {
-            return;
-        }
-
         let now = Utc::now();
         if let Some(last) = self.last_gps_track_point_at {
             if now - last < chrono::Duration::seconds(1) {
@@ -700,28 +614,24 @@ impl AppState {
             }
         }
 
-        let (latitude, longitude) = output_gps_coordinates_for_settings(&self.settings);
+        let Some(fix) = self.gps_provider.current_fix() else {
+            return;
+        };
+
+        if fix.latitude.abs() > 90.0 || fix.longitude.abs() > 180.0 {
+            return;
+        }
+
         let point = GeoObservation {
             timestamp: now,
-            latitude,
-            longitude,
-            altitude_m: None,
+            latitude: fix.latitude,
+            longitude: fix.longitude,
+            altitude_m: fix.altitude_m,
             rssi_dbm: None,
         };
         self.gps_track.push(point.clone());
         self.last_gps_track_point_at = Some(now);
         self.enqueue_persistence(PersistenceCommand::AddGpsTrackPoint(point));
-    }
-
-    fn start_sdr_runtime(&mut self, _config: SdrConfig) {
-        self.push_status("SDR runtime is disabled in EasyWiFi".to_string());
-    }
-
-    fn stop_sdr_runtime(&mut self) {
-        if let Some(runtime) = self.sdr_runtime.take() {
-            runtime.stop();
-            self.push_status("SDR runtime stopped".to_string());
-        }
     }
 
     fn start_scanning(&mut self) {
@@ -748,8 +658,9 @@ impl AppState {
 
         let interfaces = self.settings.interfaces.clone();
         let session_capture_path = self.session_capture_path.clone();
+        let geoip_city_db_path = self.settings.geoip_city_db_path.clone();
         let wifi_packet_header_mode = self.settings.wifi_packet_header_mode;
-        let enable_wifi_frame_parsing = self.settings.enable_wifi_frame_parsing;
+        let wifi_frame_parsing_enabled = self.settings.enable_wifi_frame_parsing;
         let gps_enabled = !matches!(self.settings.gps, GpsSettings::Disabled);
         let capture_sender = self.capture_sender.clone();
         let bluetooth_sender = self.bluetooth_sender.clone();
@@ -775,8 +686,9 @@ impl AppState {
                 let wifi_result = prepare_and_start_wifi_capture(
                     interfaces,
                     session_capture_path,
+                    geoip_city_db_path,
                     wifi_packet_header_mode,
-                    enable_wifi_frame_parsing,
+                    wifi_frame_parsing_enabled,
                     gps_enabled,
                     capture_sender,
                 );
@@ -841,7 +753,12 @@ impl AppState {
             .interfaces
             .iter()
             .find(|iface| iface.enabled)
-            .map(active_interface_name_for_settings)
+            .map(|iface| {
+                iface
+                    .monitor_interface_name
+                    .clone()
+                    .unwrap_or_else(|| iface.interface_name.clone())
+            })
     }
 
     fn lock_wifi_to_channel(
@@ -849,27 +766,27 @@ impl AppState {
         channel: u16,
         ht_mode: &str,
         target_label: impl Into<String>,
-        preferred_interface: Option<&str>,
     ) -> bool {
-        let Some(index) = self.enabled_wifi_interface_index_for_preferred(preferred_interface)
-        else {
+        let Some(iface) = self.settings.interfaces.first_mut() else {
             self.push_status("no Wi-Fi interface configured for AP lock".to_string());
             return false;
         };
 
-        let iface_name = active_interface_name_for_settings(&self.settings.interfaces[index]);
-        let previous_mode = self.settings.interfaces[index].channel_mode.clone();
-        self.wifi_lock_restore_modes
-            .entry(iface_name.clone())
-            .or_insert(previous_mode);
+        if self.wifi_lock_restore_mode.is_none() {
+            self.wifi_lock_restore_mode = Some(iface.channel_mode.clone());
+        }
 
-        self.settings.interfaces[index].channel_mode = ChannelSelectionMode::Locked {
+        iface.channel_mode = ChannelSelectionMode::Locked {
             channel,
             ht_mode: ht_mode.to_string(),
         };
         let target = target_label.into();
-        self.wifi_locked_targets
-            .insert(iface_name.clone(), target.clone());
+        self.wifi_locked_target = Some(target.clone());
+
+        let iface_name = iface
+            .monitor_interface_name
+            .clone()
+            .unwrap_or_else(|| iface.interface_name.clone());
         let restart_message = format!(
             "applying AP lock on {} channel {} ({}) for {}",
             iface_name, channel, ht_mode, target
@@ -883,22 +800,22 @@ impl AppState {
         }
     }
 
-    fn unlock_wifi_card(&mut self, preferred_interface: Option<&str>) -> bool {
-        let Some(iface_name) = self.locked_wifi_interface_name(preferred_interface) else {
+    fn unlock_wifi_card(&mut self) -> bool {
+        let Some(restore_mode) = self.wifi_lock_restore_mode.take() else {
             self.push_status("Wi-Fi card is not locked to an AP".to_string());
             return false;
         };
-        let Some(restore_mode) = self.wifi_lock_restore_modes.remove(&iface_name) else {
-            self.push_status("Wi-Fi card is not locked to an AP".to_string());
-            return false;
-        };
-        let Some(index) = self.enabled_wifi_interface_index_for_preferred(Some(&iface_name)) else {
+        let Some(iface) = self.settings.interfaces.first_mut() else {
             self.push_status("no Wi-Fi interface configured to unlock".to_string());
             return false;
         };
 
-        self.settings.interfaces[index].channel_mode = restore_mode;
-        let locked_target = self.wifi_locked_targets.remove(&iface_name);
+        iface.channel_mode = restore_mode;
+        let iface_name = iface
+            .monitor_interface_name
+            .clone()
+            .unwrap_or_else(|| iface.interface_name.clone());
+        let locked_target = self.wifi_locked_target.take();
         let restart_message = format!(
             "unlocking {}{}",
             iface_name,
@@ -916,63 +833,10 @@ impl AppState {
     }
 
     fn wifi_lock_status_text(&self) -> String {
-        match self.wifi_locked_targets.len() {
-            0 => "Unlocked".to_string(),
-            1 => self
-                .wifi_locked_targets
-                .iter()
-                .next()
-                .map(|(iface, target)| format!("{} on {}", target, iface))
-                .unwrap_or_else(|| "Unlocked".to_string()),
-            count => format!("Locked on {} adapters", count),
+        match (&self.wifi_locked_target, &self.wifi_lock_restore_mode) {
+            (Some(target), Some(_)) => format!("Locked to AP: {}", target),
+            _ => "Unlocked".to_string(),
         }
-    }
-
-    fn active_wifi_interface_name_for_preferred(
-        &self,
-        preferred_interface: Option<&str>,
-    ) -> Option<String> {
-        preferred_interface
-            .and_then(|preferred| {
-                self.settings
-                    .interfaces
-                    .iter()
-                    .find(|iface| iface.enabled && interface_matches_name(iface, preferred))
-                    .map(active_interface_name_for_settings)
-            })
-            .or_else(|| self.active_wifi_interface_name())
-    }
-
-    fn enabled_wifi_interface_index_for_preferred(
-        &self,
-        preferred_interface: Option<&str>,
-    ) -> Option<usize> {
-        if let Some(preferred) = preferred_interface {
-            if let Some(index) = self
-                .settings
-                .interfaces
-                .iter()
-                .position(|iface| iface.enabled && interface_matches_name(iface, preferred))
-            {
-                return Some(index);
-            }
-        }
-
-        self.settings
-            .interfaces
-            .iter()
-            .position(|iface| iface.enabled)
-    }
-
-    fn locked_wifi_interface_name(&self, preferred_interface: Option<&str>) -> Option<String> {
-        preferred_interface
-            .and_then(|preferred| {
-                self.wifi_lock_restore_modes
-                    .keys()
-                    .find(|iface| iface.eq_ignore_ascii_case(preferred))
-                    .cloned()
-            })
-            .or_else(|| self.wifi_lock_restore_modes.keys().next().cloned())
     }
 
     fn begin_async_scan_shutdown(&mut self, restart_message: Option<String>) -> bool {
@@ -986,7 +850,6 @@ impl AppState {
         }
 
         let capture_runtime = self.capture_runtime.take();
-        let had_wifi_runtime = capture_runtime.is_some();
         let bluetooth_runtime = self.bluetooth_runtime.take();
         if capture_runtime.is_none() && bluetooth_runtime.is_none() {
             if let Some(message) = restart_message {
@@ -1039,19 +902,13 @@ impl AppState {
                 }
             }
 
-            if had_wifi_runtime && !interfaces.is_empty() {
+            if !interfaces.is_empty() {
                 status_lines.extend(restore_wifi_interfaces(&interfaces, &restore_types));
             }
 
-            let cleared_interfaces = if had_wifi_runtime {
-                clear_runtime_interface_state(&interfaces)
-            } else {
-                interfaces.clone()
-            };
-
             let _ = tx.send(StopCompletion {
                 status_lines,
-                cleared_interfaces: Some(cleared_interfaces),
+                cleared_interfaces: Some(clear_runtime_interface_state(&interfaces)),
             });
         });
 
@@ -1171,2838 +1028,11 @@ fn start_persistence_worker(storage: StorageEngine) -> Sender<PersistenceCommand
 }
 
 fn internal_runtime_output_root() -> PathBuf {
-    let base = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
-    let uid = unsafe { libc::geteuid() };
-    base.join(format!("easywifi-runtime-uid{}", uid))
+    std::env::temp_dir().join("easywifi-runtime")
 }
 
 fn normalize_rssi_fraction(rssi_dbm: i32) -> f64 {
     ((rssi_dbm + 100) as f64 / 70.0).clamp(0.0, 1.0)
-}
-
-fn sdr_center_geiger_reading(spectrum_bins: &[f32]) -> Option<(f32, u32, f64)> {
-    if spectrum_bins.is_empty() {
-        return None;
-    }
-    let center = spectrum_bins.len() / 2;
-    let radius = (spectrum_bins.len() / 40).clamp(1, 8);
-    let start = center.saturating_sub(radius);
-    let end = (center + radius + 1).min(spectrum_bins.len());
-    let window = &spectrum_bins[start..end];
-    if window.is_empty() {
-        return None;
-    }
-
-    let avg_dbm = window.iter().copied().sum::<f32>() / window.len() as f32;
-    let fraction = ((avg_dbm as f64 + 120.0) / 90.0).clamp(0.0, 1.0);
-    let tone_hz = (250.0 + fraction * 1650.0).round() as u32;
-    Some((avg_dbm, tone_hz, fraction))
-}
-
-fn sdr_center_geiger_squelch_target(center_dbm: f32, margin_db: f32) -> f32 {
-    let margin = margin_db.clamp(2.0, 30.0);
-    (center_dbm - margin).clamp(-130.0, -10.0)
-}
-
-fn should_apply_sdr_auto_squelch(previous_target: Option<f32>, new_target: f32) -> bool {
-    previous_target
-        .map(|prior| (new_target - prior).abs() >= SDR_AUTO_SQUELCH_MIN_DELTA_DB)
-        .unwrap_or(true)
-}
-
-#[derive(Clone)]
-struct SdrOperatorPreset {
-    id: String,
-    label: String,
-    center_freq_hz: u64,
-    sample_rate_hz: u32,
-    scan_enabled: bool,
-    scan_start_hz: u64,
-    scan_end_hz: u64,
-    scan_step_hz: u64,
-    scan_steps_per_sec: f64,
-    squelch_dbm: f32,
-}
-
-#[derive(Clone)]
-struct FrequencyPresetEntry {
-    id: String,
-    label: String,
-    freq_hz: u64,
-}
-
-#[derive(Clone)]
-struct FrequencyPresetGroup {
-    label: String,
-    entries: Vec<FrequencyPresetEntry>,
-}
-
-#[derive(Clone)]
-struct ScannerPresetEntry {
-    id: String,
-    label: String,
-    start_hz: u64,
-    end_hz: u64,
-    sample_rate_hz: Option<u32>,
-    step_hz: u64,
-    steps_per_sec: f64,
-    squelch_dbm: f32,
-}
-
-#[derive(Clone)]
-struct ScannerPresetGroup {
-    label: String,
-    entries: Vec<ScannerPresetEntry>,
-}
-
-#[derive(Clone)]
-struct ProtocolScanMacro {
-    id: String,
-    label: String,
-    decoder_id: String,
-    start_hz: u64,
-    end_hz: u64,
-    step_hz: u64,
-    steps_per_sec: f64,
-    squelch_dbm: f32,
-}
-
-fn protocol_scan_macros() -> Vec<ProtocolScanMacro> {
-    vec![
-        ProtocolScanMacro {
-            id: "macro_pager_us".to_string(),
-            label: "Pager Sweep + POCSAG".to_string(),
-            decoder_id: "pocsag".to_string(),
-            start_hz: 929_000_000,
-            end_hz: 932_000_000,
-            step_hz: 12_500,
-            steps_per_sec: 8.0,
-            squelch_dbm: -82.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_dmr_uhf".to_string(),
-            label: "DMR UHF Sweep".to_string(),
-            decoder_id: "dmr".to_string(),
-            start_hz: 440_000_000,
-            end_hz: 470_000_000,
-            step_hz: 12_500,
-            steps_per_sec: 7.0,
-            squelch_dbm: -78.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_p25_800".to_string(),
-            label: "P25 800 MHz Sweep".to_string(),
-            decoder_id: "p25".to_string(),
-            start_hz: 851_000_000,
-            end_hz: 869_000_000,
-            step_hz: 12_500,
-            steps_per_sec: 6.0,
-            squelch_dbm: -78.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_dect".to_string(),
-            label: "DECT Band Sweep".to_string(),
-            decoder_id: "dect".to_string(),
-            start_hz: 1_880_000_000,
-            end_hz: 1_900_000_000,
-            step_hz: 1_728_000,
-            steps_per_sec: 6.0,
-            squelch_dbm: -76.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_satcom_lband".to_string(),
-            label: "L-Band Satcom Sweep".to_string(),
-            decoder_id: "inmarsat_stdc".to_string(),
-            start_hz: 1_525_000_000,
-            end_hz: 1_660_000_000,
-            step_hz: 10_000,
-            steps_per_sec: 5.0,
-            squelch_dbm: -78.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_iridium_lband".to_string(),
-            label: "Iridium L-Band Sweep".to_string(),
-            decoder_id: "iridium".to_string(),
-            start_hz: 1_616_000_000,
-            end_hz: 1_626_500_000,
-            step_hz: 20_000,
-            steps_per_sec: 5.0,
-            squelch_dbm: -80.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_gsm_lte_meta".to_string(),
-            label: "GSM/LTE Metadata Sweep".to_string(),
-            decoder_id: "gsm_lte".to_string(),
-            start_hz: 935_000_000,
-            end_hz: 960_000_000,
-            step_hz: 200_000,
-            steps_per_sec: 6.0,
-            squelch_dbm: -82.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_adsb_1090".to_string(),
-            label: "ADS-B 1090 Window".to_string(),
-            decoder_id: "ads_b".to_string(),
-            start_hz: 1_089_800_000,
-            end_hz: 1_090_200_000,
-            step_hz: 100_000,
-            steps_per_sec: 8.0,
-            squelch_dbm: -70.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_acars_vhf".to_string(),
-            label: "ACARS VHF Sweep".to_string(),
-            decoder_id: "acars".to_string(),
-            start_hz: 131_125_000,
-            end_hz: 131_725_000,
-            step_hz: 25_000,
-            steps_per_sec: 8.0,
-            squelch_dbm: -82.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_ais_marine".to_string(),
-            label: "AIS Maritime Window".to_string(),
-            decoder_id: "ais".to_string(),
-            start_hz: 161_975_000,
-            end_hz: 162_025_000,
-            step_hz: 25_000,
-            steps_per_sec: 8.0,
-            squelch_dbm: -80.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_aprs_144390".to_string(),
-            label: "APRS 144.390 Window".to_string(),
-            decoder_id: "aprs_ax25".to_string(),
-            start_hz: 144_300_000,
-            end_hz: 144_500_000,
-            step_hz: 25_000,
-            steps_per_sec: 8.0,
-            squelch_dbm: -82.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_radiosonde_400_406".to_string(),
-            label: "Radiosonde 400-406 MHz".to_string(),
-            decoder_id: "radiosonde_rs41".to_string(),
-            start_hz: 400_000_000,
-            end_hz: 406_000_000,
-            step_hz: 25_000,
-            steps_per_sec: 7.0,
-            squelch_dbm: -84.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_drone_dji_24".to_string(),
-            label: "Drone DJI/RID 2.4 GHz".to_string(),
-            decoder_id: "drone_dji_droneid".to_string(),
-            start_hz: 2_400_000_000,
-            end_hz: 2_483_500_000,
-            step_hz: 2_000_000,
-            steps_per_sec: 7.0,
-            squelch_dbm: -80.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_drone_rid_58".to_string(),
-            label: "Drone RID 5.8 GHz".to_string(),
-            decoder_id: "drone_opendroneid".to_string(),
-            start_hz: 5_725_000_000,
-            end_hz: 5_850_000_000,
-            step_hz: 2_000_000,
-            steps_per_sec: 7.0,
-            squelch_dbm: -80.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_weather_apt".to_string(),
-            label: "Weather Sat APT Sweep".to_string(),
-            decoder_id: "weather_noaa_apt".to_string(),
-            start_hz: 137_000_000,
-            end_hz: 138_000_000,
-            step_hz: 25_000,
-            steps_per_sec: 6.0,
-            squelch_dbm: -86.0,
-        },
-        ProtocolScanMacro {
-            id: "macro_iot_915".to_string(),
-            label: "915 MHz IoT Sweep".to_string(),
-            decoder_id: "rtl_433".to_string(),
-            start_hz: 902_000_000,
-            end_hz: 928_000_000,
-            step_hz: 200_000,
-            steps_per_sec: 6.0,
-            squelch_dbm: -80.0,
-        },
-    ]
-}
-
-fn scanner_presets_from_settings(settings: &AppSettings) -> Option<ScannerPresetGroup> {
-    let entries = settings
-        .sdr_operator_presets
-        .iter()
-        .enumerate()
-        .filter(|(_, preset)| preset.scan_enabled && preset.scan_start_hz < preset.scan_end_hz)
-        .map(|(index, preset)| ScannerPresetEntry {
-            id: format!("saved_user_{}", user_sdr_preset_id(index)),
-            label: normalized_sdr_preset_label(&preset.label, preset.center_freq_hz),
-            start_hz: preset.scan_start_hz,
-            end_hz: preset.scan_end_hz,
-            sample_rate_hz: Some(preset.sample_rate_hz),
-            step_hz: preset.scan_step_hz.max(1),
-            steps_per_sec: if preset.scan_steps_per_sec.is_finite()
-                && preset.scan_steps_per_sec > 0.0
-            {
-                preset.scan_steps_per_sec
-            } else {
-                6.0
-            },
-            squelch_dbm: preset.squelch_dbm.clamp(-130.0, -10.0),
-        })
-        .collect::<Vec<_>>();
-    if entries.is_empty() {
-        None
-    } else {
-        Some(ScannerPresetGroup {
-            label: "Saved Scanner Presets".to_string(),
-            entries,
-        })
-    }
-}
-
-fn default_frequency_preset_groups() -> Vec<FrequencyPresetGroup> {
-    vec![
-        FrequencyPresetGroup {
-            label: "Wi-Fi Channels".to_string(),
-            entries: wifi_channel_frequency_presets(),
-        },
-        FrequencyPresetGroup {
-            label: "Bluetooth Frequencies".to_string(),
-            entries: bluetooth_frequency_presets(),
-        },
-        FrequencyPresetGroup {
-            label: "Pager Frequencies".to_string(),
-            entries: pager_frequency_presets(),
-        },
-        FrequencyPresetGroup {
-            label: "Satellite Frequencies".to_string(),
-            entries: satellite_frequency_presets(),
-        },
-        FrequencyPresetGroup {
-            label: "Weather / Sonde".to_string(),
-            entries: weather_sonde_frequency_presets(),
-        },
-        FrequencyPresetGroup {
-            label: "Digital Voice / Utility".to_string(),
-            entries: digital_voice_utility_presets(),
-        },
-        FrequencyPresetGroup {
-            label: "IoT / ISM".to_string(),
-            entries: iot_ism_frequency_presets(),
-        },
-        FrequencyPresetGroup {
-            label: "Drone / RID".to_string(),
-            entries: drone_rid_frequency_presets(),
-        },
-    ]
-}
-
-fn cellular_arfcn_frequency_groups(uplink: bool) -> Vec<FrequencyPresetGroup> {
-    let mut groups = Vec::<FrequencyPresetGroup>::new();
-    let link_suffix = if uplink { "Uplink" } else { "Downlink" };
-    let link_id = if uplink { "ul" } else { "dl" };
-
-    let mut gsm850_entries = Vec::<FrequencyPresetEntry>::new();
-    for arfcn in 128u16..=251u16 {
-        let uplink_mhz = 824.2 + 0.2 * (arfcn - 128) as f64;
-        let freq_mhz = if uplink {
-            uplink_mhz
-        } else {
-            uplink_mhz + 45.0
-        };
-        gsm850_entries.push(FrequencyPresetEntry {
-            id: format!("arfcn_{}_gsm850_{}", link_id, arfcn),
-            label: format!("ARFCN {} {}", arfcn, link_suffix),
-            freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
-        });
-    }
-    groups.push(FrequencyPresetGroup {
-        label: "GSM 850".to_string(),
-        entries: gsm850_entries,
-    });
-
-    let mut egsm900_entries = Vec::<FrequencyPresetEntry>::new();
-    for arfcn in 0u16..=124u16 {
-        let uplink_mhz = 890.0 + 0.2 * arfcn as f64;
-        let freq_mhz = if uplink {
-            uplink_mhz
-        } else {
-            uplink_mhz + 45.0
-        };
-        egsm900_entries.push(FrequencyPresetEntry {
-            id: format!("arfcn_{}_egsm900_{}", link_id, arfcn),
-            label: format!("ARFCN {} {}", arfcn, link_suffix),
-            freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
-        });
-    }
-    for arfcn in 975u16..=1023u16 {
-        let uplink_mhz = 890.0 + 0.2 * (arfcn as f64 - 1024.0);
-        let freq_mhz = if uplink {
-            uplink_mhz
-        } else {
-            uplink_mhz + 45.0
-        };
-        egsm900_entries.push(FrequencyPresetEntry {
-            id: format!("arfcn_{}_egsm900_{}", link_id, arfcn),
-            label: format!("ARFCN {} {}", arfcn, link_suffix),
-            freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
-        });
-    }
-    groups.push(FrequencyPresetGroup {
-        label: "E-GSM 900".to_string(),
-        entries: egsm900_entries,
-    });
-
-    let mut dcs1800_entries = Vec::<FrequencyPresetEntry>::new();
-    for arfcn in 512u16..=885u16 {
-        let uplink_mhz = 1710.2 + 0.2 * (arfcn - 512) as f64;
-        let freq_mhz = if uplink {
-            uplink_mhz
-        } else {
-            uplink_mhz + 95.0
-        };
-        dcs1800_entries.push(FrequencyPresetEntry {
-            id: format!("arfcn_{}_dcs1800_{}", link_id, arfcn),
-            label: format!("ARFCN {} {}", arfcn, link_suffix),
-            freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
-        });
-    }
-    groups.push(FrequencyPresetGroup {
-        label: "DCS 1800".to_string(),
-        entries: dcs1800_entries,
-    });
-
-    let mut pcs1900_entries = Vec::<FrequencyPresetEntry>::new();
-    for arfcn in 512u16..=810u16 {
-        let uplink_mhz = 1850.2 + 0.2 * (arfcn - 512) as f64;
-        let freq_mhz = if uplink {
-            uplink_mhz
-        } else {
-            uplink_mhz + 80.0
-        };
-        pcs1900_entries.push(FrequencyPresetEntry {
-            id: format!("arfcn_{}_pcs1900_{}", link_id, arfcn),
-            label: format!("ARFCN {} {}", arfcn, link_suffix),
-            freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
-        });
-    }
-    groups.push(FrequencyPresetGroup {
-        label: "PCS 1900".to_string(),
-        entries: pcs1900_entries,
-    });
-
-    for (band_label, band_id, start_uarfcn, end_uarfcn, uplink_start_mhz, downlink_start_mhz) in [
-        ("UMTS Band 1", "umts_b1", 9612u16, 9888u16, 1922.4, 2112.4),
-        ("UMTS Band 2", "umts_b2", 9262u16, 9538u16, 1852.4, 1932.4),
-        ("UMTS Band 5", "umts_b5", 4132u16, 4233u16, 824.2, 869.2),
-        ("UMTS Band 8", "umts_b8", 2712u16, 2863u16, 880.2, 925.2),
-    ] {
-        let mut entries = Vec::<FrequencyPresetEntry>::new();
-        for uarfcn in start_uarfcn..=end_uarfcn {
-            let offset = (uarfcn - start_uarfcn) as f64;
-            let freq_mhz = if uplink {
-                uplink_start_mhz + 0.2 * offset
-            } else {
-                downlink_start_mhz + 0.2 * offset
-            };
-            entries.push(FrequencyPresetEntry {
-                id: format!("arfcn_{}_{}_{}", link_id, band_id, uarfcn),
-                label: format!("UARFCN {} {}", uarfcn, link_suffix),
-                freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
-            });
-        }
-        groups.push(FrequencyPresetGroup {
-            label: band_label.to_string(),
-            entries,
-        });
-    }
-
-    for (
-        band_label,
-        band_id,
-        dl_start_earfcn,
-        ul_start_earfcn,
-        count,
-        uplink_start_mhz,
-        downlink_start_mhz,
-    ) in [
-        (
-            "LTE Band 2",
-            "lte_b2",
-            600u32,
-            18_600u32,
-            600u32,
-            1850.0,
-            1930.0,
-        ),
-        (
-            "LTE Band 4",
-            "lte_b4",
-            1950u32,
-            19_950u32,
-            450u32,
-            1710.0,
-            2110.0,
-        ),
-        (
-            "LTE Band 5",
-            "lte_b5",
-            2400u32,
-            20_400u32,
-            250u32,
-            824.0,
-            869.0,
-        ),
-        (
-            "LTE Band 12",
-            "lte_b12",
-            5010u32,
-            23_010u32,
-            170u32,
-            699.0,
-            729.0,
-        ),
-        (
-            "LTE Band 13",
-            "lte_b13",
-            5180u32,
-            23_180u32,
-            100u32,
-            777.0,
-            746.0,
-        ),
-        (
-            "LTE Band 14",
-            "lte_b14",
-            5280u32,
-            23_280u32,
-            100u32,
-            788.0,
-            758.0,
-        ),
-        (
-            "LTE Band 17",
-            "lte_b17",
-            5730u32,
-            23_730u32,
-            120u32,
-            704.0,
-            734.0,
-        ),
-        (
-            "LTE Band 25",
-            "lte_b25",
-            8040u32,
-            26_040u32,
-            650u32,
-            1850.0,
-            1930.0,
-        ),
-        (
-            "LTE Band 26",
-            "lte_b26",
-            8690u32,
-            26_690u32,
-            350u32,
-            814.0,
-            859.0,
-        ),
-        (
-            "LTE Band 66",
-            "lte_b66",
-            66_436u32,
-            131_972u32,
-            900u32,
-            1710.0,
-            2110.0,
-        ),
-        (
-            "LTE Band 71",
-            "lte_b71",
-            68_586u32,
-            133_122u32,
-            350u32,
-            663.0,
-            617.0,
-        ),
-    ] {
-        let mut entries = Vec::<FrequencyPresetEntry>::new();
-        for offset in 0..count {
-            let earfcn = if uplink {
-                ul_start_earfcn + offset
-            } else {
-                dl_start_earfcn + offset
-            };
-            let offset = offset as f64;
-            let freq_mhz = if uplink {
-                uplink_start_mhz + 0.1 * offset
-            } else {
-                downlink_start_mhz + 0.1 * offset
-            };
-            entries.push(FrequencyPresetEntry {
-                id: format!("arfcn_{}_{}_{}", link_id, band_id, earfcn),
-                label: format!("EARFCN {} {}", earfcn, link_suffix),
-                freq_hz: (freq_mhz * 1_000_000.0).round() as u64,
-            });
-        }
-        groups.push(FrequencyPresetGroup {
-            label: band_label.to_string(),
-            entries,
-        });
-    }
-
-    for group in &mut groups {
-        group.entries.sort_by_key(|entry| entry.freq_hz);
-    }
-    groups
-}
-
-fn default_scanner_preset_groups() -> Vec<ScannerPresetGroup> {
-    vec![
-        ScannerPresetGroup {
-            label: "2.4 GHz Scans".to_string(),
-            entries: vec![
-                ScannerPresetEntry {
-                    id: "scan_2400_24835".to_string(),
-                    label: "2.4 GHz Full Band".to_string(),
-                    start_hz: 2_400_000_000,
-                    end_hz: 2_483_500_000,
-                    sample_rate_hz: None,
-                    step_hz: 1_000_000,
-                    steps_per_sec: 8.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_wifi24".to_string(),
-                    label: "Wi-Fi 2.4 Channels".to_string(),
-                    start_hz: 2_412_000_000,
-                    end_hz: 2_472_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 5_000_000,
-                    steps_per_sec: 8.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_bt24".to_string(),
-                    label: "Bluetooth 2.4 Band".to_string(),
-                    start_hz: 2_402_000_000,
-                    end_hz: 2_480_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 1_000_000,
-                    steps_per_sec: 10.0,
-                    squelch_dbm: -84.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_ble_data".to_string(),
-                    label: "BLE Data Channels".to_string(),
-                    start_hz: 2_404_000_000,
-                    end_hz: 2_478_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 2_000_000,
-                    steps_per_sec: 10.0,
-                    squelch_dbm: -84.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_zigbee24".to_string(),
-                    label: "Zigbee 2.4 Channels".to_string(),
-                    start_hz: 2_405_000_000,
-                    end_hz: 2_480_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 5_000_000,
-                    steps_per_sec: 9.0,
-                    squelch_dbm: -84.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_thread24".to_string(),
-                    label: "Thread 2.4 Channels".to_string(),
-                    start_hz: 2_405_000_000,
-                    end_hz: 2_480_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 5_000_000,
-                    steps_per_sec: 9.0,
-                    squelch_dbm: -84.0,
-                },
-            ],
-        },
-        ScannerPresetGroup {
-            label: "Wi-Fi High-Band Scans".to_string(),
-            entries: vec![
-                ScannerPresetEntry {
-                    id: "scan_wifi5_full".to_string(),
-                    label: "Wi-Fi 5 Full".to_string(),
-                    start_hz: 5_170_000_000,
-                    end_hz: 5_835_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 5_000_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_wifi6e_full".to_string(),
-                    label: "Wi-Fi 6E Full".to_string(),
-                    start_hz: 5_925_000_000,
-                    end_hz: 7_125_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 5_000_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -80.0,
-                },
-            ],
-        },
-        ScannerPresetGroup {
-            label: "Drone / RID Scans".to_string(),
-            entries: vec![
-                ScannerPresetEntry {
-                    id: "scan_drone_rid_2400_24835".to_string(),
-                    label: "Drone RID 2.4 GHz".to_string(),
-                    start_hz: 2_400_000_000,
-                    end_hz: 2_483_500_000,
-                    sample_rate_hz: None,
-                    step_hz: 2_000_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_drone_rid_5725_5850".to_string(),
-                    label: "Drone RID 5.8 GHz".to_string(),
-                    start_hz: 5_725_000_000,
-                    end_hz: 5_850_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 2_000_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -80.0,
-                },
-            ],
-        },
-        ScannerPresetGroup {
-            label: "Public Safety Scans".to_string(),
-            entries: vec![
-                ScannerPresetEntry {
-                    id: "scan_p25_700_769_775".to_string(),
-                    label: "P25 700 MHz (769-775)".to_string(),
-                    start_hz: 769_000_000,
-                    end_hz: 775_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 12_500,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -78.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_p25_800_851_869".to_string(),
-                    label: "P25 800 MHz (851-869)".to_string(),
-                    start_hz: 851_000_000,
-                    end_hz: 869_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 12_500,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -78.0,
-                },
-            ],
-        },
-        ScannerPresetGroup {
-            label: "Cellular / Sat Metadata Scans".to_string(),
-            entries: vec![
-                ScannerPresetEntry {
-                    id: "scan_gsm_lte_935_960".to_string(),
-                    label: "GSM/LTE Metadata 935-960".to_string(),
-                    start_hz: 935_000_000,
-                    end_hz: 960_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_iridium_1616_16265".to_string(),
-                    label: "Iridium L-Band 1616-1626.5".to_string(),
-                    start_hz: 1_616_000_000,
-                    end_hz: 1_626_500_000,
-                    sample_rate_hz: None,
-                    step_hz: 20_000,
-                    steps_per_sec: 5.0,
-                    squelch_dbm: -80.0,
-                },
-            ],
-        },
-        ScannerPresetGroup {
-            label: "IoT / ISM Scans".to_string(),
-            entries: vec![
-                ScannerPresetEntry {
-                    id: "scan_315_320".to_string(),
-                    label: "315 MHz ISM Window".to_string(),
-                    start_hz: 314_000_000,
-                    end_hz: 316_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 25_000,
-                    steps_per_sec: 8.0,
-                    squelch_dbm: -84.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_433_435".to_string(),
-                    label: "433 MHz ISM Window".to_string(),
-                    start_hz: 433_000_000,
-                    end_hz: 435_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 25_000,
-                    steps_per_sec: 8.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_902_928".to_string(),
-                    label: "902-928 MHz ISM".to_string(),
-                    start_hz: 902_000_000,
-                    end_hz: 928_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_863_870".to_string(),
-                    label: "863-870 MHz ISM".to_string(),
-                    start_hz: 863_000_000,
-                    end_hz: 870_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 25_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -82.0,
-                },
-            ],
-        },
-        ScannerPresetGroup {
-            label: "Cellular ARFCN Scans".to_string(),
-            entries: vec![
-                ScannerPresetEntry {
-                    id: "scan_gsm850_ul".to_string(),
-                    label: "GSM 850 Uplink".to_string(),
-                    start_hz: 824_200_000,
-                    end_hz: 848_800_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_gsm850_dl".to_string(),
-                    label: "GSM 850 Download".to_string(),
-                    start_hz: 869_200_000,
-                    end_hz: 893_800_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_egsm900_ul".to_string(),
-                    label: "E-GSM 900 Uplink".to_string(),
-                    start_hz: 880_200_000,
-                    end_hz: 914_800_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_egsm900_dl".to_string(),
-                    label: "E-GSM 900 Download".to_string(),
-                    start_hz: 925_200_000,
-                    end_hz: 959_800_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_dcs1800_ul".to_string(),
-                    label: "DCS 1800 Uplink".to_string(),
-                    start_hz: 1_710_200_000,
-                    end_hz: 1_784_800_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_dcs1800_dl".to_string(),
-                    label: "DCS 1800 Download".to_string(),
-                    start_hz: 1_805_200_000,
-                    end_hz: 1_879_800_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_pcs1900_ul".to_string(),
-                    label: "PCS 1900 Uplink".to_string(),
-                    start_hz: 1_850_200_000,
-                    end_hz: 1_909_800_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_pcs1900_dl".to_string(),
-                    label: "PCS 1900 Download".to_string(),
-                    start_hz: 1_930_200_000,
-                    end_hz: 1_989_800_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_umts_b1_ul".to_string(),
-                    label: "UMTS Band 1 Uplink".to_string(),
-                    start_hz: 1_922_400_000,
-                    end_hz: 1_977_600_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_umts_b1_dl".to_string(),
-                    label: "UMTS Band 1 Download".to_string(),
-                    start_hz: 2_112_400_000,
-                    end_hz: 2_167_600_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_lte_b2_ul".to_string(),
-                    label: "LTE Band 2 Uplink".to_string(),
-                    start_hz: 1_850_000_000,
-                    end_hz: 1_909_900_000,
-                    sample_rate_hz: None,
-                    step_hz: 100_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_lte_b2_dl".to_string(),
-                    label: "LTE Band 2 Download".to_string(),
-                    start_hz: 1_930_000_000,
-                    end_hz: 1_989_900_000,
-                    sample_rate_hz: None,
-                    step_hz: 100_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_umts_b2_ul".to_string(),
-                    label: "UMTS Band 2 Uplink".to_string(),
-                    start_hz: 1_852_400_000,
-                    end_hz: 1_907_600_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_umts_b2_dl".to_string(),
-                    label: "UMTS Band 2 Download".to_string(),
-                    start_hz: 1_932_400_000,
-                    end_hz: 1_987_600_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_umts_b5_ul".to_string(),
-                    label: "UMTS Band 5 Uplink".to_string(),
-                    start_hz: 824_200_000,
-                    end_hz: 844_400_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_umts_b5_dl".to_string(),
-                    label: "UMTS Band 5 Download".to_string(),
-                    start_hz: 869_200_000,
-                    end_hz: 889_400_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_umts_b8_ul".to_string(),
-                    label: "UMTS Band 8 Uplink".to_string(),
-                    start_hz: 880_200_000,
-                    end_hz: 910_400_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_umts_b8_dl".to_string(),
-                    label: "UMTS Band 8 Download".to_string(),
-                    start_hz: 925_200_000,
-                    end_hz: 955_400_000,
-                    sample_rate_hz: None,
-                    step_hz: 200_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_lte_b4_ul".to_string(),
-                    label: "LTE Band 4 Uplink".to_string(),
-                    start_hz: 1_710_000_000,
-                    end_hz: 1_754_900_000,
-                    sample_rate_hz: None,
-                    step_hz: 100_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_lte_b4_dl".to_string(),
-                    label: "LTE Band 4 Download".to_string(),
-                    start_hz: 2_110_000_000,
-                    end_hz: 2_154_900_000,
-                    sample_rate_hz: None,
-                    step_hz: 100_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_lte_b66_ul".to_string(),
-                    label: "LTE Band 66 Uplink".to_string(),
-                    start_hz: 1_710_000_000,
-                    end_hz: 1_799_900_000,
-                    sample_rate_hz: None,
-                    step_hz: 100_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_lte_b66_dl".to_string(),
-                    label: "LTE Band 66 Download".to_string(),
-                    start_hz: 2_110_000_000,
-                    end_hz: 2_199_900_000,
-                    sample_rate_hz: None,
-                    step_hz: 100_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_lte_b71_ul".to_string(),
-                    label: "LTE Band 71 Uplink".to_string(),
-                    start_hz: 663_000_000,
-                    end_hz: 697_900_000,
-                    sample_rate_hz: None,
-                    step_hz: 100_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_lte_b71_dl".to_string(),
-                    label: "LTE Band 71 Download".to_string(),
-                    start_hz: 617_000_000,
-                    end_hz: 651_900_000,
-                    sample_rate_hz: None,
-                    step_hz: 100_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -80.0,
-                },
-            ],
-        },
-        ScannerPresetGroup {
-            label: "DECT / Pager / Satcom Scans".to_string(),
-            entries: vec![
-                ScannerPresetEntry {
-                    id: "scan_dect_1880_1900".to_string(),
-                    label: "DECT 1880-1900".to_string(),
-                    start_hz: 1_880_000_000,
-                    end_hz: 1_900_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 1_728_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -76.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_weather_apt_137_138".to_string(),
-                    label: "Weather Sat APT 137-138".to_string(),
-                    start_hz: 137_000_000,
-                    end_hz: 138_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 25_000,
-                    steps_per_sec: 6.0,
-                    squelch_dbm: -86.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_radiosonde_400_406".to_string(),
-                    label: "Radiosonde 400-406".to_string(),
-                    start_hz: 400_000_000,
-                    end_hz: 406_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 25_000,
-                    steps_per_sec: 7.0,
-                    squelch_dbm: -84.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_pager_vhf_152_159".to_string(),
-                    label: "Pager VHF 152-159".to_string(),
-                    start_hz: 152_000_000,
-                    end_hz: 159_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 12_500,
-                    steps_per_sec: 8.0,
-                    squelch_dbm: -84.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_pager_uhf_454_460".to_string(),
-                    label: "Pager UHF 454-460".to_string(),
-                    start_hz: 454_000_000,
-                    end_hz: 460_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 12_500,
-                    steps_per_sec: 8.0,
-                    squelch_dbm: -82.0,
-                },
-                ScannerPresetEntry {
-                    id: "scan_sat_lband_1525_1660".to_string(),
-                    label: "Satellite L-Band 1525-1660".to_string(),
-                    start_hz: 1_525_000_000,
-                    end_hz: 1_660_000_000,
-                    sample_rate_hz: None,
-                    step_hz: 10_000,
-                    steps_per_sec: 5.0,
-                    squelch_dbm: -78.0,
-                },
-            ],
-        },
-    ]
-}
-
-fn wifi_channel_frequency_presets() -> Vec<FrequencyPresetEntry> {
-    let mut out = Vec::new();
-    for channel in 1u64..=13u64 {
-        out.push(FrequencyPresetEntry {
-            id: format!("wifi24_ch{channel:02}"),
-            label: format!("Wi-Fi 2.4 Ch {channel:02}"),
-            freq_hz: (2407 + (channel * 5)) * 1_000_000,
-        });
-    }
-    out.push(FrequencyPresetEntry {
-        id: "wifi24_ch14".to_string(),
-        label: "Wi-Fi 2.4 Ch 14".to_string(),
-        freq_hz: 2_484_000_000,
-    });
-
-    for channel in [
-        36u64, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140,
-        144, 149, 153, 157, 161, 165, 169, 173,
-    ] {
-        out.push(FrequencyPresetEntry {
-            id: format!("wifi5_ch{channel}"),
-            label: format!("Wi-Fi 5 Ch {channel}"),
-            freq_hz: (5000 + (channel * 5)) * 1_000_000,
-        });
-    }
-
-    for channel in (1u64..=233u64).step_by(4) {
-        out.push(FrequencyPresetEntry {
-            id: format!("wifi6_ch{channel}"),
-            label: format!("Wi-Fi 6E Ch {channel}"),
-            freq_hz: (5950 + (channel * 5)) * 1_000_000,
-        });
-    }
-
-    out
-}
-
-fn bluetooth_frequency_presets() -> Vec<FrequencyPresetEntry> {
-    let mut out = Vec::new();
-    for channel in 0u64..=78u64 {
-        out.push(FrequencyPresetEntry {
-            id: format!("bt_classic_ch{channel:02}"),
-            label: format!("Bluetooth Classic Ch {channel:02}"),
-            freq_hz: (2402 + channel) * 1_000_000,
-        });
-    }
-
-    for channel in 0u64..=36u64 {
-        let mhz = if channel <= 10 {
-            2404 + (2 * channel)
-        } else {
-            2428 + (2 * (channel - 11))
-        };
-        out.push(FrequencyPresetEntry {
-            id: format!("ble_data_ch{channel:02}"),
-            label: format!("BLE Data Ch {channel:02}"),
-            freq_hz: mhz * 1_000_000,
-        });
-    }
-
-    out.push(FrequencyPresetEntry {
-        id: "ble_adv_ch37".to_string(),
-        label: "BLE Adv Ch 37".to_string(),
-        freq_hz: 2_402_000_000,
-    });
-    out.push(FrequencyPresetEntry {
-        id: "ble_adv_ch38".to_string(),
-        label: "BLE Adv Ch 38".to_string(),
-        freq_hz: 2_426_000_000,
-    });
-    out.push(FrequencyPresetEntry {
-        id: "ble_adv_ch39".to_string(),
-        label: "BLE Adv Ch 39".to_string(),
-        freq_hz: 2_480_000_000,
-    });
-
-    out
-}
-
-fn pager_frequency_presets() -> Vec<FrequencyPresetEntry> {
-    vec![
-        FrequencyPresetEntry {
-            id: "pager_1520075".to_string(),
-            label: "Pager 152.0075".to_string(),
-            freq_hz: 152_007_500,
-        },
-        FrequencyPresetEntry {
-            id: "pager_1522400".to_string(),
-            label: "Pager 152.2400".to_string(),
-            freq_hz: 152_240_000,
-        },
-        FrequencyPresetEntry {
-            id: "pager_1524800".to_string(),
-            label: "Pager 152.4800".to_string(),
-            freq_hz: 152_480_000,
-        },
-        FrequencyPresetEntry {
-            id: "pager_1574500".to_string(),
-            label: "Pager 157.4500".to_string(),
-            freq_hz: 157_450_000,
-        },
-        FrequencyPresetEntry {
-            id: "pager_1581000".to_string(),
-            label: "Pager 158.1000".to_string(),
-            freq_hz: 158_100_000,
-        },
-        FrequencyPresetEntry {
-            id: "pager_4540250".to_string(),
-            label: "Pager 454.0250".to_string(),
-            freq_hz: 454_025_000,
-        },
-        FrequencyPresetEntry {
-            id: "pager_4540750".to_string(),
-            label: "Pager 454.0750".to_string(),
-            freq_hz: 454_075_000,
-        },
-        FrequencyPresetEntry {
-            id: "pager_9296125".to_string(),
-            label: "Pager 929.6125".to_string(),
-            freq_hz: 929_612_500,
-        },
-        FrequencyPresetEntry {
-            id: "pager_9310625".to_string(),
-            label: "Pager 931.0625".to_string(),
-            freq_hz: 931_062_500,
-        },
-    ]
-}
-
-fn satellite_frequency_presets() -> Vec<FrequencyPresetEntry> {
-    vec![
-        FrequencyPresetEntry {
-            id: "sat_noaa15_137620".to_string(),
-            label: "NOAA-15 APT".to_string(),
-            freq_hz: 137_620_000,
-        },
-        FrequencyPresetEntry {
-            id: "sat_noaa18_1379125".to_string(),
-            label: "NOAA-18 APT".to_string(),
-            freq_hz: 137_912_500,
-        },
-        FrequencyPresetEntry {
-            id: "sat_noaa19_137100".to_string(),
-            label: "NOAA-19 APT".to_string(),
-            freq_hz: 137_100_000,
-        },
-        FrequencyPresetEntry {
-            id: "sat_meteor_137900".to_string(),
-            label: "METEOR-M2 LRPT".to_string(),
-            freq_hz: 137_900_000,
-        },
-        FrequencyPresetEntry {
-            id: "sat_orbcomm_137500".to_string(),
-            label: "Orbcomm".to_string(),
-            freq_hz: 137_500_000,
-        },
-        FrequencyPresetEntry {
-            id: "sat_iss_vhf_145800".to_string(),
-            label: "ISS VHF".to_string(),
-            freq_hz: 145_800_000,
-        },
-        FrequencyPresetEntry {
-            id: "sat_goes_lrit_1694100".to_string(),
-            label: "GOES LRIT".to_string(),
-            freq_hz: 1_694_100_000,
-        },
-        FrequencyPresetEntry {
-            id: "sat_goes_hrit_1694200".to_string(),
-            label: "GOES HRIT".to_string(),
-            freq_hz: 1_694_200_000,
-        },
-        FrequencyPresetEntry {
-            id: "sat_inmarsat_stdc_1541450".to_string(),
-            label: "Inmarsat STD-C".to_string(),
-            freq_hz: 1_541_450_000,
-        },
-        FrequencyPresetEntry {
-            id: "sat_inmarsat_aero_1545000".to_string(),
-            label: "Inmarsat Aero".to_string(),
-            freq_hz: 1_545_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "sat_iridium_1626000".to_string(),
-            label: "Iridium".to_string(),
-            freq_hz: 1_626_000_000,
-        },
-    ]
-}
-
-fn weather_sonde_frequency_presets() -> Vec<FrequencyPresetEntry> {
-    vec![
-        FrequencyPresetEntry {
-            id: "sonde_400500".to_string(),
-            label: "Radiosonde 400.500".to_string(),
-            freq_hz: 400_500_000,
-        },
-        FrequencyPresetEntry {
-            id: "sonde_401500".to_string(),
-            label: "Radiosonde 401.500".to_string(),
-            freq_hz: 401_500_000,
-        },
-        FrequencyPresetEntry {
-            id: "sonde_403500".to_string(),
-            label: "Radiosonde RS41 403.500".to_string(),
-            freq_hz: 403_500_000,
-        },
-        FrequencyPresetEntry {
-            id: "sonde_404500".to_string(),
-            label: "Radiosonde 404.500".to_string(),
-            freq_hz: 404_500_000,
-        },
-        FrequencyPresetEntry {
-            id: "sonde_405100".to_string(),
-            label: "Radiosonde 405.100".to_string(),
-            freq_hz: 405_100_000,
-        },
-    ]
-}
-
-fn digital_voice_utility_presets() -> Vec<FrequencyPresetEntry> {
-    vec![
-        FrequencyPresetEntry {
-            id: "dect_1886400".to_string(),
-            label: "DECT Center".to_string(),
-            freq_hz: 1_886_400_000,
-        },
-        FrequencyPresetEntry {
-            id: "dect_1881792".to_string(),
-            label: "DECT Alt".to_string(),
-            freq_hz: 1_881_792_000,
-        },
-        FrequencyPresetEntry {
-            id: "dmr_446075".to_string(),
-            label: "DMR Simplex 446.075".to_string(),
-            freq_hz: 446_075_000,
-        },
-        FrequencyPresetEntry {
-            id: "dmr_440000".to_string(),
-            label: "DMR UHF Center".to_string(),
-            freq_hz: 440_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "p25_851000".to_string(),
-            label: "P25 800 MHz".to_string(),
-            freq_hz: 851_000_000,
-        },
-    ]
-}
-
-fn iot_ism_frequency_presets() -> Vec<FrequencyPresetEntry> {
-    let mut out = vec![
-        FrequencyPresetEntry {
-            id: "ism_315000".to_string(),
-            label: "ISM 315.000".to_string(),
-            freq_hz: 315_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "ism_390000".to_string(),
-            label: "ISM 390.000".to_string(),
-            freq_hz: 390_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "ism_433920".to_string(),
-            label: "ISM 433.920".to_string(),
-            freq_hz: 433_920_000,
-        },
-        FrequencyPresetEntry {
-            id: "lora_eu_868100".to_string(),
-            label: "LoRa EU 868.100".to_string(),
-            freq_hz: 868_100_000,
-        },
-        FrequencyPresetEntry {
-            id: "lora_eu_868300".to_string(),
-            label: "LoRa EU 868.300".to_string(),
-            freq_hz: 868_300_000,
-        },
-        FrequencyPresetEntry {
-            id: "zwave_eu_868420".to_string(),
-            label: "Z-Wave EU 868.420".to_string(),
-            freq_hz: 868_420_000,
-        },
-        FrequencyPresetEntry {
-            id: "lora_us_903900".to_string(),
-            label: "LoRa US 903.900".to_string(),
-            freq_hz: 903_900_000,
-        },
-        FrequencyPresetEntry {
-            id: "zwave_us_908420".to_string(),
-            label: "Z-Wave US 908.420".to_string(),
-            freq_hz: 908_420_000,
-        },
-        FrequencyPresetEntry {
-            id: "ism_915000".to_string(),
-            label: "ISM 915.000".to_string(),
-            freq_hz: 915_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "zigbee_ch11".to_string(),
-            label: "Zigbee Ch 11".to_string(),
-            freq_hz: 2_405_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "zigbee_ch15".to_string(),
-            label: "Zigbee Ch 15".to_string(),
-            freq_hz: 2_425_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "zigbee_ch20".to_string(),
-            label: "Zigbee Ch 20".to_string(),
-            freq_hz: 2_450_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "zigbee_ch26".to_string(),
-            label: "Zigbee Ch 26".to_string(),
-            freq_hz: 2_480_000_000,
-        },
-    ];
-
-    for channel in 11u64..=26u64 {
-        let freq_hz = (2405 + ((channel - 11) * 5)) * 1_000_000;
-        out.push(FrequencyPresetEntry {
-            id: format!("thread_ch{channel:02}"),
-            label: format!("Thread Ch {channel:02}"),
-            freq_hz,
-        });
-    }
-
-    out
-}
-
-fn drone_rid_frequency_presets() -> Vec<FrequencyPresetEntry> {
-    vec![
-        FrequencyPresetEntry {
-            id: "drone_rid_2437000".to_string(),
-            label: "Drone RID 2.437 GHz".to_string(),
-            freq_hz: 2_437_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "drone_rid_2457000".to_string(),
-            label: "Drone RID 2.457 GHz".to_string(),
-            freq_hz: 2_457_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "drone_rid_5745000".to_string(),
-            label: "Drone RID 5.745 GHz".to_string(),
-            freq_hz: 5_745_000_000,
-        },
-        FrequencyPresetEntry {
-            id: "drone_rid_5805000".to_string(),
-            label: "Drone RID 5.805 GHz".to_string(),
-            freq_hz: 5_805_000_000,
-        },
-    ]
-}
-
-fn parse_fcc_frequency_hz(raw: &str) -> Option<u64> {
-    parse_frequency_string_hz(raw, FrequencyDefaultUnit::Auto)
-}
-
-enum FrequencyDefaultUnit {
-    Hz,
-    Mhz,
-    Auto,
-}
-
-fn parse_frequency_string_hz(raw: &str, default_unit: FrequencyDefaultUnit) -> Option<u64> {
-    let cleaned = raw
-        .trim()
-        .to_ascii_lowercase()
-        .replace(',', "")
-        .replace('_', "");
-    if cleaned.is_empty() {
-        return None;
-    }
-    let (numeric_raw, explicit_multiplier) = if let Some(numeric) = cleaned.strip_suffix("ghz") {
-        (numeric.trim(), Some(1_000_000_000.0))
-    } else if let Some(numeric) = cleaned.strip_suffix("mhz") {
-        (numeric.trim(), Some(1_000_000.0))
-    } else if let Some(numeric) = cleaned.strip_suffix("khz") {
-        (numeric.trim(), Some(1_000.0))
-    } else if let Some(numeric) = cleaned.strip_suffix("hz") {
-        (numeric.trim(), Some(1.0))
-    } else if cleaned.ends_with('g') {
-        (cleaned.trim_end_matches('g').trim(), Some(1_000_000_000.0))
-    } else if cleaned.ends_with('m') {
-        (cleaned.trim_end_matches('m').trim(), Some(1_000_000.0))
-    } else if cleaned.ends_with('k') {
-        (cleaned.trim_end_matches('k').trim(), Some(1_000.0))
-    } else {
-        (cleaned.as_str(), None)
-    };
-    if numeric_raw.is_empty() {
-        return None;
-    }
-    let parsed = numeric_raw.parse::<f64>().ok()?;
-    if !parsed.is_finite() || parsed <= 0.0 {
-        return None;
-    }
-    let hz = if let Some(multiplier) = explicit_multiplier {
-        parsed * multiplier
-    } else {
-        match default_unit {
-            FrequencyDefaultUnit::Hz => parsed,
-            FrequencyDefaultUnit::Mhz => parsed * 1_000_000.0,
-            FrequencyDefaultUnit::Auto => {
-                if parsed >= 1_000_000.0 {
-                    parsed
-                } else {
-                    parsed * 1_000_000.0
-                }
-            }
-        }
-    };
-    if !hz.is_finite() || hz <= 0.0 {
-        return None;
-    }
-    Some(hz.round() as u64)
-}
-
-fn fetch_text_from_url(
-    url: &str,
-    empty_error: &str,
-    temp_prefix: &str,
-    extension: &str,
-    write_error_label: &str,
-) -> Result<PathBuf> {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        anyhow::bail!("empty URL");
-    }
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(30))
-        .timeout_write(Duration::from_secs(30))
-        .build();
-    let mut last_error: Option<anyhow::Error> = None;
-    let attempts = 3usize;
-    let mut body = String::new();
-    for _ in 0..attempts {
-        let response = match agent.get(trimmed).call() {
-            Ok(response) => response,
-            Err(err) => {
-                last_error = Some(anyhow::anyhow!("{err}"));
-                continue;
-            }
-        };
-        let mut reader = response.into_reader();
-        body.clear();
-        use std::io::Read;
-        if let Err(err) = reader.read_to_string(&mut body) {
-            last_error = Some(anyhow::anyhow!(err));
-            continue;
-        }
-        if !body.trim().is_empty() {
-            break;
-        }
-        last_error = Some(anyhow::anyhow!(empty_error.to_string()));
-    }
-    if body.trim().is_empty() {
-        if let Some(err) = last_error {
-            return Err(err).with_context(|| format!("failed to fetch {trimmed}"));
-        }
-        anyhow::bail!("failed to fetch {trimmed}");
-    }
-    let path = std::env::temp_dir().join(format!("{temp_prefix}-{}.{}", Uuid::new_v4(), extension));
-    fs::write(&path, body).with_context(|| {
-        format!(
-            "failed to write downloaded {write_error_label} {}",
-            path.display()
-        )
-    })?;
-    Ok(path)
-}
-
-fn fetch_csv_from_url(url: &str) -> Result<PathBuf> {
-    fetch_text_from_url(
-        url,
-        "downloaded CSV is empty",
-        "easywifi-fcc",
-        "csv",
-        "FCC CSV",
-    )
-}
-
-fn fetch_json_from_url(url: &str) -> Result<PathBuf> {
-    fetch_text_from_url(
-        url,
-        "downloaded JSON is empty",
-        "easywifi-bookmarks",
-        "json",
-        "bookmark JSON",
-    )
-}
-
-fn fetch_bookmark_data_from_url(url: &str) -> Result<PathBuf> {
-    let extension = bookmark_data_extension_from_url(url);
-    fetch_text_from_url(
-        url,
-        "downloaded bookmark data is empty",
-        "easywifi-bookmarks",
-        extension,
-        "bookmark data",
-    )
-}
-
-fn bookmark_data_extension_from_url(url: &str) -> &'static str {
-    let trimmed = url.trim().to_ascii_lowercase();
-    let path = trimmed
-        .split('#')
-        .next()
-        .unwrap_or(trimmed.as_str())
-        .split('?')
-        .next()
-        .unwrap_or(trimmed.as_str());
-    if path.ends_with(".json")
-        || path.ends_with(".jsonl")
-        || path.ends_with(".ndjson")
-        || path.ends_with(".json.gz")
-        || path.ends_with(".jsonl.gz")
-        || path.ends_with(".ndjson.gz")
-    {
-        "json"
-    } else if path.ends_with(".csv") || path.ends_with(".csv.gz") {
-        "csv"
-    } else {
-        "dat"
-    }
-}
-
-fn fcc_record_value(
-    record: &csv::StringRecord,
-    header_index: &HashMap<String, usize>,
-    names: &[&str],
-) -> Option<String> {
-    names
-        .iter()
-        .find_map(|name| {
-            header_index
-                .get(&name.to_ascii_lowercase())
-                .and_then(|idx| record.get(*idx))
-        })
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
-fn fcc_assigned_frequency_hz(
-    record: &csv::StringRecord,
-    header_index: &HashMap<String, usize>,
-) -> Option<u64> {
-    fcc_record_value(
-        record,
-        header_index,
-        &[
-            "frequency_assigned",
-            "freq_assigned",
-            "assigned_frequency",
-            "frequency",
-            "center_frequency",
-            "frequency_mhz",
-            "frequency_assigned_hz",
-            "freq_assigned_hz",
-            "assigned_frequency_hz",
-            "center_frequency_hz",
-            "frequency_hz",
-        ],
-    )
-    .and_then(|value| parse_fcc_frequency_hz(&value))
-}
-
-fn fcc_lower_frequency_hz(
-    record: &csv::StringRecord,
-    header_index: &HashMap<String, usize>,
-) -> Option<u64> {
-    fcc_record_value(
-        record,
-        header_index,
-        &[
-            "lower_frequency",
-            "frequency_lower",
-            "freq_lower",
-            "lower_freq",
-            "lower_frequency_mhz",
-            "lower_frequency_hz",
-            "frequency_lower_hz",
-            "freq_lower_hz",
-            "lower_freq_hz",
-        ],
-    )
-    .and_then(|value| parse_fcc_frequency_hz(&value))
-}
-
-fn fcc_upper_frequency_hz(
-    record: &csv::StringRecord,
-    header_index: &HashMap<String, usize>,
-) -> Option<u64> {
-    fcc_record_value(
-        record,
-        header_index,
-        &[
-            "upper_frequency",
-            "frequency_upper",
-            "freq_upper",
-            "upper_freq",
-            "upper_frequency_mhz",
-            "upper_frequency_hz",
-            "frequency_upper_hz",
-            "freq_upper_hz",
-            "upper_freq_hz",
-        ],
-    )
-    .and_then(|value| parse_fcc_frequency_hz(&value))
-}
-
-fn fcc_tx_frequency_hz(
-    record: &csv::StringRecord,
-    header_index: &HashMap<String, usize>,
-) -> Option<u64> {
-    fcc_record_value(
-        record,
-        header_index,
-        &[
-            "tx_frequency",
-            "tx_freq",
-            "transmit_frequency",
-            "transmit_freq",
-            "frequency_tx",
-            "tx_frequency_hz",
-            "tx_freq_hz",
-            "transmit_frequency_hz",
-            "transmit_freq_hz",
-            "frequency_tx_hz",
-        ],
-    )
-    .and_then(|value| parse_fcc_frequency_hz(&value))
-}
-
-fn fcc_rx_frequency_hz(
-    record: &csv::StringRecord,
-    header_index: &HashMap<String, usize>,
-) -> Option<u64> {
-    fcc_record_value(
-        record,
-        header_index,
-        &[
-            "rx_frequency",
-            "rx_freq",
-            "receive_frequency",
-            "receive_freq",
-            "frequency_rx",
-            "rx_frequency_hz",
-            "rx_freq_hz",
-            "receive_frequency_hz",
-            "receive_freq_hz",
-            "frequency_rx_hz",
-        ],
-    )
-    .and_then(|value| parse_fcc_frequency_hz(&value))
-}
-
-fn normalize_bookmark_label(raw: &str, max_len: usize) -> String {
-    let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    if compact.chars().count() <= max_len.max(1) {
-        return compact;
-    }
-    let keep = max_len.saturating_sub(1).max(1);
-    let truncated = compact.chars().take(keep).collect::<String>();
-    format!("{truncated}…")
-}
-
-struct FccAreaScanPreset {
-    preset: SdrOperatorPresetSetting,
-    matched_rows: usize,
-    signal_type: Option<String>,
-}
-
-fn decoder_id_for_fcc_signal_type(signal_type: &str) -> Option<&'static str> {
-    let lower = signal_type.to_ascii_lowercase();
-    if lower.contains("public safety") || lower.contains("trunked") || lower.contains("land mobile")
-    {
-        Some("p25")
-    } else if lower.contains("maritime") || lower.contains("ship") || lower.contains("coast") {
-        Some("ais")
-    } else if lower.contains("paging") || lower.contains("pager") {
-        Some("pocsag")
-    } else if lower.contains("aeronautical") || lower.contains("aircraft") {
-        Some("acars")
-    } else if lower.contains("weather") || lower.contains("meteorological") {
-        Some("weather_noaa_apt")
-    } else if lower.contains("satellite") || lower.contains("space") {
-        Some("inmarsat_stdc")
-    } else {
-        None
-    }
-}
-
-fn apply_fcc_decoder_autoselect(
-    decoder_combo: &ComboBoxText,
-    signal_type: Option<&str>,
-) -> Option<String> {
-    let signal = signal_type?;
-    let decoder_id = decoder_id_for_fcc_signal_type(signal)?;
-    if decoder_combo.set_active_id(Some(decoder_id)) {
-        Some(decoder_id.to_string())
-    } else {
-        None
-    }
-}
-
-fn build_fcc_frequency_bookmarks_from_csv(
-    csv_path: &PathBuf,
-    area_filter: &str,
-    signal_type_filter: &str,
-    max_entries: usize,
-) -> Result<Vec<SdrBookmarkSetting>> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_path(csv_path)
-        .with_context(|| format!("failed to open FCC CSV {}", csv_path.display()))?;
-    let headers = reader
-        .headers()
-        .with_context(|| format!("failed to read FCC CSV headers {}", csv_path.display()))?
-        .clone();
-    let header_index = headers
-        .iter()
-        .enumerate()
-        .map(|(idx, key)| (key.trim().to_ascii_lowercase(), idx))
-        .collect::<HashMap<_, _>>();
-    let filter = area_filter.trim().to_ascii_lowercase();
-    let signal_filter = signal_type_filter.trim().to_ascii_lowercase();
-    let mut out = Vec::<SdrBookmarkSetting>::new();
-    let mut seen_freqs = HashSet::<u64>::new();
-    for row in reader.records() {
-        let record = match row {
-            Ok(row) => row,
-            Err(_) => continue,
-        };
-        let city = fcc_record_value(&record, &header_index, &["city", "location_city"])
-            .unwrap_or_default();
-        let county = fcc_record_value(&record, &header_index, &["county", "location_county"])
-            .unwrap_or_default();
-        let state = fcc_record_value(&record, &header_index, &["state", "location_state"])
-            .unwrap_or_default();
-        let callsign = fcc_record_value(&record, &header_index, &["callsign", "call_sign"])
-            .unwrap_or_default();
-        if !filter.is_empty() {
-            let haystack = format!("{city} {county} {state} {callsign}").to_ascii_lowercase();
-            if !haystack.contains(&filter) {
-                continue;
-            }
-        }
-        let signal_type = fcc_record_value(
-            &record,
-            &header_index,
-            &[
-                "radio_service_desc",
-                "radio_service",
-                "service_desc",
-                "service",
-                "station_class",
-                "station_class_code",
-                "station_type",
-            ],
-        )
-        .unwrap_or_else(|| "Unknown".to_string());
-        if !signal_filter.is_empty() && !signal_type.to_ascii_lowercase().contains(&signal_filter) {
-            continue;
-        }
-        let assigned_hz = fcc_assigned_frequency_hz(&record, &header_index);
-        let lower_hz = fcc_lower_frequency_hz(&record, &header_index);
-        let upper_hz = fcc_upper_frequency_hz(&record, &header_index);
-        let tx_hz = fcc_tx_frequency_hz(&record, &header_index);
-        let rx_hz = fcc_rx_frequency_hz(&record, &header_index);
-        let freq_hz = match (assigned_hz, lower_hz, upper_hz, tx_hz, rx_hz) {
-            (Some(center), _, _, _, _) => center,
-            (None, Some(start), Some(end), _, _) if end > start => start + (end - start) / 2,
-            (None, None, None, Some(tx), Some(rx)) if tx != rx => tx.min(rx) + tx.abs_diff(rx) / 2,
-            (None, None, None, Some(tx), _) => tx,
-            (None, None, None, _, Some(rx)) => rx,
-            _ => continue,
-        };
-        if freq_hz < 100_000 || freq_hz > 8_000_000_000 || seen_freqs.contains(&freq_hz) {
-            continue;
-        }
-        seen_freqs.insert(freq_hz);
-        let mut label_parts = Vec::new();
-        label_parts.push("FCC".to_string());
-        label_parts.push(signal_type);
-        if !callsign.is_empty() {
-            label_parts.push(callsign);
-        }
-        if !city.is_empty() {
-            label_parts.push(city);
-        } else if !county.is_empty() {
-            label_parts.push(county);
-        }
-        let raw_label = label_parts.join(" | ");
-        out.push(SdrBookmarkSetting {
-            label: normalize_bookmark_label(&raw_label, 96),
-            frequency_hz: freq_hz,
-        });
-        if out.len() >= max_entries.max(1) {
-            break;
-        }
-    }
-    out.sort_by_key(|entry| entry.frequency_hz);
-    Ok(out)
-}
-
-fn build_fcc_area_scan_preset_from_csv(
-    csv_path: &PathBuf,
-    area_filter: &str,
-    signal_type_filter: &str,
-) -> Result<Option<FccAreaScanPreset>> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_path(csv_path)
-        .with_context(|| format!("failed to open FCC CSV {}", csv_path.display()))?;
-    let headers = reader
-        .headers()
-        .with_context(|| format!("failed to read FCC CSV headers {}", csv_path.display()))?
-        .clone();
-    let header_index = headers
-        .iter()
-        .enumerate()
-        .map(|(idx, key)| (key.trim().to_ascii_lowercase(), idx))
-        .collect::<HashMap<_, _>>();
-    let filter = area_filter.trim().to_ascii_lowercase();
-    let signal_filter = signal_type_filter.trim().to_ascii_lowercase();
-    let mut ranges = Vec::<(u64, u64)>::new();
-    let mut matched_rows = 0usize;
-    let mut signal_type_counts = HashMap::<String, usize>::new();
-    for row in reader.records() {
-        let record = match row {
-            Ok(row) => row,
-            Err(_) => continue,
-        };
-        let city = fcc_record_value(&record, &header_index, &["city", "location_city"])
-            .unwrap_or_default();
-        let county = fcc_record_value(&record, &header_index, &["county", "location_county"])
-            .unwrap_or_default();
-        let state = fcc_record_value(&record, &header_index, &["state", "location_state"])
-            .unwrap_or_default();
-        let callsign = fcc_record_value(&record, &header_index, &["callsign", "call_sign"])
-            .unwrap_or_default();
-        if !filter.is_empty() {
-            let haystack = format!("{city} {county} {state} {callsign}").to_ascii_lowercase();
-            if !haystack.contains(&filter) {
-                continue;
-            }
-        }
-        let signal_type = fcc_record_value(
-            &record,
-            &header_index,
-            &[
-                "radio_service_desc",
-                "radio_service",
-                "service_desc",
-                "service",
-                "station_class",
-                "station_class_code",
-                "station_type",
-            ],
-        );
-        if !signal_filter.is_empty() {
-            let Some(current_signal) = signal_type.as_ref() else {
-                continue;
-            };
-            if !current_signal.to_ascii_lowercase().contains(&signal_filter) {
-                continue;
-            }
-        }
-        matched_rows = matched_rows.saturating_add(1);
-        if let Some(signal_type) = signal_type {
-            let normalized = signal_type.trim();
-            if !normalized.is_empty() {
-                *signal_type_counts
-                    .entry(normalized.to_string())
-                    .or_insert(0usize) += 1;
-            }
-        }
-
-        let assigned_hz = fcc_assigned_frequency_hz(&record, &header_index);
-        let lower_hz = fcc_lower_frequency_hz(&record, &header_index);
-        let upper_hz = fcc_upper_frequency_hz(&record, &header_index);
-        let tx_hz = fcc_tx_frequency_hz(&record, &header_index);
-        let rx_hz = fcc_rx_frequency_hz(&record, &header_index);
-
-        let range = match (lower_hz, upper_hz, tx_hz, rx_hz, assigned_hz) {
-            (Some(start), Some(end), _, _, _) if end > start => Some((start, end)),
-            (_, _, Some(tx), Some(rx), _) if tx != rx => Some((tx.min(rx), tx.max(rx))),
-            (_, _, Some(tx), None, _) => Some((tx.saturating_sub(12_500), tx + 12_500)),
-            (_, _, None, Some(rx), _) => Some((rx.saturating_sub(12_500), rx + 12_500)),
-            (_, _, _, _, Some(center)) => Some((center.saturating_sub(12_500), center + 12_500)),
-            _ => None,
-        };
-        if let Some((start, end)) = range {
-            if start >= 100_000 && end > start && end <= 8_000_000_000 {
-                ranges.push((start, end));
-            }
-        }
-    }
-
-    if ranges.is_empty() {
-        return Ok(None);
-    }
-    let start_hz = ranges
-        .iter()
-        .map(|(start, _)| *start)
-        .min()
-        .unwrap_or(100_000);
-    let mut end_hz = ranges.iter().map(|(_, end)| *end).max().unwrap_or(start_hz);
-    if end_hz <= start_hz {
-        end_hz = start_hz + 25_000;
-    }
-    let span_hz = end_hz.saturating_sub(start_hz);
-    let center_freq_hz = start_hz + (span_hz / 2);
-    let sample_rate_hz = (((span_hz.saturating_mul(12)) / 10)
-        .max(2_000_000)
-        .min(20_000_000)) as u32;
-    let scan_step_hz = if span_hz >= 200_000_000 {
-        200_000
-    } else if span_hz >= 20_000_000 {
-        50_000
-    } else {
-        12_500
-    };
-    let signal_type = signal_type_counts
-        .into_iter()
-        .max_by_key(|(_, count)| *count)
-        .map(|(kind, _)| kind);
-
-    let base_label = if filter.is_empty() {
-        "FCC Area Explorer".to_string()
-    } else {
-        format!("FCC Area {}", area_filter.trim())
-    };
-    let label = if let Some(kind) = signal_type.as_deref() {
-        format!("{base_label} [{kind}]")
-    } else {
-        base_label
-    };
-    let preset = SdrOperatorPresetSetting {
-        label,
-        center_freq_hz,
-        sample_rate_hz,
-        scan_enabled: true,
-        scan_start_hz: start_hz,
-        scan_end_hz: end_hz,
-        scan_step_hz,
-        scan_steps_per_sec: 6.0,
-        squelch_dbm: -82.0,
-    };
-    Ok(Some(FccAreaScanPreset {
-        preset,
-        matched_rows,
-        signal_type,
-    }))
-}
-
-fn sdr_operator_presets() -> Vec<SdrOperatorPreset> {
-    vec![
-        SdrOperatorPreset {
-            id: "wide_433".to_string(),
-            label: "General ISM (433 MHz)".to_string(),
-            center_freq_hz: 433_920_000,
-            sample_rate_hz: 2_400_000,
-            scan_enabled: false,
-            scan_start_hz: 433_050_000,
-            scan_end_hz: 434_790_000,
-            scan_step_hz: 25_000,
-            scan_steps_per_sec: 5.0,
-            squelch_dbm: -78.0,
-        },
-        SdrOperatorPreset {
-            id: "airband_scan".to_string(),
-            label: "Airband Scan (118-137 MHz)".to_string(),
-            center_freq_hz: 127_500_000,
-            sample_rate_hz: 2_400_000,
-            scan_enabled: true,
-            scan_start_hz: 118_000_000,
-            scan_end_hz: 137_000_000,
-            scan_step_hz: 25_000,
-            scan_steps_per_sec: 8.0,
-            squelch_dbm: -72.0,
-        },
-        SdrOperatorPreset {
-            id: "ais_dual".to_string(),
-            label: "AIS Channels (161.975/162.025)".to_string(),
-            center_freq_hz: 162_000_000,
-            sample_rate_hz: 2_400_000,
-            scan_enabled: true,
-            scan_start_hz: 161_950_000,
-            scan_end_hz: 162_050_000,
-            scan_step_hz: 25_000,
-            scan_steps_per_sec: 6.0,
-            squelch_dbm: -76.0,
-        },
-    ]
-}
-
-fn user_sdr_preset_id(index: usize) -> String {
-    format!("user_{index}")
-}
-
-fn parse_user_sdr_preset_id(id: &str) -> Option<usize> {
-    id.strip_prefix("user_")?.parse::<usize>().ok()
-}
-
-fn normalized_sdr_preset_label(label: &str, center_freq_hz: u64) -> String {
-    if label.trim().is_empty() {
-        format!("{:.3} MHz", center_freq_hz as f64 / 1_000_000.0)
-    } else {
-        label.trim().to_string()
-    }
-}
-
-fn sdr_presets_from_settings(settings: &AppSettings) -> Vec<SdrOperatorPreset> {
-    let mut presets = sdr_operator_presets();
-    let user_presets = settings
-        .sdr_operator_presets
-        .iter()
-        .enumerate()
-        .filter(|(_, preset)| preset.center_freq_hz >= 100_000 && preset.sample_rate_hz >= 200_000)
-        .map(|(idx, preset)| SdrOperatorPreset {
-            id: user_sdr_preset_id(idx),
-            label: normalized_sdr_preset_label(&preset.label, preset.center_freq_hz),
-            center_freq_hz: preset.center_freq_hz,
-            sample_rate_hz: preset.sample_rate_hz,
-            scan_enabled: preset.scan_enabled,
-            scan_start_hz: preset.scan_start_hz,
-            scan_end_hz: preset.scan_end_hz,
-            scan_step_hz: preset.scan_step_hz,
-            scan_steps_per_sec: preset.scan_steps_per_sec,
-            squelch_dbm: preset.squelch_dbm,
-        })
-        .collect::<Vec<_>>();
-    presets.extend(user_presets);
-    presets
-}
-
-fn rebuild_sdr_preset_combo(
-    combo: &ComboBoxText,
-    presets: &[SdrOperatorPreset],
-    preferred_active_id: Option<&str>,
-) {
-    combo.remove_all();
-    for preset in presets {
-        combo.append(Some(&preset.id), &preset.label);
-    }
-    if let Some(id) = preferred_active_id {
-        if combo.set_active_id(Some(id)) {
-            return;
-        }
-    }
-    if !presets.is_empty() {
-        combo.set_active(Some(0));
-    }
-}
-
-fn sdr_preset_exchange_path() -> PathBuf {
-    settings_file_path()
-        .parent()
-        .map(|p| p.join("easywifi-sdr-presets.json"))
-        .unwrap_or_else(|| PathBuf::from("easywifi-sdr-presets.json"))
-}
-
-fn valid_sdr_operator_preset(preset: &SdrOperatorPresetSetting) -> bool {
-    preset.center_freq_hz >= 100_000 && preset.sample_rate_hz >= 200_000
-}
-
-fn sdr_operator_preset_semantic_eq(
-    left: &SdrOperatorPresetSetting,
-    right: &SdrOperatorPresetSetting,
-) -> bool {
-    left.label.trim().eq_ignore_ascii_case(right.label.trim())
-        && left.center_freq_hz == right.center_freq_hz
-        && left.sample_rate_hz == right.sample_rate_hz
-        && left.scan_enabled == right.scan_enabled
-        && left.scan_start_hz == right.scan_start_hz
-        && left.scan_end_hz == right.scan_end_hz
-        && left.scan_step_hz == right.scan_step_hz
-        && (left.scan_steps_per_sec - right.scan_steps_per_sec).abs() < f64::EPSILON
-        && (left.squelch_dbm - right.squelch_dbm).abs() < f32::EPSILON
-}
-
-fn merge_sdr_operator_presets(
-    existing: &mut Vec<SdrOperatorPresetSetting>,
-    imported: Vec<SdrOperatorPresetSetting>,
-) -> usize {
-    let mut added = 0usize;
-    for preset in imported {
-        if !valid_sdr_operator_preset(&preset) {
-            continue;
-        }
-        if existing
-            .iter()
-            .any(|current| sdr_operator_preset_semantic_eq(current, &preset))
-        {
-            continue;
-        }
-        existing.push(preset);
-        added += 1;
-    }
-    added
-}
-
-struct BookmarkImportSummary {
-    added: usize,
-    skipped_duplicates: usize,
-}
-
-fn should_upgrade_bookmark_label(existing: &str, incoming: &str) -> bool {
-    let is_default = |label: &str| {
-        let normalized = label.trim();
-        normalized.is_empty() || normalized.eq_ignore_ascii_case("imported bookmark")
-    };
-    is_default(existing) && !is_default(incoming)
-}
-
-fn normalize_sdr_bookmark_settings(bookmarks: &mut Vec<SdrBookmarkSetting>) {
-    bookmarks.retain(|entry| entry.frequency_hz >= 100_000);
-    bookmarks.sort_by_key(|entry| entry.frequency_hz);
-    bookmarks.dedup_by(|left, right| left.frequency_hz == right.frequency_hz);
-}
-
-fn normalize_imported_bookmark_label(raw: Option<&str>) -> String {
-    let compact = raw
-        .map(str::trim)
-        .unwrap_or_default()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if compact.is_empty() {
-        "Imported Bookmark".to_string()
-    } else {
-        compact
-    }
-}
-
-fn detect_csv_delimiter(raw: &str) -> u8 {
-    let line = raw
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or("");
-    let candidates = [(b',', ','), (b';', ';'), (b'\t', '\t'), (b'|', '|')];
-    let mut best = (b',', 0usize);
-    for (byte, ch) in candidates {
-        let count = line.matches(ch).count();
-        if count > best.1 {
-            best = (byte, count);
-        }
-    }
-    best.0
-}
-
-fn export_sdr_bookmarks_csv(path: &PathBuf, bookmarks: &[(String, u64)]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create bookmark export dir {}", parent.display())
-        })?;
-    }
-    let mut writer = csv::Writer::from_path(path)
-        .with_context(|| format!("failed to create {}", path.display()))?;
-    writer
-        .write_record(["label", "frequency_hz", "frequency_mhz", "source"])
-        .with_context(|| format!("failed to write header to {}", path.display()))?;
-    for (label, freq_hz) in bookmarks.iter() {
-        let source = if label.trim_start().starts_with("FCC |") {
-            "fcc_imported"
-        } else {
-            "manual_or_default"
-        };
-        writer
-            .write_record([
-                label.as_str(),
-                &freq_hz.to_string(),
-                &format!("{:.6}", *freq_hz as f64 / 1_000_000.0),
-                source,
-            ])
-            .with_context(|| format!("failed to write row to {}", path.display()))?;
-    }
-    writer
-        .flush()
-        .with_context(|| format!("failed to flush {}", path.display()))?;
-    Ok(())
-}
-
-fn export_cellular_arfcn_playlist_csv(path: &PathBuf) -> Result<usize> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to create cellular ARFCN export dir {}",
-                parent.display()
-            )
-        })?;
-    }
-    let mut writer = csv::Writer::from_path(path)
-        .with_context(|| format!("failed to create {}", path.display()))?;
-    writer
-        .write_record([
-            "link",
-            "band",
-            "channel_type",
-            "channel",
-            "frequency_hz",
-            "frequency_mhz",
-        ])
-        .with_context(|| format!("failed to write header to {}", path.display()))?;
-
-    let mut row_count = 0usize;
-    for (link, uplink) in [("uplink", true), ("download", false)] {
-        for group in cellular_arfcn_frequency_groups(uplink) {
-            for entry in group.entries {
-                let mut tokens = entry.label.split_whitespace();
-                let channel_type = tokens.next().unwrap_or("ARFCN");
-                let channel = tokens
-                    .next()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| entry.id.rsplit('_').next().unwrap_or_default().to_string());
-                writer
-                    .write_record([
-                        link,
-                        group.label.as_str(),
-                        channel_type,
-                        channel.as_str(),
-                        &entry.freq_hz.to_string(),
-                        &format!("{:.6}", entry.freq_hz as f64 / 1_000_000.0),
-                    ])
-                    .with_context(|| format!("failed to write row to {}", path.display()))?;
-                row_count += 1;
-            }
-        }
-    }
-    writer
-        .flush()
-        .with_context(|| format!("failed to flush {}", path.display()))?;
-    Ok(row_count)
-}
-
-#[derive(serde::Serialize)]
-struct CellularArfcnExportRow {
-    link: String,
-    band: String,
-    channel_type: String,
-    channel: String,
-    frequency_hz: u64,
-    frequency_mhz: f64,
-}
-
-fn export_cellular_arfcn_playlist_json(path: &PathBuf) -> Result<usize> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to create cellular ARFCN export dir {}",
-                parent.display()
-            )
-        })?;
-    }
-    let mut rows = Vec::<CellularArfcnExportRow>::new();
-    for (link, uplink) in [("uplink", true), ("download", false)] {
-        for group in cellular_arfcn_frequency_groups(uplink) {
-            for entry in group.entries {
-                let mut tokens = entry.label.split_whitespace();
-                let channel_type = tokens.next().unwrap_or("ARFCN").to_string();
-                let channel = tokens
-                    .next()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| entry.id.rsplit('_').next().unwrap_or_default().to_string());
-                rows.push(CellularArfcnExportRow {
-                    link: link.to_string(),
-                    band: group.label.clone(),
-                    channel_type,
-                    channel,
-                    frequency_hz: entry.freq_hz,
-                    frequency_mhz: entry.freq_hz as f64 / 1_000_000.0,
-                });
-            }
-        }
-    }
-    let count = rows.len();
-    write_json_pretty(path, &rows)?;
-    Ok(count)
-}
-
-#[derive(serde::Serialize)]
-struct SdrBookmarkExportRow {
-    label: String,
-    frequency_hz: u64,
-    frequency_mhz: f64,
-    source: String,
-}
-
-fn export_sdr_bookmarks_json(path: &PathBuf, bookmarks: &[(String, u64)]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create bookmark export dir {}", parent.display())
-        })?;
-    }
-    let rows = bookmarks
-        .iter()
-        .map(|(label, freq_hz)| SdrBookmarkExportRow {
-            label: label.clone(),
-            frequency_hz: *freq_hz,
-            frequency_mhz: *freq_hz as f64 / 1_000_000.0,
-            source: if label.trim_start().starts_with("FCC |") {
-                "fcc_imported".to_string()
-            } else {
-                "manual_or_default".to_string()
-            },
-        })
-        .collect::<Vec<_>>();
-    write_json_pretty(path, &rows)
-}
-
-fn import_sdr_bookmarks_csv(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
-    let raw =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let delimiter = detect_csv_delimiter(raw.as_str());
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .delimiter(delimiter)
-        .from_reader(raw.as_bytes());
-    let headers = reader
-        .headers()
-        .with_context(|| format!("failed to read headers from {}", path.display()))?
-        .iter()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .collect::<Vec<_>>();
-
-    let indices_of = |names: &[&str]| -> Vec<usize> {
-        let mut out = Vec::new();
-        for name in names {
-            if let Some(idx) = headers
-                .iter()
-                .position(|header| header == &name.trim().to_ascii_lowercase())
-            {
-                if !out.contains(&idx) {
-                    out.push(idx);
-                }
-            }
-        }
-        out
-    };
-    let index_of = |names: &[&str]| -> Option<usize> { indices_of(names).into_iter().next() };
-
-    let label_idx = index_of(&["label", "name", "bookmark"]);
-    let hz_indices = indices_of(&["frequency_hz", "freq_hz", "hz", "freq"]);
-    let mhz_indices = indices_of(&["frequency_mhz", "freq_mhz", "mhz"]);
-    let frequency_indices = indices_of(&["frequency", "name"]);
-    if label_idx.is_none()
-        && hz_indices.is_empty()
-        && mhz_indices.is_empty()
-        && frequency_indices.is_empty()
-    {
-        return Err(anyhow::anyhow!(
-            "bookmark CSV missing expected columns (label/frequency_hz/frequency_mhz/freq/frequency/name)"
-        ));
-    }
-
-    let mut imported = Vec::new();
-    for row in reader.records() {
-        let row = row.with_context(|| format!("failed to read row in {}", path.display()))?;
-        let label = normalize_imported_bookmark_label(label_idx.and_then(|idx| row.get(idx)));
-
-        let frequency_hz = hz_indices
-            .iter()
-            .find_map(|idx| {
-                row.get(*idx)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .and_then(|value| parse_frequency_string_hz(value, FrequencyDefaultUnit::Hz))
-            })
-            .or_else(|| {
-                frequency_indices.iter().find_map(|idx| {
-                    row.get(*idx)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .and_then(parse_fcc_frequency_hz)
-                })
-            })
-            .or_else(|| {
-                mhz_indices.iter().find_map(|idx| {
-                    row.get(*idx)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .and_then(|value| {
-                            parse_frequency_string_hz(value, FrequencyDefaultUnit::Mhz)
-                        })
-                })
-            });
-
-        let Some(frequency_hz) = frequency_hz else {
-            continue;
-        };
-        if !(100_000..=8_000_000_000).contains(&frequency_hz) {
-            continue;
-        }
-        imported.push(SdrBookmarkSetting {
-            label,
-            frequency_hz,
-        });
-    }
-    normalize_sdr_bookmark_settings(&mut imported);
-    Ok(imported)
-}
-
-fn json_frequency_hz(value: &serde_json::Value) -> Option<u64> {
-    match value {
-        serde_json::Value::Number(number) => {
-            if let Some(hz) = number.as_u64() {
-                return Some(hz);
-            }
-            number
-                .as_f64()
-                .filter(|hz| hz.is_finite() && *hz >= 0.0)
-                .map(|hz| hz.round() as u64)
-        }
-        serde_json::Value::String(raw) => parse_frequency_string_hz(raw, FrequencyDefaultUnit::Hz),
-        _ => None,
-    }
-}
-
-fn json_frequency_mhz(value: &serde_json::Value) -> Option<u64> {
-    match value {
-        serde_json::Value::Number(number) => number
-            .as_f64()
-            .filter(|mhz| mhz.is_finite() && *mhz >= 0.0)
-            .map(|mhz| (mhz * 1_000_000.0).round() as u64),
-        serde_json::Value::String(raw) => parse_frequency_string_hz(raw, FrequencyDefaultUnit::Mhz),
-        _ => None,
-    }
-}
-
-fn json_frequency_auto(value: &serde_json::Value) -> Option<u64> {
-    match value {
-        serde_json::Value::Number(number) => number
-            .as_f64()
-            .filter(|raw| raw.is_finite() && *raw >= 0.0)
-            .map(|raw| {
-                if raw >= 1_000_000.0 {
-                    raw.round() as u64
-                } else {
-                    (raw * 1_000_000.0).round() as u64
-                }
-            }),
-        serde_json::Value::String(raw) => {
-            parse_frequency_string_hz(raw, FrequencyDefaultUnit::Auto)
-        }
-        _ => None,
-    }
-}
-
-fn bookmark_rows_from_json_value<'a>(
-    value: &'a serde_json::Value,
-    depth: usize,
-) -> Option<&'a Vec<serde_json::Value>> {
-    if depth > 6 {
-        return None;
-    }
-    match value {
-        serde_json::Value::Array(rows) => Some(rows),
-        serde_json::Value::Object(map) => {
-            for key in [
-                "bookmarks",
-                "rows",
-                "items",
-                "entries",
-                "records",
-                "data",
-                "payload",
-                "result",
-            ] {
-                if let Some(nested) = map.get(key) {
-                    if let Some(rows) = bookmark_rows_from_json_value(nested, depth + 1) {
-                        return Some(rows);
-                    }
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-fn import_sdr_bookmarks_json(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
-    let raw =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
-        Ok(value) => value,
-        Err(primary_err) => {
-            let mut jsonl_rows = Vec::<serde_json::Value>::new();
-            for line in raw.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                let row: serde_json::Value = serde_json::from_str(trimmed).with_context(|| {
-                    format!("failed to parse JSONL row while reading {}", path.display())
-                })?;
-                jsonl_rows.push(row);
-            }
-            if jsonl_rows.is_empty() {
-                return Err(anyhow::anyhow!(primary_err))
-                    .with_context(|| format!("failed to parse {}", path.display()));
-            }
-            serde_json::Value::Array(jsonl_rows)
-        }
-    };
-    let rows = bookmark_rows_from_json_value(&parsed, 0).ok_or_else(|| {
-        anyhow::anyhow!(
-            "bookmark JSON missing array root or nested bookmarks/rows/items/entries/records/data/payload/result array"
-        )
-    })?;
-
-    let mut imported = Vec::new();
-    for row in rows {
-        let Some(object) = row.as_object() else {
-            continue;
-        };
-        let label = normalize_imported_bookmark_label(
-            object
-                .get("label")
-                .or_else(|| object.get("name"))
-                .or_else(|| object.get("bookmark"))
-                .and_then(|value| value.as_str()),
-        );
-
-        let frequency_hz = object
-            .get("frequency_hz")
-            .or_else(|| object.get("freq_hz"))
-            .or_else(|| object.get("hz"))
-            .or_else(|| object.get("freq"))
-            .and_then(json_frequency_hz)
-            .or_else(|| object.get("frequency").and_then(json_frequency_auto))
-            .or_else(|| {
-                object
-                    .get("frequency_mhz")
-                    .or_else(|| object.get("freq_mhz"))
-                    .or_else(|| object.get("mhz"))
-                    .and_then(json_frequency_mhz)
-            });
-
-        let Some(frequency_hz) = frequency_hz else {
-            continue;
-        };
-        if !(100_000..=8_000_000_000).contains(&frequency_hz) {
-            continue;
-        }
-        imported.push(SdrBookmarkSetting {
-            label,
-            frequency_hz,
-        });
-    }
-    normalize_sdr_bookmark_settings(&mut imported);
-    Ok(imported)
-}
-
-fn import_sdr_bookmarks_path(path: &PathBuf) -> Result<Vec<SdrBookmarkSetting>> {
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.trim().to_ascii_lowercase());
-    if matches!(extension.as_deref(), Some("csv")) {
-        return import_sdr_bookmarks_csv(path);
-    }
-    if matches!(extension.as_deref(), Some("json" | "jsonl" | "ndjson")) {
-        return import_sdr_bookmarks_json(path);
-    }
-    match import_sdr_bookmarks_csv(path) {
-        Ok(rows) => Ok(rows),
-        Err(csv_err) => import_sdr_bookmarks_json(path).map_err(|json_err| {
-            anyhow::anyhow!(
-                "failed to parse bookmark import as CSV ({csv_err}) or JSON ({json_err})"
-            )
-        }),
-    }
-}
-
-fn refresh_sdr_bookmark_combo(
-    sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
-    sdr_bookmark_combo: &ComboBoxText,
-    preferred_active_hz: Option<u64>,
-) {
-    {
-        let mut bookmarks = sdr_bookmarks.borrow_mut();
-        bookmarks.sort_by_key(|(_, freq)| *freq);
-        bookmarks.dedup_by(|left, right| left.1 == right.1);
-    }
-    sdr_bookmark_combo.remove_all();
-    for (label, freq) in sdr_bookmarks.borrow().iter() {
-        sdr_bookmark_combo.append(Some(&freq.to_string()), label);
-    }
-    if let Some(freq_hz) = preferred_active_hz {
-        let _ = sdr_bookmark_combo.set_active_id(Some(&freq_hz.to_string()));
-    }
-}
-
-fn import_sdr_bookmarks(
-    state: &Rc<RefCell<AppState>>,
-    sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
-    sdr_bookmark_combo: &ComboBoxText,
-    imported: Vec<SdrBookmarkSetting>,
-) -> BookmarkImportSummary {
-    let mut s = state.borrow_mut();
-    let mut added = 0usize;
-    let mut skipped_duplicates = 0usize;
-    let mut preferred_active_hz = None::<u64>;
-    for bookmark in imported {
-        if let Some(current) = s
-            .settings
-            .sdr_bookmarks
-            .iter_mut()
-            .find(|current| current.frequency_hz == bookmark.frequency_hz)
-        {
-            if should_upgrade_bookmark_label(&current.label, &bookmark.label) {
-                current.label = bookmark.label.clone();
-                if let Some(runtime_entry) = sdr_bookmarks
-                    .borrow_mut()
-                    .iter_mut()
-                    .find(|(_, freq_hz)| *freq_hz == bookmark.frequency_hz)
-                {
-                    runtime_entry.0 = bookmark.label.clone();
-                }
-            }
-            skipped_duplicates = skipped_duplicates.saturating_add(1);
-            continue;
-        }
-        sdr_bookmark_combo.append(Some(&bookmark.frequency_hz.to_string()), &bookmark.label);
-        sdr_bookmarks
-            .borrow_mut()
-            .push((bookmark.label.clone(), bookmark.frequency_hz));
-        preferred_active_hz = Some(bookmark.frequency_hz);
-        s.settings.sdr_bookmarks.push(bookmark);
-        added = added.saturating_add(1);
-    }
-    normalize_sdr_bookmark_settings(&mut s.settings.sdr_bookmarks);
-    s.save_settings_to_disk();
-    drop(s);
-    refresh_sdr_bookmark_combo(sdr_bookmarks, sdr_bookmark_combo, preferred_active_hz);
-    BookmarkImportSummary {
-        added,
-        skipped_duplicates,
-    }
-}
-
-fn import_sdr_bookmarks_from_path_and_report(
-    state: &Rc<RefCell<AppState>>,
-    sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
-    sdr_bookmark_combo: &ComboBoxText,
-    path: &PathBuf,
-    source_label: &str,
-) {
-    match import_sdr_bookmarks_path(path) {
-        Ok(imported) => {
-            if imported.is_empty() {
-                state
-                    .borrow_mut()
-                    .push_status(format!("{source_label} import skipped: no valid rows"));
-            } else {
-                let summary =
-                    import_sdr_bookmarks(state, sdr_bookmarks, sdr_bookmark_combo, imported);
-                state.borrow_mut().push_status(format!(
-                    "imported SDR bookmarks from {source_label} (added={}, duplicates={})",
-                    summary.added, summary.skipped_duplicates
-                ));
-            }
-        }
-        Err(err) => state
-            .borrow_mut()
-            .push_status(format!("{source_label} import failed: {err}")),
-    }
-}
-
-fn import_sdr_bookmarks_file_and_report(
-    state: &Rc<RefCell<AppState>>,
-    sdr_bookmarks: &Rc<RefCell<Vec<(String, u64)>>>,
-    sdr_bookmark_combo: &ComboBoxText,
-    path: &PathBuf,
-) {
-    match import_sdr_bookmarks_path(path) {
-        Ok(imported) => {
-            if imported.is_empty() {
-                state.borrow_mut().push_status(format!(
-                    "SDR bookmark import skipped: no valid rows in {}",
-                    path.display()
-                ));
-            } else {
-                let summary =
-                    import_sdr_bookmarks(state, sdr_bookmarks, sdr_bookmark_combo, imported);
-                state.borrow_mut().push_status(format!(
-                    "imported SDR bookmarks from {} (added={}, duplicates={})",
-                    path.display(),
-                    summary.added,
-                    summary.skipped_duplicates
-                ));
-            }
-        }
-        Err(err) => state
-            .borrow_mut()
-            .push_status(format!("SDR bookmark import failed: {err}")),
-    }
-}
-
-fn add_dialog_filters(dialog: &FileChooserDialog, filters: &[(&str, &[&str])]) {
-    for (name, patterns) in filters {
-        let filter = gtk::FileFilter::new();
-        filter.set_name(Some(name));
-        for pattern in *patterns {
-            filter.add_pattern(pattern);
-        }
-        dialog.add_filter(&filter);
-    }
 }
 
 struct StopCompletion {
@@ -4067,7 +1097,6 @@ struct WifiGeigerTarget {
     track_id: String,
     display_name: String,
     channel: u16,
-    preferred_interface: Option<String>,
 }
 
 #[derive(Default)]
@@ -4082,38 +1111,12 @@ struct WifiGeigerUiState {
     last_animation_at: Option<Instant>,
 }
 
-#[derive(Debug, Default)]
-struct SdrUiModel {
-    current_freq_hz: u64,
-    sample_rate_hz: u32,
-    sweep_paused: bool,
-    decoder_running: Option<String>,
-    squelch_dbm: f32,
-    spectrum_bins: Vec<f32>,
-    spectrogram_rows: Vec<Vec<f32>>,
-    decode_rows: Vec<SdrDecodeRow>,
-    map_points: Vec<SdrMapPoint>,
-    satcom_observations: Vec<SdrSatcomObservation>,
-    dependency_status: Vec<SdrDependencyStatus>,
-    decoder_telemetry: HashMap<String, SdrDecoderTelemetry>,
-    decoder_telemetry_rates: HashMap<String, SdrDecoderTelemetryRate>,
-}
-
-#[derive(Debug, Clone, Default, serde::Serialize)]
-struct SdrDecoderTelemetryRate {
-    decoded_rows_per_sec: f64,
-    map_points_per_sec: f64,
-    satcom_rows_per_sec: f64,
-    stderr_lines_per_sec: f64,
-}
-
 #[derive(Clone)]
 struct UiWidgets {
     ap_root: Paned,
     ap_bottom: Paned,
     ap_detail_notebook: Notebook,
     ap_assoc_box: GtkBox,
-    ap_inline_channel_box: GtkBox,
     ap_header_holder: GtkBox,
     ap_list: ListBox,
     ap_pagination: TablePaginationUi,
@@ -4165,42 +1168,8 @@ struct UiWidgets {
     bluetooth_geiger_progress: ProgressBar,
     bluetooth_geiger_state: Rc<RefCell<BluetoothGeigerUiState>>,
     channel_draw: DrawingArea,
-    ap_inline_channel_draw: DrawingArea,
-    sdr_center_freq_entry: Entry,
-    sdr_sample_rate_entry: Entry,
-    sdr_bookmarks: Rc<RefCell<Vec<(String, u64)>>>,
-    sdr_bookmark_combo: ComboBoxText,
-    sdr_decoder_combo: ComboBoxText,
-    sdr_scan_enable_check: CheckButton,
-    sdr_scan_start_entry: Entry,
-    sdr_scan_end_entry: Entry,
-    sdr_scan_step_entry: Entry,
-    sdr_scan_speed_entry: Entry,
-    sdr_frequency_label: Label,
-    sdr_decoder_label: Label,
-    sdr_dependency_label: Label,
-    sdr_health_label: Label,
-    sdr_aircraft_correlation_label: Label,
-    sdr_satcom_summary_label: Label,
-    sdr_center_geiger_rssi_label: Label,
-    sdr_center_geiger_tone_label: Label,
-    sdr_center_geiger_progress: ProgressBar,
-    sdr_center_geiger_auto_squelch_check: CheckButton,
-    sdr_center_geiger_margin_spin: SpinButton,
-    sdr_squelch_scale: gtk::Scale,
-    sdr_fft_draw: DrawingArea,
-    sdr_spectrogram_draw: DrawingArea,
-    sdr_map_draw: DrawingArea,
-    sdr_decode_header_holder: GtkBox,
-    sdr_decode_list: ListBox,
-    sdr_decode_pagination: TablePaginationUi,
-    sdr_satcom_header_holder: GtkBox,
-    sdr_satcom_list: ListBox,
-    sdr_satcom_pagination: TablePaginationUi,
-    sdr_model: Rc<RefCell<SdrUiModel>>,
     status_label: Label,
     gps_status_label: Label,
-    runtime_activity_label: Label,
 }
 
 #[derive(Clone)]
@@ -4215,92 +1184,8 @@ struct TablePaginationUi {
     page_go_button: Button,
     filter_bar: Grid,
     filter_entries: Rc<RefCell<HashMap<String, Entry>>>,
-    filter_order: Rc<RefCell<Vec<String>>>,
-    filter_columns: Rc<RefCell<Vec<(String, String, i32)>>>,
-    filter_summary_label: Label,
+    filter_order: Rc<Vec<String>>,
     summary_label: Label,
-}
-
-fn pagination_filter_label_columns(
-    filter_columns: &[(String, String, i32)],
-) -> Vec<(String, String)> {
-    filter_columns
-        .iter()
-        .map(|(id, label, _)| (id.clone(), label.clone()))
-        .collect::<Vec<_>>()
-}
-
-fn rebuild_pagination_filter_bar(pagination: &TablePaginationUi) {
-    let existing_values = {
-        let entries = pagination.filter_entries.borrow();
-        entries
-            .iter()
-            .map(|(column_id, entry)| (column_id.clone(), entry.text().to_string()))
-            .collect::<HashMap<_, _>>()
-    };
-
-    while let Some(child) = pagination.filter_bar.first_child() {
-        pagination.filter_bar.remove(&child);
-    }
-
-    let columns = pagination.filter_columns.borrow().clone();
-    {
-        let mut entries = pagination.filter_entries.borrow_mut();
-        entries.clear();
-    }
-    {
-        let mut order = pagination.filter_order.borrow_mut();
-        order.clear();
-        order.extend(columns.iter().map(|(column_id, _, _)| column_id.clone()));
-    }
-
-    for (column_index, (column_id, column_label, width_chars)) in columns.iter().enumerate() {
-        let entry = Entry::new();
-        let entry_width = (*width_chars).max(6);
-        entry.add_css_class("table-cell");
-        entry.add_css_class("column-filter");
-        gtk::prelude::EntryExt::set_alignment(&entry, 0.0);
-        entry.set_has_frame(false);
-        entry.set_width_chars(entry_width);
-        entry.set_max_width_chars(entry_width);
-        entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, 22);
-        entry.set_margin_end(6);
-        entry.set_tooltip_text(Some(&format!("Filter {}", column_label)));
-        if let Some(previous) = existing_values.get(column_id) {
-            entry.set_text(previous);
-        }
-        pagination
-            .filter_bar
-            .attach(&entry, column_index as i32, 0, 1, 1);
-        pagination
-            .filter_entries
-            .borrow_mut()
-            .insert(column_id.clone(), entry.clone());
-
-        let current_page = pagination.current_page.clone();
-        let generation = pagination.generation.clone();
-        let filter_entries_for_change = pagination.filter_entries.clone();
-        let filter_summary_label_for_change = pagination.filter_summary_label.clone();
-        let filter_columns_for_change = pagination.filter_columns.clone();
-        entry.connect_changed(move |_| {
-            current_page.set(0);
-            generation.set(generation.get().saturating_add(1));
-            let labels =
-                pagination_filter_label_columns(&filter_columns_for_change.borrow().clone());
-            update_filter_summary_label(
-                &filter_summary_label_for_change,
-                &labels,
-                &filter_entries_for_change.borrow(),
-            );
-        });
-    }
-
-    let labels = pagination_filter_label_columns(&columns);
-    update_filter_summary_label(
-        &pagination.filter_summary_label,
-        &labels,
-        &pagination.filter_entries.borrow(),
-    );
 }
 
 fn build_table_pagination_controls(
@@ -4311,8 +1196,12 @@ fn build_table_pagination_controls(
     let page_size = Rc::new(Cell::new(default_page_size.max(1)));
     let generation = Rc::new(Cell::new(0_u64));
     let filter_entries: Rc<RefCell<HashMap<String, Entry>>> = Rc::new(RefCell::new(HashMap::new()));
-    let filter_order = Rc::new(RefCell::new(Vec::new()));
-    let filter_columns_state = Rc::new(RefCell::new(filter_columns));
+    let filter_order = Rc::new(
+        filter_columns
+            .iter()
+            .map(|(id, _, _)| id.clone())
+            .collect::<Vec<_>>(),
+    );
 
     let container = GtkBox::new(Orientation::Horizontal, 8);
     container.set_margin_top(4);
@@ -4321,8 +1210,6 @@ fn build_table_pagination_controls(
     let filter_bar = Grid::new();
     filter_bar.set_column_spacing(14);
     filter_bar.set_hexpand(true);
-    filter_bar.set_margin_top(2);
-    filter_bar.set_margin_bottom(2);
 
     let rows_label = Label::new(Some("Rows"));
     rows_label.set_xalign(0.0);
@@ -4360,6 +1247,37 @@ fn build_table_pagination_controls(
     controls_row.append(&clear_filters_button);
     controls_row.append(&summary_label);
 
+    for (column_index, (column_id, column_label, width_chars)) in filter_columns.iter().enumerate()
+    {
+        let entry = Entry::new();
+        let entry_width = (*width_chars).max(8).min(24);
+        entry.set_width_chars(entry_width);
+        entry.set_max_width_chars(entry_width);
+        entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
+        entry.set_margin_end(6);
+        entry.set_placeholder_text(Some(column_label));
+        filter_bar.attach(&entry, column_index as i32, 0, 1, 1);
+        filter_entries
+            .borrow_mut()
+            .insert(column_id.clone(), entry.clone());
+        let current_page = current_page.clone();
+        let generation = generation.clone();
+        let filter_entries_for_change = filter_entries.clone();
+        let filter_summary_label_for_change = filter_summary_label.clone();
+        let filter_columns_for_change = filter_columns.clone();
+        entry.connect_changed(move |_| {
+            current_page.set(0);
+            generation.set(generation.get().saturating_add(1));
+            update_filter_summary_label(
+                &filter_summary_label_for_change,
+                &filter_columns_for_change
+                    .iter()
+                    .map(|(id, label, _)| (id.clone(), label.clone()))
+                    .collect::<Vec<_>>(),
+                &filter_entries_for_change.borrow(),
+            );
+        });
+    }
     controls_row.append(&filter_summary_label);
 
     container.append(&controls_row);
@@ -4440,7 +1358,7 @@ fn build_table_pagination_controls(
         let generation = generation.clone();
         let filter_entries_for_clear = filter_entries.clone();
         let filter_summary_label_for_clear = filter_summary_label.clone();
-        let filter_columns_for_clear = filter_columns_state.clone();
+        let filter_columns_for_clear = filter_columns.clone();
         clear_filters_button.connect_clicked(move |_| {
             let entries = filter_entries_for_clear.borrow();
             let had_filters = entries
@@ -4452,11 +1370,12 @@ fn build_table_pagination_controls(
                 }
             }
             drop(entries);
-            let labels =
-                pagination_filter_label_columns(&filter_columns_for_clear.borrow().clone());
             update_filter_summary_label(
                 &filter_summary_label_for_clear,
-                &labels,
+                &filter_columns_for_clear
+                    .iter()
+                    .map(|(id, label, _)| (id.clone(), label.clone()))
+                    .collect::<Vec<_>>(),
                 &filter_entries_for_clear.borrow(),
             );
             if had_filters {
@@ -4466,24 +1385,32 @@ fn build_table_pagination_controls(
         });
     }
 
-    let pagination = TablePaginationUi {
-        current_page,
-        page_size,
-        generation,
-        page_size_combo,
-        prev_button,
-        next_button,
-        page_entry,
-        page_go_button,
-        filter_bar,
-        filter_entries,
-        filter_order,
-        filter_columns: filter_columns_state,
-        filter_summary_label,
-        summary_label,
-    };
-    rebuild_pagination_filter_bar(&pagination);
-    (container, pagination)
+    update_filter_summary_label(
+        &filter_summary_label,
+        &filter_columns
+            .iter()
+            .map(|(id, label, _)| (id.clone(), label.clone()))
+            .collect::<Vec<_>>(),
+        &filter_entries.borrow(),
+    );
+
+    (
+        container,
+        TablePaginationUi {
+            current_page,
+            page_size,
+            generation,
+            page_size_combo,
+            prev_button,
+            next_button,
+            page_entry,
+            page_go_button,
+            filter_bar,
+            filter_entries,
+            filter_order,
+            summary_label,
+        },
+    )
 }
 
 fn update_filter_summary_label(
@@ -4576,20 +1503,6 @@ fn build_ui(app: &Application) -> Result<()> {
     if settings.output_root.as_os_str().is_empty() {
         settings.output_root = output_dir.clone();
     }
-    // EasyWiFi requires parsed Wi-Fi frames for AP/client table population.
-    // Keep this enabled to avoid capture-only mode that appears as empty tables.
-    settings.enable_wifi_frame_parsing = true;
-    // Migrate legacy "1,6,11 only" hopping to full 2.4 GHz + common low 5 GHz channels
-    // so nearby APs on channels like 4 are not silently missed.
-    let legacy_hop_channels = [1u16, 6, 11];
-    let full_hop_channels = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 36, 40, 44, 48];
-    for interface in &mut settings.interfaces {
-        if let ChannelSelectionMode::HopAll { channels, .. } = &mut interface.channel_mode {
-            if channels.as_slice() == legacy_hop_channels {
-                *channels = full_hop_channels.clone();
-            }
-        }
-    }
     sanitize_table_layout(&mut settings.ap_table_layout, &default_ap_table_layout());
     sanitize_table_layout(
         &mut settings.client_table_layout,
@@ -4605,18 +1518,10 @@ fn build_ui(app: &Application) -> Result<()> {
         &default_bluetooth_table_layout(),
     );
     migrate_legacy_bluetooth_table_layout(&mut settings.bluetooth_table_layout);
-    ensure_column_visible(&mut settings.ap_table_layout, "oui");
-    ensure_column_visible(&mut settings.client_table_layout, "oui");
-    ensure_column_visible(&mut settings.bluetooth_table_layout, "oui");
-    ensure_column_visible(&mut settings.bluetooth_table_layout, "rssi");
-    ensure_column_visible(&mut settings.bluetooth_table_layout, "mfgr_ids");
-    ensure_column_visible(&mut settings.bluetooth_table_layout, "mfgr_names");
-    ensure_column_visible(&mut settings.bluetooth_table_layout, "uuids");
     migrate_watchlist_settings(&mut settings.watchlists);
     if !TABLE_PAGE_SIZE_OPTIONS.contains(&settings.default_rows_per_page) {
         settings.default_rows_per_page = DEFAULT_TABLE_PAGE_SIZE;
     }
-    set_use_zulu_time_display(settings.use_zulu_time);
     let watchlist_css_provider = install_ui_css();
     apply_watchlist_css(&watchlist_css_provider, &settings.watchlists);
 
@@ -4626,7 +1531,7 @@ fn build_ui(app: &Application) -> Result<()> {
             interface_name: "wlan0".to_string(),
             monitor_interface_name: None,
             channel_mode: ChannelSelectionMode::HopAll {
-                channels: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 36, 40, 44, 48],
+                channels: vec![1, 6, 11, 36, 40, 44, 48],
                 dwell_ms: 200,
             },
             enabled: true,
@@ -4662,36 +1567,9 @@ fn build_ui(app: &Application) -> Result<()> {
     };
     storage.save_session(&session_meta)?;
 
-    let mut oui = OuiDatabase::load_with_override(Some(&settings.oui_source_path))
+    let oui = OuiDatabase::load_with_override(Some(&settings.oui_source_path))
         .or_else(|_| OuiDatabase::load_default())
         .unwrap_or_else(|_| OuiDatabase::empty());
-    if oui.count() < 1000 {
-        if let Ok(fallback_db) = OuiDatabase::load_default() {
-            if fallback_db.count() > oui.count() {
-                oui = fallback_db;
-            }
-        }
-    }
-    let mut oui_refresh_status_line = None::<String>;
-    let mut oui_source_path_updated = false;
-    if settings.auto_check_oui_updates && oui.count() < 1000 {
-        if let Some(cache_path) = OuiDatabase::persistent_cache_path() {
-            if oui.refresh_from_ieee(&cache_path).is_ok() {
-                if let Ok(updated) = OuiDatabase::load_with_override(Some(&cache_path)) {
-                    if updated.count() > oui.count() {
-                        settings.oui_source_path = cache_path.clone();
-                        oui_source_path_updated = true;
-                        oui = updated;
-                        oui_refresh_status_line = Some(format!(
-                            "refreshed OUI database from IEEE into {} ({} entries)",
-                            cache_path.display(),
-                            oui.count()
-                        ));
-                    }
-                }
-            }
-        }
-    }
 
     let gps_provider = Arc::from(gps::create_provider(&settings.gps));
 
@@ -4706,35 +1584,19 @@ fn build_ui(app: &Application) -> Result<()> {
             }
         }
     }
-    if oui_source_path_updated {
-        let _ = settings.save_to_disk();
-    }
 
     let (capture_tx, capture_rx) = unbounded::<CaptureEvent>();
     let (bluetooth_tx, bluetooth_rx) = unbounded::<BluetoothEvent>();
-    let (sdr_tx, sdr_rx) = unbounded::<SdrEvent>();
     let session_capture_path = prepare_live_capture_path(&session_id)?;
 
     let runtime: Option<CaptureRuntime> = None;
     let bluetooth_runtime: Option<BluetoothRuntime> = None;
-    let sdr_runtime: Option<SdrRuntime> = None;
 
     let initial_gps_track_points = existing_gps_track.len();
     let bluetooth_controller_status = settings
         .bluetooth_controller
         .clone()
         .unwrap_or_else(|| "<default>".to_string());
-    let bluetooth_source_status = match settings.bluetooth_scan_source {
-        BluetoothScanSource::Bluez => "BlueZ",
-        BluetoothScanSource::Ubertooth => "Ubertooth",
-        BluetoothScanSource::Both => "BlueZ + Ubertooth",
-    };
-    let ubertooth_device_status = settings
-        .ubertooth_device
-        .clone()
-        .unwrap_or_else(|| "<default>".to_string());
-    let (output_gps_latitude, output_gps_longitude) =
-        output_gps_coordinates_for_settings(&settings);
 
     let state = Rc::new(RefCell::new(AppState {
         settings,
@@ -4751,8 +1613,6 @@ fn build_ui(app: &Application) -> Result<()> {
         capture_sender: capture_tx,
         bluetooth_runtime,
         bluetooth_sender: bluetooth_tx,
-        sdr_runtime,
-        _sdr_sender: sdr_tx,
         session_capture_path,
         gps_track: existing_gps_track,
         last_gps_track_point_at: None,
@@ -4765,9 +1625,6 @@ fn build_ui(app: &Application) -> Result<()> {
                 "privilege mode: {}",
                 capture::privilege_mode_summary()
             ));
-            if let Some(line) = oui_refresh_status_line {
-                lines.push(line);
-            }
             lines.push(format!("loaded local OUI entries: {}", oui.count()));
             lines.push(format!(
                 "loaded bluetooth devices: {}",
@@ -4777,15 +1634,9 @@ fn build_ui(app: &Application) -> Result<()> {
                 "bluetooth controller: {}",
                 bluetooth_controller_status
             ));
-            lines.push(format!("bluetooth source: {}", bluetooth_source_status));
-            lines.push(format!("ubertooth device: {}", ubertooth_device_status));
             lines.push(format!(
                 "loaded GPS track points: {}",
                 initial_gps_track_points
-            ));
-            lines.push(format!(
-                "GPS output coordinates fixed to {}, {}",
-                output_gps_latitude, output_gps_longitude
             ));
             lines
         },
@@ -4799,8 +1650,8 @@ fn build_ui(app: &Application) -> Result<()> {
         assoc_sort: TableSortState::new("last_heard", true),
         bluetooth_sort: TableSortState::new("last_seen", true),
         pending_privilege_alert: None,
-        wifi_lock_restore_modes: HashMap::new(),
-        wifi_locked_targets: HashMap::new(),
+        wifi_lock_restore_mode: None,
+        wifi_locked_target: None,
         wifi_interface_restore_types: HashMap::new(),
         scan_start_in_progress: false,
         scan_stop_in_progress: false,
@@ -4820,11 +1671,6 @@ fn build_ui(app: &Application) -> Result<()> {
     global_gps_status_label.set_wrap(true);
     global_gps_status_label.set_selectable(true);
 
-    let global_interface_status_label = Label::new(Some("interface status initializing"));
-    global_interface_status_label.set_xalign(0.0);
-    global_interface_status_label.set_wrap(true);
-    global_interface_status_label.set_selectable(true);
-
     let global_status_box = GtkBox::new(Orientation::Vertical, 4);
     global_status_box.set_margin_top(6);
     global_status_box.set_margin_bottom(8);
@@ -4834,13 +1680,11 @@ fn build_ui(app: &Application) -> Result<()> {
     global_status_box.append(&global_status_label);
     global_status_box.append(&Label::new(Some("GPS Status")));
     global_status_box.append(&global_gps_status_label);
-    global_status_box.append(&Label::new(Some("Interface Status")));
-    global_status_box.append(&global_interface_status_label);
 
     let global_status_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(0)
+        .min_content_height(160)
         .child(&global_status_box)
         .build();
     let global_status_container = GtkBox::new(Orientation::Vertical, 0);
@@ -4848,7 +1692,6 @@ fn build_ui(app: &Application) -> Result<()> {
 
     let root = GtkBox::new(Orientation::Vertical, 8);
     let (notebook, widgets) = build_tabs(&window, state.clone());
-    remove_sdr_tab(&notebook);
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
     let content_paned = Paned::new(Orientation::Vertical);
@@ -4856,8 +1699,8 @@ fn build_ui(app: &Application) -> Result<()> {
     content_paned.set_position(DEFAULT_CONTENT_PANE_POSITION);
     content_paned.set_resize_start_child(true);
     content_paned.set_resize_end_child(true);
-    content_paned.set_shrink_start_child(true);
-    content_paned.set_shrink_end_child(true);
+    content_paned.set_shrink_start_child(false);
+    content_paned.set_shrink_end_child(false);
     content_paned.set_start_child(Some(&notebook));
     content_paned.set_end_child(Some(&global_status_container));
     let pagination_defaults = PaginationDefaultsUi {
@@ -4913,27 +1756,21 @@ fn build_ui(app: &Application) -> Result<()> {
     bind_poll_loop(
         capture_rx,
         bluetooth_rx,
-        sdr_rx,
         state.clone(),
         widgets,
         capture_start_btn,
         capture_stop_btn,
         global_status_label,
         global_gps_status_label,
-        global_interface_status_label,
         notebook.clone(),
         &window,
     );
 
-    if std::env::var_os("EASYWIFI_AUTOSTART").is_some()
-        || std::env::var_os("EASYWIFI_AUTOSTART").is_some()
-    {
+    if std::env::var_os("SIMPLESTG_AUTOSTART").is_some() {
         state.borrow_mut().start_scanning();
     }
 
-    if let Some(value) = std::env::var_os("EASYWIFI_AUTOSTOP_AFTER_SECS")
-        .or_else(|| std::env::var_os("EASYWIFI_AUTOSTOP_AFTER_SECS"))
-    {
+    if let Some(value) = std::env::var_os("SIMPLESTG_AUTOSTOP_AFTER_SECS") {
         if let Ok(delay_secs) = value.to_string_lossy().parse::<u32>() {
             let state_for_autostop = state.clone();
             let armed_at = Rc::new(Cell::new(None::<Instant>));
@@ -4978,9 +1815,6 @@ fn build_ui(app: &Application) -> Result<()> {
         if let Some(runtime) = state.bluetooth_runtime.take() {
             runtime.stop();
         }
-        if let Some(runtime) = state.sdr_runtime.take() {
-            runtime.stop();
-        }
         let restore_status = restore_wifi_interfaces(
             &state.settings.interfaces,
             &state.wifi_interface_restore_types,
@@ -5012,39 +1846,19 @@ fn build_menubar(
         let state = state.clone();
         export_all_action.connect_activate(move |_, _| {
             let mut s = state.borrow_mut();
-            let ap_csv = s.exporter.export_access_points_csv(&s.access_points);
-            let client_csv = s.exporter.export_clients_csv(&s.clients);
-            let summary_json =
-                s.exporter
-                    .export_summary_json(&s.access_points, &s.clients, &s.bluetooth_devices);
-            let gps_track = s.gps_track_for_export();
+            let _ = s.exporter.export_access_points_csv(&s.access_points);
+            let _ = s.exporter.export_clients_csv(&s.clients);
             let gps_pcap = s
                 .exporter
-                .export_session_pcap_with_gps(&s.session_capture_path, &gps_track);
-            match (ap_csv, client_csv, summary_json, gps_pcap) {
-                (Ok(_), Ok(_), Ok(_), Ok(_)) => s.push_status(
-                    "exported AP/client CSV + summary JSON + consolidated GPS PCAPNG".to_string(),
-                ),
-                (ap_res, client_res, json_res, pcap_res) => s.push_status(format!(
-                    "export incomplete: ap_csv={} client_csv={} summary_json={} pcap={}",
-                    ap_res
-                        .err()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "ok".to_string()),
-                    client_res
-                        .err()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "ok".to_string()),
-                    json_res
-                        .err()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "ok".to_string()),
-                    pcap_res
-                        .err()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "ok".to_string())
+                .export_session_pcap_with_gps(&s.session_capture_path, &s.gps_track);
+            match gps_pcap {
+                Ok(_) => {
+                    s.push_status("exported AP/client CSV and consolidated GPS PCAPNG".to_string())
+                }
+                Err(err) => s.push_status(format!(
+                    "exported CSV; consolidated GPS PCAPNG failed: {err}"
                 )),
-            };
+            }
         });
     }
     app.add_action(&export_all_action);
@@ -5064,33 +1878,15 @@ fn build_menubar(
                 &s.clients,
                 &s.bluetooth_devices,
             );
-            let kmz = s.exporter.export_location_logs_kmz(
-                &s.access_points,
-                &s.clients,
-                &s.bluetooth_devices,
-            );
-            let summary_json =
-                s.exporter
-                    .export_summary_json(&s.access_points, &s.clients, &s.bluetooth_devices);
-            match (csv, kml, kmz, summary_json) {
-                (Ok(_), Ok(_), Ok(_), Ok(_)) => s.push_status(
-                    "exported location logs (CSV + KML + KMZ) and summary JSON".to_string(),
-                ),
-                (csv_res, kml_res, kmz_res, json_res) => s.push_status(format!(
-                    "location export incomplete: csv={} kml={} kmz={} summary_json={}",
+            match (csv, kml) {
+                (Ok(_), Ok(_)) => s.push_status("exported location logs (CSV + KML)".to_string()),
+                (csv_res, kml_res) => s.push_status(format!(
+                    "location export incomplete: csv={} kml={}",
                     csv_res
                         .err()
                         .map(|e| e.to_string())
                         .unwrap_or_else(|| "ok".to_string()),
                     kml_res
-                        .err()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "ok".to_string()),
-                    kmz_res
-                        .err()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "ok".to_string()),
-                    json_res
                         .err()
                         .map(|e| e.to_string())
                         .unwrap_or_else(|| "ok".to_string())
@@ -5177,8 +1973,6 @@ fn build_menubar(
                 Some(next),
                 None,
                 None,
-                None,
-                None,
             );
         });
     }
@@ -5209,8 +2003,6 @@ fn build_menubar(
                 &widgets,
                 None,
                 Some(next),
-                None,
-                None,
                 None,
             );
         });
@@ -5243,78 +2035,10 @@ fn build_menubar(
                 None,
                 None,
                 Some(next),
-                None,
-                None,
             );
         });
     }
     app.add_action(&settings_show_device_pane_action);
-
-    let show_column_filters_initial = state.borrow().settings.show_column_filters;
-    let settings_show_column_filters_action = gio::SimpleAction::new_stateful(
-        "settings_show_column_filters",
-        None,
-        &glib::Variant::from(show_column_filters_initial),
-    );
-    {
-        let state = state.clone();
-        let content_paned = content_paned.clone();
-        let global_status_box = global_status_box.clone();
-        let widgets = widgets.clone();
-        settings_show_column_filters_action.connect_activate(move |action, _| {
-            let current = action
-                .state()
-                .and_then(|variant| variant.get::<bool>())
-                .unwrap_or(true);
-            let next = !current;
-            action.set_state(&glib::Variant::from(next));
-            apply_view_preferences(
-                &state,
-                &content_paned,
-                &global_status_box,
-                &widgets,
-                None,
-                None,
-                None,
-                Some(next),
-                None,
-            );
-        });
-    }
-    app.add_action(&settings_show_column_filters_action);
-
-    let show_ap_inline_channel_usage_initial = state.borrow().settings.show_ap_inline_channel_usage;
-    let settings_show_ap_inline_channel_usage_action = gio::SimpleAction::new_stateful(
-        "settings_show_ap_inline_channel_usage",
-        None,
-        &glib::Variant::from(show_ap_inline_channel_usage_initial),
-    );
-    {
-        let state = state.clone();
-        let content_paned = content_paned.clone();
-        let global_status_box = global_status_box.clone();
-        let widgets = widgets.clone();
-        settings_show_ap_inline_channel_usage_action.connect_activate(move |action, _| {
-            let current = action
-                .state()
-                .and_then(|variant| variant.get::<bool>())
-                .unwrap_or(false);
-            let next = !current;
-            action.set_state(&glib::Variant::from(next));
-            apply_view_preferences(
-                &state,
-                &content_paned,
-                &global_status_box,
-                &widgets,
-                None,
-                None,
-                None,
-                None,
-                Some(next),
-            );
-        });
-    }
-    app.add_action(&settings_show_ap_inline_channel_usage_action);
 
     let set_default_rows_per_page =
         |rows: usize, state: &Rc<RefCell<AppState>>, pagination_defaults: &PaginationDefaultsUi| {
@@ -5417,1238 +2141,13 @@ fn build_menubar(
     }
     app.add_action(&quit_action);
 
-    let presets_root_menu = gio::Menu::new();
-    let frequency_menu = gio::Menu::new();
-    for group in default_frequency_preset_groups() {
-        let group_menu = gio::Menu::new();
-        for entry in group.entries {
-            let action_name = format!("preset_freq_{}", entry.id);
-            let action_target = format!("app.{}", action_name);
-            let label = format!(
-                "{} ({:.4} MHz)",
-                entry.label,
-                entry.freq_hz as f64 / 1_000_000.0
-            );
-            let state = state.clone();
-            let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
-            let entry_label = entry.label.clone();
-            let freq_hz = entry.freq_hz;
-            let action = gio::SimpleAction::new(&action_name, None);
-            action.connect_activate(move |_, _| {
-                sdr_center_freq_entry.set_text(&freq_hz.to_string());
-                let mut s = state.borrow_mut();
-                if let Some(runtime) = s.sdr_runtime.as_ref() {
-                    runtime.set_center_freq(freq_hz);
-                }
-                s.push_status(format!(
-                    "preset frequency selected: {} ({:.4} MHz)",
-                    entry_label,
-                    freq_hz as f64 / 1_000_000.0
-                ));
-            });
-            app.add_action(&action);
-            group_menu.append(Some(&label), Some(&action_target));
-        }
-        frequency_menu.append_submenu(Some(&group.label), &group_menu);
-    }
-    let cellular_menu = gio::Menu::new();
-    let arfcn_menu = gio::Menu::new();
-    for (uplink, link_label) in [(true, "Uplink Freq"), (false, "Download Freq")] {
-        let link_menu = gio::Menu::new();
-        for group in cellular_arfcn_frequency_groups(uplink) {
-            let group_menu = gio::Menu::new();
-            for entry in group.entries {
-                let action_name = format!("preset_cellular_{}", entry.id);
-                let action_target = format!("app.{}", action_name);
-                let label = format!(
-                    "{} ({:.4} MHz)",
-                    entry.label,
-                    entry.freq_hz as f64 / 1_000_000.0
-                );
-                let state = state.clone();
-                let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
-                let entry_label = entry.label.clone();
-                let freq_hz = entry.freq_hz;
-                let action = gio::SimpleAction::new(&action_name, None);
-                action.connect_activate(move |_, _| {
-                    sdr_center_freq_entry.set_text(&freq_hz.to_string());
-                    let mut s = state.borrow_mut();
-                    if let Some(runtime) = s.sdr_runtime.as_ref() {
-                        runtime.set_center_freq(freq_hz);
-                    }
-                    s.push_status(format!(
-                        "cellular ARFCN preset selected: {} ({:.4} MHz)",
-                        entry_label,
-                        freq_hz as f64 / 1_000_000.0
-                    ));
-                });
-                app.add_action(&action);
-                group_menu.append(Some(&label), Some(&action_target));
-            }
-            link_menu.append_submenu(Some(&group.label), &group_menu);
-        }
-        arfcn_menu.append_submenu(Some(link_label), &link_menu);
-    }
-    cellular_menu.append_submenu(Some("ARFCN"), &arfcn_menu);
-    frequency_menu.append_submenu(Some("Cellular"), &cellular_menu);
-    frequency_menu.append(
-        Some("FCC Area Explorer (CSV, with Signal Type)"),
-        Some("app.preset_fcc_area_explorer"),
-    );
-    frequency_menu.append(
-        Some("FCC Area Explorer (CSV URL)"),
-        Some("app.preset_fcc_area_url_explorer"),
-    );
-    frequency_menu.append(
-        Some("FCC Frequency Explorer (CSV -> Bookmarks)"),
-        Some("app.preset_fcc_frequency_explorer"),
-    );
-    frequency_menu.append(
-        Some("FCC Frequency Explorer (CSV URL -> Bookmarks)"),
-        Some("app.preset_fcc_frequency_url_explorer"),
-    );
-    frequency_menu.append(
-        Some("Remove FCC Bookmarks"),
-        Some("app.preset_fcc_bookmarks_remove"),
-    );
-    frequency_menu.append(
-        Some("Export Cellular ARFCN Playlist (CSV + JSON)"),
-        Some("app.preset_export_cellular_arfcn_csv"),
-    );
-    presets_root_menu.append_submenu(Some("Frequencies"), &frequency_menu);
-
-    let scanner_menu = gio::Menu::new();
-    let mut scanner_groups = default_scanner_preset_groups();
-    if let Some(saved_scanners) = scanner_presets_from_settings(&state.borrow().settings) {
-        scanner_groups.push(saved_scanners);
-    }
-    for group in scanner_groups {
-        let group_menu = gio::Menu::new();
-        for entry in group.entries {
-            let action_name = format!("preset_scan_{}", entry.id);
-            let action_target = format!("app.{}", action_name);
-            let label = format!(
-                "{} ({:.3}-{:.3} MHz)",
-                entry.label,
-                entry.start_hz as f64 / 1_000_000.0,
-                entry.end_hz as f64 / 1_000_000.0
-            );
-            let state = state.clone();
-            let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
-            let sdr_sample_rate_entry = widgets.sdr_sample_rate_entry.clone();
-            let sdr_scan_enable_check = widgets.sdr_scan_enable_check.clone();
-            let sdr_scan_start_entry = widgets.sdr_scan_start_entry.clone();
-            let sdr_scan_end_entry = widgets.sdr_scan_end_entry.clone();
-            let sdr_scan_step_entry = widgets.sdr_scan_step_entry.clone();
-            let sdr_scan_speed_entry = widgets.sdr_scan_speed_entry.clone();
-            let sdr_squelch_scale = widgets.sdr_squelch_scale.clone();
-            let entry_label = entry.label.clone();
-            let start_hz = entry.start_hz;
-            let end_hz = entry.end_hz;
-            let sample_rate_override = entry.sample_rate_hz;
-            let step_hz = entry.step_hz;
-            let steps_per_sec = entry.steps_per_sec;
-            let squelch_dbm = entry.squelch_dbm;
-            let action = gio::SimpleAction::new(&action_name, None);
-            action.connect_activate(move |_, _| {
-                let center_hz = start_hz + (end_hz.saturating_sub(start_hz) / 2);
-                let mut sample_rate_hz = sample_rate_override.unwrap_or(
-                    ((end_hz.saturating_sub(start_hz)).saturating_mul(12) / 10)
-                        .max(2_000_000)
-                        .min(20_000_000) as u32,
-                );
-                sample_rate_hz = sample_rate_hz.clamp(200_000, 20_000_000);
-                sample_rate_hz = sample_rate_hz.min(20_000_000);
-                sdr_center_freq_entry.set_text(&center_hz.to_string());
-                sdr_sample_rate_entry.set_text(&sample_rate_hz.to_string());
-                sdr_scan_enable_check.set_active(true);
-                sdr_scan_start_entry.set_text(&start_hz.to_string());
-                sdr_scan_end_entry.set_text(&end_hz.to_string());
-                sdr_scan_step_entry.set_text(&step_hz.to_string());
-                sdr_scan_speed_entry.set_text(&format!("{steps_per_sec:.2}"));
-                sdr_squelch_scale.set_value(squelch_dbm as f64);
-                let mut s = state.borrow_mut();
-                if let Some(runtime) = s.sdr_runtime.as_ref() {
-                    runtime.set_center_freq(center_hz);
-                    runtime.set_scan_range(true, start_hz, end_hz, step_hz, steps_per_sec);
-                    runtime.set_squelch(squelch_dbm);
-                }
-                s.push_status(format!(
-                    "scanner preset applied: {} ({:.3}-{:.3} MHz, step {} kHz, squelch {:.0} dBm)",
-                    entry_label,
-                    start_hz as f64 / 1_000_000.0,
-                    end_hz as f64 / 1_000_000.0,
-                    step_hz as f64 / 1_000.0,
-                    squelch_dbm
-                ));
-            });
-            app.add_action(&action);
-            group_menu.append(Some(&label), Some(&action_target));
-        }
-        scanner_menu.append_submenu(Some(&group.label), &group_menu);
-    }
-    presets_root_menu.append_submenu(Some("Scanner Presets"), &scanner_menu);
-
-    let macro_menu = gio::Menu::new();
-    for entry in protocol_scan_macros() {
-        let action_name = format!("preset_macro_{}", entry.id);
-        let action_target = format!("app.{}", action_name);
-        let label = format!(
-            "{} ({:.3}-{:.3} MHz)",
-            entry.label,
-            entry.start_hz as f64 / 1_000_000.0,
-            entry.end_hz as f64 / 1_000_000.0
-        );
-        let state = state.clone();
-        let sdr_decoder_combo = widgets.sdr_decoder_combo.clone();
-        let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = widgets.sdr_sample_rate_entry.clone();
-        let sdr_scan_enable_check = widgets.sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = widgets.sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = widgets.sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = widgets.sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = widgets.sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = widgets.sdr_squelch_scale.clone();
-        let entry_label = entry.label.clone();
-        let decoder_id = entry.decoder_id.clone();
-        let start_hz = entry.start_hz;
-        let end_hz = entry.end_hz;
-        let step_hz = entry.step_hz;
-        let steps_per_sec = entry.steps_per_sec;
-        let squelch_dbm = entry.squelch_dbm;
-        let action = gio::SimpleAction::new(&action_name, None);
-        action.connect_activate(move |_, _| {
-            let center_hz = start_hz + (end_hz.saturating_sub(start_hz) / 2);
-            let mut sample_rate_hz = ((end_hz.saturating_sub(start_hz)).saturating_mul(12) / 10)
-                .max(2_000_000)
-                .min(20_000_000) as u32;
-            sample_rate_hz = sample_rate_hz.clamp(200_000, 20_000_000);
-            sdr_center_freq_entry.set_text(&center_hz.to_string());
-            sdr_sample_rate_entry.set_text(&sample_rate_hz.to_string());
-            sdr_scan_enable_check.set_active(true);
-            sdr_scan_start_entry.set_text(&start_hz.to_string());
-            sdr_scan_end_entry.set_text(&end_hz.to_string());
-            sdr_scan_step_entry.set_text(&step_hz.to_string());
-            sdr_scan_speed_entry.set_text(&format!("{steps_per_sec:.2}"));
-            sdr_squelch_scale.set_value(squelch_dbm as f64);
-            let decoder_selected = sdr_decoder_combo.set_active_id(Some(&decoder_id));
-
-            let mut s = state.borrow_mut();
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_center_freq(center_hz);
-                runtime.set_scan_range(true, start_hz, end_hz, step_hz, steps_per_sec);
-                runtime.set_squelch(squelch_dbm);
-            }
-            if decoder_selected {
-                s.push_status(format!(
-                    "scan macro applied: {} [{}] ({:.3}-{:.3} MHz)",
-                    entry_label,
-                    decoder_id,
-                    start_hz as f64 / 1_000_000.0,
-                    end_hz as f64 / 1_000_000.0
-                ));
-            } else {
-                s.push_status(format!(
-                    "scan macro applied: {} ({:.3}-{:.3} MHz); decoder `{}` unavailable",
-                    entry_label,
-                    start_hz as f64 / 1_000_000.0,
-                    end_hz as f64 / 1_000_000.0,
-                    decoder_id
-                ));
-            }
-        });
-        app.add_action(&action);
-        macro_menu.append(Some(&label), Some(&action_target));
-    }
-    presets_root_menu.append_submenu(Some("Scan Macros"), &macro_menu);
-
-    let presets_fcc_area_action = gio::SimpleAction::new("preset_fcc_area_explorer", None);
-    {
-        let window = window.clone();
-        let state = state.clone();
-        let sdr_decoder_combo = widgets.sdr_decoder_combo.clone();
-        let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = widgets.sdr_sample_rate_entry.clone();
-        let sdr_scan_enable_check = widgets.sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = widgets.sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = widgets.sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = widgets.sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = widgets.sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = widgets.sdr_squelch_scale.clone();
-        presets_fcc_area_action.connect_activate(move |_, _| {
-            let dialog = Dialog::builder()
-                .transient_for(&window)
-                .modal(true)
-                .title("FCC Area Explorer")
-                .build();
-            dialog.add_button("Cancel", ResponseType::Cancel);
-            dialog.add_button("Load CSV", ResponseType::Accept);
-            let content = dialog.content_area();
-            content.set_spacing(8);
-            let note = Label::new(Some(
-                "Area filter (city/county/state/callsign token). Leave blank for full CSV.",
-            ));
-            note.set_xalign(0.0);
-            let area_entry = Entry::new();
-            area_entry.set_placeholder_text(Some("Example: Raleigh or NC"));
-            let signal_label = Label::new(Some("Signal/Service filter (optional)"));
-            signal_label.set_xalign(0.0);
-            let signal_entry = Entry::new();
-            signal_entry.set_placeholder_text(Some("Example: Public Safety"));
-            content.append(&note);
-            content.append(&area_entry);
-            content.append(&signal_label);
-            content.append(&signal_entry);
-
-            let window = window.clone();
-            let state = state.clone();
-            let sdr_decoder_combo = sdr_decoder_combo.clone();
-            let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-            let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-            let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-            let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-            let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-            let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-            let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-            let sdr_squelch_scale = sdr_squelch_scale.clone();
-            dialog.connect_response(move |d, response| {
-                if response != ResponseType::Accept {
-                    d.close();
-                    return;
-                }
-                let area = area_entry.text().to_string();
-                let signal_filter = signal_entry.text().to_string();
-                d.close();
-                choose_file_path(
-                    &window,
-                    "Select FCC Assignments CSV",
-                    PathBuf::from("."),
-                    {
-                        let state = state.clone();
-                        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-                        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-                        let sdr_decoder_combo = sdr_decoder_combo.clone();
-                        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-                        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-                        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-                        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-                        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-                        let sdr_squelch_scale = sdr_squelch_scale.clone();
-                        let signal_filter = signal_filter.clone();
-                        move |selected| {
-                            let Some(csv_path) = selected else {
-                                return;
-                            };
-                            let fcc_scan = match build_fcc_area_scan_preset_from_csv(
-                                &csv_path,
-                                &area,
-                                &signal_filter,
-                            ) {
-                                Ok(Some(preset)) => preset,
-                                    Ok(None) => {
-                                        state.borrow_mut().push_status(format!(
-                                            "FCC area explorer: no matching frequency assignments found in {}",
-                                            csv_path.display()
-                                        ));
-                                        return;
-                                    }
-                                    Err(err) => {
-                                        state.borrow_mut().push_status(format!(
-                                            "FCC area explorer import failed: {err}"
-                                        ));
-                                        return;
-                                    }
-                                };
-                            let preset = fcc_scan.preset;
-                            let signal_type = fcc_scan.signal_type;
-                            let matched_rows = fcc_scan.matched_rows;
-                            let auto_decoder =
-                                apply_fcc_decoder_autoselect(&sdr_decoder_combo, signal_type.as_deref());
-
-                            sdr_center_freq_entry.set_text(&preset.center_freq_hz.to_string());
-                            sdr_sample_rate_entry.set_text(&preset.sample_rate_hz.to_string());
-                            sdr_scan_enable_check.set_active(true);
-                            sdr_scan_start_entry.set_text(&preset.scan_start_hz.to_string());
-                            sdr_scan_end_entry.set_text(&preset.scan_end_hz.to_string());
-                            sdr_scan_step_entry.set_text(&preset.scan_step_hz.to_string());
-                            sdr_scan_speed_entry
-                                .set_text(&format!("{:.2}", preset.scan_steps_per_sec));
-                            sdr_squelch_scale.set_value(preset.squelch_dbm as f64);
-
-                            let mut s = state.borrow_mut();
-                            let added = merge_sdr_operator_presets(
-                                &mut s.settings.sdr_operator_presets,
-                                vec![preset.clone()],
-                            );
-                            s.save_settings_to_disk();
-                            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                                runtime.set_center_freq(preset.center_freq_hz);
-                                runtime.set_scan_range(
-                                    true,
-                                    preset.scan_start_hz,
-                                    preset.scan_end_hz,
-                                    preset.scan_step_hz,
-                                    preset.scan_steps_per_sec,
-                                );
-                                runtime.set_squelch(preset.squelch_dbm);
-                            }
-                            s.push_status(format!(
-                                "FCC area explorer loaded from {} [{} | type_filter={}] type={} auto_decoder={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
-                                csv_path.display(),
-                                if area.trim().is_empty() {
-                                    "all rows".to_string()
-                                } else {
-                                    area.trim().to_string()
-                                },
-                                if signal_filter.trim().is_empty() {
-                                    "all".to_string()
-                                } else {
-                                    signal_filter.trim().to_string()
-                                },
-                                signal_type.unwrap_or_else(|| "unknown".to_string()),
-                                auto_decoder.unwrap_or_else(|| "none".to_string()),
-                                matched_rows,
-                                preset.scan_start_hz as f64 / 1_000_000.0,
-                                preset.scan_end_hz as f64 / 1_000_000.0,
-                                added
-                            ));
-                        }
-                    },
-                );
-            });
-            dialog.present();
-        });
-    }
-    app.add_action(&presets_fcc_area_action);
-
-    let presets_fcc_area_url_action = gio::SimpleAction::new("preset_fcc_area_url_explorer", None);
-    {
-        let window = window.clone();
-        let state = state.clone();
-        let sdr_decoder_combo = widgets.sdr_decoder_combo.clone();
-        let sdr_center_freq_entry = widgets.sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = widgets.sdr_sample_rate_entry.clone();
-        let sdr_scan_enable_check = widgets.sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = widgets.sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = widgets.sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = widgets.sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = widgets.sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = widgets.sdr_squelch_scale.clone();
-        presets_fcc_area_url_action.connect_activate(move |_, _| {
-            let dialog = Dialog::builder()
-                .transient_for(&window)
-                .modal(true)
-                .title("FCC Area Explorer (CSV URL)")
-                .build();
-            dialog.add_button("Cancel", ResponseType::Cancel);
-            dialog.add_button("Load URL", ResponseType::Accept);
-            let content = dialog.content_area();
-            content.set_spacing(8);
-            let area_label = Label::new(Some(
-                "Area filter (city/county/state/callsign token). Leave blank for full CSV.",
-            ));
-            area_label.set_xalign(0.0);
-            let area_entry = Entry::new();
-            area_entry.set_placeholder_text(Some("Example: Raleigh or NC"));
-            let signal_label = Label::new(Some("Signal/Service filter (optional)"));
-            signal_label.set_xalign(0.0);
-            let signal_entry = Entry::new();
-            signal_entry.set_placeholder_text(Some("Example: Public Safety"));
-            let url_label = Label::new(Some("CSV URL"));
-            url_label.set_xalign(0.0);
-            let url_entry = Entry::new();
-            url_entry.set_placeholder_text(Some("https://.../fcc-assignments.csv"));
-            content.append(&area_label);
-            content.append(&area_entry);
-            content.append(&signal_label);
-            content.append(&signal_entry);
-            content.append(&url_label);
-            content.append(&url_entry);
-
-            let state = state.clone();
-            let sdr_decoder_combo = sdr_decoder_combo.clone();
-            let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-            let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-            let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-            let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-            let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-            let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-            let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-            let sdr_squelch_scale = sdr_squelch_scale.clone();
-            dialog.connect_response(move |d, response| {
-                if response != ResponseType::Accept {
-                    d.close();
-                    return;
-                }
-                let area = area_entry.text().to_string();
-                let signal_filter = signal_entry.text().to_string();
-                let url = url_entry.text().to_string();
-                d.close();
-
-                let csv_path = match fetch_csv_from_url(&url) {
-                    Ok(path) => path,
-                    Err(err) => {
-                        state
-                            .borrow_mut()
-                            .push_status(format!("FCC area explorer URL fetch failed: {err}"));
-                        return;
-                    }
-                };
-
-                let fcc_scan =
-                    match build_fcc_area_scan_preset_from_csv(&csv_path, &area, &signal_filter) {
-                        Ok(Some(preset)) => preset,
-                    Ok(None) => {
-                        state.borrow_mut().push_status(format!(
-                            "FCC area explorer: no matching frequency assignments found in {}",
-                            csv_path.display()
-                        ));
-                        let _ = fs::remove_file(&csv_path);
-                        return;
-                    }
-                    Err(err) => {
-                        state
-                            .borrow_mut()
-                            .push_status(format!("FCC area explorer import failed: {err}"));
-                        let _ = fs::remove_file(&csv_path);
-                        return;
-                    }
-                };
-                let preset = fcc_scan.preset;
-                let signal_type = fcc_scan.signal_type;
-                let matched_rows = fcc_scan.matched_rows;
-                let auto_decoder =
-                    apply_fcc_decoder_autoselect(&sdr_decoder_combo, signal_type.as_deref());
-                sdr_center_freq_entry.set_text(&preset.center_freq_hz.to_string());
-                sdr_sample_rate_entry.set_text(&preset.sample_rate_hz.to_string());
-                sdr_scan_enable_check.set_active(true);
-                sdr_scan_start_entry.set_text(&preset.scan_start_hz.to_string());
-                sdr_scan_end_entry.set_text(&preset.scan_end_hz.to_string());
-                sdr_scan_step_entry.set_text(&preset.scan_step_hz.to_string());
-                sdr_scan_speed_entry.set_text(&format!("{:.2}", preset.scan_steps_per_sec));
-                sdr_squelch_scale.set_value(preset.squelch_dbm as f64);
-
-                let mut s = state.borrow_mut();
-                let added = merge_sdr_operator_presets(
-                    &mut s.settings.sdr_operator_presets,
-                    vec![preset.clone()],
-                );
-                s.save_settings_to_disk();
-                if let Some(runtime) = s.sdr_runtime.as_ref() {
-                    runtime.set_center_freq(preset.center_freq_hz);
-                    runtime.set_scan_range(
-                        true,
-                        preset.scan_start_hz,
-                        preset.scan_end_hz,
-                        preset.scan_step_hz,
-                        preset.scan_steps_per_sec,
-                    );
-                    runtime.set_squelch(preset.squelch_dbm);
-                }
-                s.push_status(format!(
-                    "FCC area explorer URL loaded [{} | type_filter={}] type={} auto_decoder={} rows={} {:.3}-{:.3} MHz (saved presets added: {})",
-                    if area.trim().is_empty() {
-                        "all rows".to_string()
-                    } else {
-                        area.trim().to_string()
-                    },
-                    if signal_filter.trim().is_empty() {
-                        "all".to_string()
-                    } else {
-                        signal_filter.trim().to_string()
-                    },
-                    signal_type.unwrap_or_else(|| "unknown".to_string()),
-                    auto_decoder.unwrap_or_else(|| "none".to_string()),
-                    matched_rows,
-                    preset.scan_start_hz as f64 / 1_000_000.0,
-                    preset.scan_end_hz as f64 / 1_000_000.0,
-                    added
-                ));
-                let _ = fs::remove_file(csv_path);
-            });
-            dialog.present();
-        });
-    }
-    app.add_action(&presets_fcc_area_url_action);
-
-    let presets_fcc_frequency_action =
-        gio::SimpleAction::new("preset_fcc_frequency_explorer", None);
-    {
-        let window = window.clone();
-        let state = state.clone();
-        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
-        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
-        presets_fcc_frequency_action.connect_activate(move |_, _| {
-            let dialog = Dialog::builder()
-                .transient_for(&window)
-                .modal(true)
-                .title("FCC Frequency Explorer")
-                .build();
-            dialog.add_button("Cancel", ResponseType::Cancel);
-            dialog.add_button("Load CSV", ResponseType::Accept);
-            let content = dialog.content_area();
-            content.set_spacing(8);
-            let note = Label::new(Some(
-                "Area filter (city/county/state/callsign token). Leave blank for full CSV.",
-            ));
-            note.set_xalign(0.0);
-            let area_entry = Entry::new();
-            area_entry.set_placeholder_text(Some("Example: Raleigh or NC"));
-            let max_label = Label::new(Some("Max bookmarks to import"));
-            max_label.set_xalign(0.0);
-            let max_entry = Entry::new();
-            max_entry.set_text("200");
-            let signal_label = Label::new(Some("Signal/Service filter (optional)"));
-            signal_label.set_xalign(0.0);
-            let signal_entry = Entry::new();
-            signal_entry.set_placeholder_text(Some("Example: Public Safety"));
-            content.append(&note);
-            content.append(&area_entry);
-            content.append(&max_label);
-            content.append(&max_entry);
-            content.append(&signal_label);
-            content.append(&signal_entry);
-
-            let window = window.clone();
-            let state = state.clone();
-            let sdr_bookmarks = sdr_bookmarks.clone();
-            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-            dialog.connect_response(move |d, response| {
-                if response != ResponseType::Accept {
-                    d.close();
-                    return;
-                }
-                let area = area_entry.text().to_string();
-                let max_entries = max_entry
-                    .text()
-                    .parse::<usize>()
-                    .unwrap_or(200)
-                    .clamp(1, 5000);
-                let signal_filter = signal_entry.text().to_string();
-                d.close();
-                choose_file_path(&window, "Select FCC Assignments CSV", PathBuf::from("."), {
-                    let state = state.clone();
-                    let sdr_bookmarks = sdr_bookmarks.clone();
-                    let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-                    let signal_filter = signal_filter.clone();
-                    move |selected| {
-                        let Some(csv_path) = selected else {
-                            return;
-                        };
-                        let imported = match build_fcc_frequency_bookmarks_from_csv(
-                            &csv_path,
-                            &area,
-                            &signal_filter,
-                            max_entries,
-                        ) {
-                            Ok(rows) => rows,
-                            Err(err) => {
-                                state.borrow_mut().push_status(format!(
-                                    "FCC frequency explorer import failed: {err}"
-                                ));
-                                return;
-                            }
-                        };
-                        if imported.is_empty() {
-                            state.borrow_mut().push_status(format!(
-                                "FCC frequency explorer: no matching frequencies found in {}",
-                                csv_path.display()
-                            ));
-                            return;
-                        }
-
-                        let summary =
-                            import_sdr_bookmarks(
-                                &state,
-                                &sdr_bookmarks,
-                                &sdr_bookmark_combo,
-                                imported,
-                            );
-                        state.borrow_mut().push_status(format!(
-                            "FCC frequency explorer loaded from {} [{} | type={}] added={} skipped_duplicates={}",
-                            csv_path.display(),
-                            if area.trim().is_empty() {
-                                "all rows".to_string()
-                            } else {
-                                area.trim().to_string()
-                            },
-                            if signal_filter.trim().is_empty() {
-                                "all".to_string()
-                            } else {
-                                signal_filter.trim().to_string()
-                            },
-                            summary.added,
-                            summary.skipped_duplicates
-                        ));
-                    }
-                });
-            });
-            dialog.present();
-        });
-    }
-    app.add_action(&presets_fcc_frequency_action);
-
-    let presets_fcc_frequency_url_action =
-        gio::SimpleAction::new("preset_fcc_frequency_url_explorer", None);
-    {
-        let window = window.clone();
-        let state = state.clone();
-        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
-        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
-        presets_fcc_frequency_url_action.connect_activate(move |_, _| {
-            let dialog = Dialog::builder()
-                .transient_for(&window)
-                .modal(true)
-                .title("FCC Frequency Explorer (CSV URL)")
-                .build();
-            dialog.add_button("Cancel", ResponseType::Cancel);
-            dialog.add_button("Load URL", ResponseType::Accept);
-            let content = dialog.content_area();
-            content.set_spacing(8);
-            let note = Label::new(Some(
-                "Area filter (city/county/state/callsign token). Leave blank for full CSV.",
-            ));
-            note.set_xalign(0.0);
-            let area_entry = Entry::new();
-            area_entry.set_placeholder_text(Some("Example: Raleigh or NC"));
-            let max_label = Label::new(Some("Max bookmarks to import"));
-            max_label.set_xalign(0.0);
-            let max_entry = Entry::new();
-            max_entry.set_text("200");
-            let signal_label = Label::new(Some("Signal/Service filter (optional)"));
-            signal_label.set_xalign(0.0);
-            let signal_entry = Entry::new();
-            signal_entry.set_placeholder_text(Some("Example: Public Safety"));
-            let url_label = Label::new(Some("CSV URL"));
-            url_label.set_xalign(0.0);
-            let url_entry = Entry::new();
-            url_entry.set_placeholder_text(Some("https://.../fcc-assignments.csv"));
-            content.append(&note);
-            content.append(&area_entry);
-            content.append(&max_label);
-            content.append(&max_entry);
-            content.append(&signal_label);
-            content.append(&signal_entry);
-            content.append(&url_label);
-            content.append(&url_entry);
-
-            let state = state.clone();
-            let sdr_bookmarks = sdr_bookmarks.clone();
-            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-            dialog.connect_response(move |d, response| {
-                if response != ResponseType::Accept {
-                    d.close();
-                    return;
-                }
-                let area = area_entry.text().to_string();
-                let max_entries = max_entry
-                    .text()
-                    .parse::<usize>()
-                    .unwrap_or(200)
-                    .clamp(1, 5000);
-                let signal_filter = signal_entry.text().to_string();
-                let url = url_entry.text().to_string();
-                d.close();
-
-                let csv_path = match fetch_csv_from_url(&url) {
-                    Ok(path) => path,
-                    Err(err) => {
-                        state
-                            .borrow_mut()
-                            .push_status(format!("FCC frequency explorer URL fetch failed: {err}"));
-                        return;
-                    }
-                };
-                let imported =
-                    match build_fcc_frequency_bookmarks_from_csv(
-                        &csv_path,
-                        &area,
-                        &signal_filter,
-                        max_entries,
-                    ) {
-                        Ok(rows) => rows,
-                        Err(err) => {
-                            state.borrow_mut().push_status(format!(
-                                "FCC frequency explorer import failed: {err}"
-                            ));
-                            let _ = fs::remove_file(&csv_path);
-                            return;
-                        }
-                    };
-                if imported.is_empty() {
-                    state.borrow_mut().push_status(format!(
-                        "FCC frequency explorer: no matching frequencies found in {}",
-                        csv_path.display()
-                    ));
-                    let _ = fs::remove_file(&csv_path);
-                    return;
-                }
-                let summary =
-                    import_sdr_bookmarks(&state, &sdr_bookmarks, &sdr_bookmark_combo, imported);
-                state.borrow_mut().push_status(format!(
-                    "FCC frequency explorer URL loaded [{} | type={}] added={} skipped_duplicates={}",
-                    if area.trim().is_empty() {
-                        "all rows".to_string()
-                    } else {
-                        area.trim().to_string()
-                    },
-                    if signal_filter.trim().is_empty() {
-                        "all".to_string()
-                    } else {
-                        signal_filter.trim().to_string()
-                    },
-                    summary.added,
-                    summary.skipped_duplicates
-                ));
-                let _ = fs::remove_file(csv_path);
-            });
-            dialog.present();
-        });
-    }
-    app.add_action(&presets_fcc_frequency_url_action);
-
-    let presets_fcc_bookmarks_remove_action =
-        gio::SimpleAction::new("preset_fcc_bookmarks_remove", None);
-    {
-        let state = state.clone();
-        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
-        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
-        presets_fcc_bookmarks_remove_action.connect_activate(move |_, _| {
-            let mut s = state.borrow_mut();
-            let before_settings = s.settings.sdr_bookmarks.len();
-            s.settings
-                .sdr_bookmarks
-                .retain(|entry| !entry.label.trim_start().starts_with("FCC |"));
-            let removed_settings = before_settings.saturating_sub(s.settings.sdr_bookmarks.len());
-            s.save_settings_to_disk();
-            drop(s);
-
-            {
-                let mut bookmarks = sdr_bookmarks.borrow_mut();
-                let before_runtime = bookmarks.len();
-                bookmarks.retain(|(label, _)| !label.trim_start().starts_with("FCC |"));
-                let _ = before_runtime.saturating_sub(bookmarks.len());
-            }
-            refresh_sdr_bookmark_combo(&sdr_bookmarks, &sdr_bookmark_combo, None);
-            state.borrow_mut().push_status(format!(
-                "FCC bookmark cleanup complete: removed {} persisted entries",
-                removed_settings
-            ));
-        });
-    }
-    app.add_action(&presets_fcc_bookmarks_remove_action);
-
-    let presets_export_sdr_bookmarks_csv_action =
-        gio::SimpleAction::new("preset_export_sdr_bookmarks_csv", None);
-    {
-        let state = state.clone();
-        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
-        presets_export_sdr_bookmarks_csv_action.connect_activate(move |_, _| {
-            let bookmarks = sdr_bookmarks.borrow().clone();
-            let (csv_export_path, json_export_path) = {
-                let s = state.borrow();
-                (
-                    s.exporter
-                        .paths
-                        .session_dir
-                        .join("csv")
-                        .join("sdr_bookmarks.csv"),
-                    s.exporter
-                        .paths
-                        .session_dir
-                        .join("json")
-                        .join("sdr_bookmarks.json"),
-                )
-            };
-            let csv_result = export_sdr_bookmarks_csv(&csv_export_path, &bookmarks);
-            let json_result = export_sdr_bookmarks_json(&json_export_path, &bookmarks);
-            let mut s = state.borrow_mut();
-            match (csv_result, json_result) {
-                (Ok(()), Ok(())) => s.push_status(format!(
-                    "exported SDR bookmarks artifacts ({} rows): {}, {}",
-                    bookmarks.len(),
-                    csv_export_path.display(),
-                    json_export_path.display()
-                )),
-                (csv, json) => s.push_status(format!(
-                    "SDR bookmark export incomplete: csv_ok={} json_ok={}",
-                    csv.is_ok(),
-                    json.is_ok()
-                )),
-            }
-        });
-    }
-    app.add_action(&presets_export_sdr_bookmarks_csv_action);
-
-    let presets_export_cellular_arfcn_csv_action =
-        gio::SimpleAction::new("preset_export_cellular_arfcn_csv", None);
-    {
-        let state = state.clone();
-        presets_export_cellular_arfcn_csv_action.connect_activate(move |_, _| {
-            let (csv_export_path, json_export_path) = {
-                let s = state.borrow();
-                (
-                    s.exporter
-                        .paths
-                        .session_dir
-                        .join("csv")
-                        .join("cellular_arfcn_playlist.csv"),
-                    s.exporter
-                        .paths
-                        .session_dir
-                        .join("json")
-                        .join("cellular_arfcn_playlist.json"),
-                )
-            };
-            let mut s = state.borrow_mut();
-            let csv_result = export_cellular_arfcn_playlist_csv(&csv_export_path);
-            let json_result = export_cellular_arfcn_playlist_json(&json_export_path);
-            match (csv_result, json_result) {
-                (Ok(csv_rows), Ok(json_rows)) => s.push_status(format!(
-                    "exported cellular ARFCN playlist artifacts (csv_rows={} json_rows={}): {}, {}",
-                    csv_rows,
-                    json_rows,
-                    csv_export_path.display(),
-                    json_export_path.display()
-                )),
-                (csv, json) => s.push_status(format!(
-                    "cellular ARFCN export incomplete: csv_ok={} json_ok={}",
-                    csv.is_ok(),
-                    json.is_ok()
-                )),
-            }
-        });
-    }
-    app.add_action(&presets_export_cellular_arfcn_csv_action);
-
-    let presets_import_sdr_bookmarks_csv_action =
-        gio::SimpleAction::new("preset_import_sdr_bookmarks_csv", None);
-    {
-        let state = state.clone();
-        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
-        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
-        presets_import_sdr_bookmarks_csv_action.connect_activate(move |_, _| {
-            let dialog = FileChooserDialog::new(
-                Some("Import SDR Bookmarks CSV"),
-                None::<&gtk::Window>,
-                FileChooserAction::Open,
-                &[
-                    ("Cancel", ResponseType::Cancel),
-                    ("Import", ResponseType::Accept),
-                ],
-            );
-            add_dialog_filters(
-                &dialog,
-                &[
-                    ("CSV files", &["*.csv"]),
-                    ("JSON files", &["*.json"]),
-                    ("Data files", &["*.csv", "*.json", "*.txt", "*.dat"]),
-                    ("All files", &["*"]),
-                ],
-            );
-            let state = state.clone();
-            let sdr_bookmarks = sdr_bookmarks.clone();
-            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-            dialog.connect_response(move |dialog, response| {
-                if response == ResponseType::Accept {
-                    let Some(path) = dialog.file().and_then(|file| file.path()) else {
-                        state.borrow_mut().push_status(
-                            "SDR bookmark import skipped: no file path selected".to_string(),
-                        );
-                        dialog.close();
-                        return;
-                    };
-                    import_sdr_bookmarks_file_and_report(
-                        &state,
-                        &sdr_bookmarks,
-                        &sdr_bookmark_combo,
-                        &path,
-                    );
-                }
-                dialog.close();
-            });
-            dialog.present();
-        });
-    }
-    app.add_action(&presets_import_sdr_bookmarks_csv_action);
-
-    let presets_import_sdr_bookmarks_file_action =
-        gio::SimpleAction::new("preset_import_sdr_bookmarks_file", None);
-    {
-        let state = state.clone();
-        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
-        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
-        presets_import_sdr_bookmarks_file_action.connect_activate(move |_, _| {
-            let dialog = FileChooserDialog::new(
-                Some("Import SDR Bookmarks File (Auto CSV/JSON)"),
-                None::<&gtk::Window>,
-                FileChooserAction::Open,
-                &[
-                    ("Cancel", ResponseType::Cancel),
-                    ("Import", ResponseType::Accept),
-                ],
-            );
-            add_dialog_filters(
-                &dialog,
-                &[
-                    ("Data files", &["*.csv", "*.json", "*.txt", "*.dat"]),
-                    ("CSV files", &["*.csv"]),
-                    ("JSON files", &["*.json"]),
-                    ("All files", &["*"]),
-                ],
-            );
-            let state = state.clone();
-            let sdr_bookmarks = sdr_bookmarks.clone();
-            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-            dialog.connect_response(move |dialog, response| {
-                if response == ResponseType::Accept {
-                    let Some(path) = dialog.file().and_then(|file| file.path()) else {
-                        state.borrow_mut().push_status(
-                            "SDR bookmark import skipped: no file path selected".to_string(),
-                        );
-                        dialog.close();
-                        return;
-                    };
-                    import_sdr_bookmarks_file_and_report(
-                        &state,
-                        &sdr_bookmarks,
-                        &sdr_bookmark_combo,
-                        &path,
-                    );
-                }
-                dialog.close();
-            });
-            dialog.present();
-        });
-    }
-    app.add_action(&presets_import_sdr_bookmarks_file_action);
-
-    let presets_import_sdr_bookmarks_json_action =
-        gio::SimpleAction::new("preset_import_sdr_bookmarks_json", None);
-    {
-        let state = state.clone();
-        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
-        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
-        presets_import_sdr_bookmarks_json_action.connect_activate(move |_, _| {
-            let dialog = FileChooserDialog::new(
-                Some("Import SDR Bookmarks JSON"),
-                None::<&gtk::Window>,
-                FileChooserAction::Open,
-                &[
-                    ("Cancel", ResponseType::Cancel),
-                    ("Import", ResponseType::Accept),
-                ],
-            );
-            add_dialog_filters(
-                &dialog,
-                &[
-                    ("JSON files", &["*.json"]),
-                    ("CSV files", &["*.csv"]),
-                    ("Data files", &["*.json", "*.csv", "*.txt", "*.dat"]),
-                    ("All files", &["*"]),
-                ],
-            );
-            let state = state.clone();
-            let sdr_bookmarks = sdr_bookmarks.clone();
-            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-            dialog.connect_response(move |dialog, response| {
-                if response == ResponseType::Accept {
-                    let Some(path) = dialog.file().and_then(|file| file.path()) else {
-                        state.borrow_mut().push_status(
-                            "SDR bookmark import skipped: no file path selected".to_string(),
-                        );
-                        dialog.close();
-                        return;
-                    };
-                    import_sdr_bookmarks_file_and_report(
-                        &state,
-                        &sdr_bookmarks,
-                        &sdr_bookmark_combo,
-                        &path,
-                    );
-                }
-                dialog.close();
-            });
-            dialog.present();
-        });
-    }
-    app.add_action(&presets_import_sdr_bookmarks_json_action);
-
-    let presets_import_sdr_bookmarks_json_url_action =
-        gio::SimpleAction::new("preset_import_sdr_bookmarks_json_url", None);
-    {
-        let window = window.clone();
-        let state = state.clone();
-        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
-        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
-        presets_import_sdr_bookmarks_json_url_action.connect_activate(move |_, _| {
-            let dialog = Dialog::builder()
-                .transient_for(&window)
-                .modal(true)
-                .title("Import SDR Bookmarks JSON URL")
-                .build();
-            dialog.add_button("Cancel", ResponseType::Cancel);
-            dialog.add_button("Import", ResponseType::Accept);
-            let content = dialog.content_area();
-            content.set_spacing(8);
-            let url_label = Label::new(Some("JSON URL"));
-            url_label.set_xalign(0.0);
-            let url_entry = Entry::new();
-            url_entry.set_placeholder_text(Some("https://.../bookmarks.json"));
-            content.append(&url_label);
-            content.append(&url_entry);
-
-            let state = state.clone();
-            let sdr_bookmarks = sdr_bookmarks.clone();
-            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-            dialog.connect_response(move |dialog, response| {
-                if response == ResponseType::Accept {
-                    let url = url_entry.text().to_string();
-                    let json_path = match fetch_json_from_url(&url) {
-                        Ok(path) => path,
-                        Err(err) => {
-                            state
-                                .borrow_mut()
-                                .push_status(format!("bookmark JSON URL fetch failed: {err}"));
-                            dialog.close();
-                            return;
-                        }
-                    };
-                    import_sdr_bookmarks_from_path_and_report(
-                        &state,
-                        &sdr_bookmarks,
-                        &sdr_bookmark_combo,
-                        &json_path,
-                        "JSON URL",
-                    );
-                    let _ = fs::remove_file(json_path);
-                }
-                dialog.close();
-            });
-            dialog.present();
-        });
-    }
-    app.add_action(&presets_import_sdr_bookmarks_json_url_action);
-
-    let presets_import_sdr_bookmarks_url_action =
-        gio::SimpleAction::new("preset_import_sdr_bookmarks_url", None);
-    {
-        let window = window.clone();
-        let state = state.clone();
-        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
-        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
-        presets_import_sdr_bookmarks_url_action.connect_activate(move |_, _| {
-            let dialog = Dialog::builder()
-                .transient_for(&window)
-                .modal(true)
-                .title("Import SDR Bookmarks URL (Auto CSV/JSON)")
-                .build();
-            dialog.add_button("Cancel", ResponseType::Cancel);
-            dialog.add_button("Import", ResponseType::Accept);
-            let content = dialog.content_area();
-            content.set_spacing(8);
-            let url_label = Label::new(Some("Bookmark URL"));
-            url_label.set_xalign(0.0);
-            let url_entry = Entry::new();
-            url_entry.set_placeholder_text(Some("https://.../bookmarks.csv or .json"));
-            content.append(&url_label);
-            content.append(&url_entry);
-
-            let state = state.clone();
-            let sdr_bookmarks = sdr_bookmarks.clone();
-            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-            dialog.connect_response(move |dialog, response| {
-                if response == ResponseType::Accept {
-                    let url = url_entry.text().to_string();
-                    let path = match fetch_bookmark_data_from_url(&url) {
-                        Ok(path) => path,
-                        Err(err) => {
-                            state
-                                .borrow_mut()
-                                .push_status(format!("bookmark URL fetch failed: {err}"));
-                            dialog.close();
-                            return;
-                        }
-                    };
-                    import_sdr_bookmarks_from_path_and_report(
-                        &state,
-                        &sdr_bookmarks,
-                        &sdr_bookmark_combo,
-                        &path,
-                        "URL",
-                    );
-                    let _ = fs::remove_file(path);
-                }
-                dialog.close();
-            });
-            dialog.present();
-        });
-    }
-    app.add_action(&presets_import_sdr_bookmarks_url_action);
-
-    let presets_import_sdr_bookmarks_csv_url_action =
-        gio::SimpleAction::new("preset_import_sdr_bookmarks_csv_url", None);
-    {
-        let window = window.clone();
-        let state = state.clone();
-        let sdr_bookmarks = widgets.sdr_bookmarks.clone();
-        let sdr_bookmark_combo = widgets.sdr_bookmark_combo.clone();
-        presets_import_sdr_bookmarks_csv_url_action.connect_activate(move |_, _| {
-            let dialog = Dialog::builder()
-                .transient_for(&window)
-                .modal(true)
-                .title("Import SDR Bookmarks CSV URL")
-                .build();
-            dialog.add_button("Cancel", ResponseType::Cancel);
-            dialog.add_button("Import", ResponseType::Accept);
-            let content = dialog.content_area();
-            content.set_spacing(8);
-            let url_label = Label::new(Some("CSV URL"));
-            url_label.set_xalign(0.0);
-            let url_entry = Entry::new();
-            url_entry.set_placeholder_text(Some("https://.../bookmarks.csv"));
-            content.append(&url_label);
-            content.append(&url_entry);
-
-            let state = state.clone();
-            let sdr_bookmarks = sdr_bookmarks.clone();
-            let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-            dialog.connect_response(move |dialog, response| {
-                if response == ResponseType::Accept {
-                    let url = url_entry.text().to_string();
-                    let csv_path = match fetch_csv_from_url(&url) {
-                        Ok(path) => path,
-                        Err(err) => {
-                            state
-                                .borrow_mut()
-                                .push_status(format!("bookmark CSV URL fetch failed: {err}"));
-                            dialog.close();
-                            return;
-                        }
-                    };
-                    import_sdr_bookmarks_from_path_and_report(
-                        &state,
-                        &sdr_bookmarks,
-                        &sdr_bookmark_combo,
-                        &csv_path,
-                        "CSV URL",
-                    );
-                    let _ = fs::remove_file(csv_path);
-                }
-                dialog.close();
-            });
-            dialog.present();
-        });
-    }
-    app.add_action(&presets_import_sdr_bookmarks_csv_url_action);
-
     let file_menu = gio::Menu::new();
     file_menu.append(
-        Some("Export CSV + Summary JSON + Consolidated PCAP"),
+        Some("Export CSV + Consolidated PCAP"),
         Some("app.export_all"),
     );
     file_menu.append(
-        Some("Export Location Logs (CSV + KML + KMZ + JSON)"),
+        Some("Export Location Logs (CSV + KML)"),
         Some("app.export_locations"),
     );
     file_menu.append(Some("Update OUI Database"), Some("app.update_oui"));
@@ -6658,14 +2157,6 @@ fn build_menubar(
     view_menu.append(Some("Device Pane"), Some("app.settings_show_device_pane"));
     view_menu.append(Some("Details Pane"), Some("app.settings_show_detail_pane"));
     view_menu.append(Some("Status Pane"), Some("app.settings_show_status_bar"));
-    view_menu.append(
-        Some("Column Filters"),
-        Some("app.settings_show_column_filters"),
-    );
-    view_menu.append(
-        Some("AP Inline Channel Usage"),
-        Some("app.settings_show_ap_inline_channel_usage"),
-    );
 
     let settings_menu = gio::Menu::new();
     settings_menu.append_submenu(Some("View"), &view_menu);
@@ -6683,18 +2174,10 @@ fn set_scan_control_button_sensitivity(
     stop_btn: &Button,
     wifi_running: bool,
     bluetooth_running: bool,
-    scan_start_in_progress: bool,
-    scan_stop_in_progress: bool,
+    scan_transition_in_progress: bool,
 ) {
-    if scan_start_in_progress {
+    if scan_transition_in_progress {
         start_btn.set_sensitive(false);
-        stop_btn.set_sensitive(false);
-        return;
-    }
-    if scan_stop_in_progress {
-        // Stop has been requested; once runtimes are detached we can allow start to be clicked again.
-        let any_running = wifi_running || bluetooth_running;
-        start_btn.set_sensitive(!any_running);
         stop_btn.set_sensitive(false);
         return;
     }
@@ -6702,14 +2185,6 @@ fn set_scan_control_button_sensitivity(
     let all_running = wifi_running && bluetooth_running;
     start_btn.set_sensitive(!all_running);
     stop_btn.set_sensitive(any_running);
-}
-
-fn remove_sdr_tab(notebook: &Notebook) {
-    if notebook.n_pages() <= SDR_TAB_INDEX {
-        return;
-    }
-
-    notebook.remove_page(Some(SDR_TAB_INDEX));
 }
 
 fn describe_channel_mode(mode: &ChannelSelectionMode) -> String {
@@ -6754,9 +2229,6 @@ fn apply_view_visibility(
         .ap_detail_notebook
         .set_visible(settings.show_detail_pane);
     widgets.ap_assoc_box.set_visible(settings.show_device_pane);
-    widgets
-        .ap_inline_channel_box
-        .set_visible(settings.show_ap_inline_channel_usage);
     widgets.ap_bottom.set_position(DEFAULT_AP_BOTTOM_POSITION);
 
     widgets
@@ -6781,19 +2253,6 @@ fn apply_view_visibility(
     widgets
         .bluetooth_bottom
         .set_position(DEFAULT_BLUETOOTH_BOTTOM_POSITION);
-
-    for pagination in [
-        &widgets.ap_pagination,
-        &widgets.client_pagination,
-        &widgets.ap_assoc_pagination,
-        &widgets.bluetooth_pagination,
-        &widgets.sdr_decode_pagination,
-        &widgets.sdr_satcom_pagination,
-    ] {
-        pagination
-            .filter_bar
-            .set_visible(settings.show_column_filters);
-    }
 }
 
 fn apply_view_preferences(
@@ -6804,8 +2263,6 @@ fn apply_view_preferences(
     show_status_bar: Option<bool>,
     show_detail_pane: Option<bool>,
     show_device_pane: Option<bool>,
-    show_column_filters: Option<bool>,
-    show_ap_inline_channel_usage: Option<bool>,
 ) {
     let mut status_messages = Vec::new();
     {
@@ -6813,8 +2270,6 @@ fn apply_view_preferences(
         let previous_status_bar = s.settings.show_status_bar;
         let previous_detail_pane = s.settings.show_detail_pane;
         let previous_device_pane = s.settings.show_device_pane;
-        let previous_column_filters = s.settings.show_column_filters;
-        let previous_ap_inline_channel_usage = s.settings.show_ap_inline_channel_usage;
         let mut changed = false;
 
         if let Some(value) = show_status_bar {
@@ -6832,18 +2287,6 @@ fn apply_view_preferences(
         if let Some(value) = show_device_pane {
             if s.settings.show_device_pane != value {
                 s.settings.show_device_pane = value;
-                changed = true;
-            }
-        }
-        if let Some(value) = show_column_filters {
-            if s.settings.show_column_filters != value {
-                s.settings.show_column_filters = value;
-                changed = true;
-            }
-        }
-        if let Some(value) = show_ap_inline_channel_usage {
-            if s.settings.show_ap_inline_channel_usage != value {
-                s.settings.show_ap_inline_channel_usage = value;
                 changed = true;
             }
         }
@@ -6879,26 +2322,6 @@ fn apply_view_preferences(
                     "enabled"
                 } else {
                     "disabled"
-                }
-            ));
-        }
-        if s.settings.show_column_filters != previous_column_filters {
-            status_messages.push(format!(
-                "column filters {}",
-                if s.settings.show_column_filters {
-                    "enabled"
-                } else {
-                    "hidden"
-                }
-            ));
-        }
-        if s.settings.show_ap_inline_channel_usage != previous_ap_inline_channel_usage {
-            status_messages.push(format!(
-                "AP inline channel usage {}",
-                if s.settings.show_ap_inline_channel_usage {
-                    "enabled"
-                } else {
-                    "hidden"
                 }
             ));
         }
@@ -6983,6 +2406,7 @@ fn migrate_assoc_client_table_layout(layout: &mut TableLayout) {
 fn prepare_and_start_wifi_capture(
     mut interfaces: Vec<InterfaceSettings>,
     session_capture_path: PathBuf,
+    geoip_city_db_path: PathBuf,
     wifi_packet_header_mode: WifiPacketHeaderMode,
     wifi_frame_parsing_enabled: bool,
     gps_enabled: bool,
@@ -6991,21 +2415,6 @@ fn prepare_and_start_wifi_capture(
     let mut status_lines = Vec::new();
     let mut privilege_alert = None;
     let mut wifi_interface_restore_types = HashMap::new();
-    status_lines.push(format!(
-        "Wi-Fi packet headers set to {}",
-        match wifi_packet_header_mode {
-            WifiPacketHeaderMode::Radiotap => "Radiotap",
-            WifiPacketHeaderMode::Ppi => "PPI",
-        }
-    ));
-    status_lines.push(format!(
-        "Wi-Fi frame parsing {}",
-        if wifi_frame_parsing_enabled {
-            "enabled (higher CPU and memory use)"
-        } else {
-            "disabled (capture-only mode)"
-        }
-    ));
 
     for iface in interfaces.iter_mut().filter(|i| i.enabled) {
         match capture::prepare_interface_for_capture(iface.clone(), true) {
@@ -7047,6 +2456,7 @@ fn prepare_and_start_wifi_capture(
             session_pcap_path: Some(session_capture_path),
             wifi_packet_header_mode,
             wifi_frame_parsing_enabled,
+            geoip_city_db_path: Some(geoip_city_db_path),
             gps_enabled,
             passive_only: true,
         },
@@ -7185,8 +2595,7 @@ fn build_capture_controls(
             &stop_btn,
             s.capture_runtime.is_some(),
             s.bluetooth_runtime.is_some(),
-            s.scan_start_in_progress,
-            s.scan_stop_in_progress,
+            s.scan_start_in_progress || s.scan_stop_in_progress,
         );
     }
 
@@ -7210,17 +2619,14 @@ fn build_capture_controls(
         let start_btn_handle = start_btn.clone();
         let stop_btn_handle = stop_btn.clone();
         stop_btn.connect_clicked(move |_| {
-            let Ok(mut s) = state.try_borrow_mut() else {
-                return;
-            };
+            let mut s = state.borrow_mut();
             s.stop_scanning();
             set_scan_control_button_sensitivity(
                 &start_btn_handle,
                 &stop_btn_handle,
                 s.capture_runtime.is_some(),
                 s.bluetooth_runtime.is_some(),
-                s.scan_start_in_progress,
-                s.scan_stop_in_progress,
+                s.scan_start_in_progress || s.scan_stop_in_progress,
             );
         });
     }
@@ -7266,7 +2672,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         assoc_sort,
         bluetooth_sort,
         default_rows_per_page,
-        show_ap_inline_channel_usage,
     ) = {
         let s = state.borrow();
         (
@@ -7279,7 +2684,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             s.assoc_sort.clone(),
             s.bluetooth_sort.clone(),
             s.settings.default_rows_per_page.max(1),
-            s.settings.show_ap_inline_channel_usage,
         )
     };
 
@@ -7331,7 +2735,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_detail_scroll = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .min_content_height(0)
+        .min_content_height(250)
         .child(&ap_detail_label)
         .build();
 
@@ -7344,15 +2748,15 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_summary_row.set_position(DEFAULT_AP_SUMMARY_ROW_POSITION);
     ap_summary_row.set_resize_start_child(true);
     ap_summary_row.set_resize_end_child(true);
-    ap_summary_row.set_shrink_start_child(true);
-    ap_summary_row.set_shrink_end_child(true);
+    ap_summary_row.set_shrink_start_child(false);
+    ap_summary_row.set_shrink_end_child(false);
     ap_summary_row.set_start_child(Some(&ap_detail_scroll));
     ap_summary_row.set_end_child(Some(&ap_packet_box));
 
     let ap_notes_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(0)
+        .min_content_height(180)
         .child(&ap_notes_view)
         .build();
 
@@ -7367,39 +2771,14 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_detail_sections.set_position(DEFAULT_AP_DETAIL_SECTIONS_POSITION);
     ap_detail_sections.set_resize_start_child(true);
     ap_detail_sections.set_resize_end_child(true);
-    ap_detail_sections.set_shrink_start_child(true);
-    ap_detail_sections.set_shrink_end_child(true);
+    ap_detail_sections.set_shrink_start_child(false);
+    ap_detail_sections.set_shrink_end_child(false);
     ap_detail_sections.set_start_child(Some(&ap_summary_row));
     ap_detail_sections.set_end_child(Some(&ap_notes_box));
 
-    let ap_inline_channel_band_combo = ComboBoxText::new();
-    ap_inline_channel_band_combo.append(Some("all"), "All Bands");
-    ap_inline_channel_band_combo.append(Some("2.4"), "2.4 GHz");
-    ap_inline_channel_band_combo.append(Some("5"), "5 GHz");
-    ap_inline_channel_band_combo.append(Some("6"), "6 GHz");
-    ap_inline_channel_band_combo.set_active_id(Some("all"));
-
-    let ap_inline_channel_draw = DrawingArea::new();
-    ap_inline_channel_draw.set_content_width(1100);
-    ap_inline_channel_draw.set_content_height(220);
-    ap_inline_channel_draw.set_hexpand(true);
-    ap_inline_channel_draw.set_vexpand(true);
-
-    let ap_inline_channel_box = GtkBox::new(Orientation::Vertical, 6);
-    ap_inline_channel_box.append(&Label::new(Some("Inline Channel Usage")));
-    ap_inline_channel_box.append(&ap_inline_channel_band_combo);
-    ap_inline_channel_box.append(&ap_inline_channel_draw);
-    ap_inline_channel_box.set_visible(show_ap_inline_channel_usage);
-
-    let ap_inline_channel_toggle =
-        CheckButton::with_label("Show Inline Channel Usage Panel (Access Points Tab)");
-    ap_inline_channel_toggle.set_active(show_ap_inline_channel_usage);
-
     let ap_detail_box = GtkBox::new(Orientation::Vertical, 6);
     ap_detail_box.append(&Label::new(Some("Network Details and Packet Graphs")));
-    ap_detail_box.append(&ap_inline_channel_toggle);
     ap_detail_box.append(&ap_detail_sections);
-    ap_detail_box.append(&ap_inline_channel_box);
 
     let ap_selection_suppressed = Rc::new(RefCell::new(false));
     let ap_selected_key = Rc::new(RefCell::new(None::<String>));
@@ -7432,8 +2811,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_bottom.set_position(DEFAULT_AP_BOTTOM_POSITION);
     ap_bottom.set_resize_start_child(true);
     ap_bottom.set_resize_end_child(true);
-    ap_bottom.set_shrink_start_child(true);
-    ap_bottom.set_shrink_end_child(true);
+    ap_bottom.set_shrink_start_child(false);
+    ap_bottom.set_shrink_end_child(false);
     ap_bottom.set_end_child(Some(&ap_assoc_box));
 
     let ap_root = Paned::new(Orientation::Vertical);
@@ -7441,8 +2820,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_root.set_position(DEFAULT_AP_ROOT_POSITION);
     ap_root.set_resize_start_child(true);
     ap_root.set_resize_end_child(true);
-    ap_root.set_shrink_start_child(true);
-    ap_root.set_shrink_end_child(true);
+    ap_root.set_shrink_start_child(false);
+    ap_root.set_shrink_end_child(false);
     ap_root.set_start_child(Some(&ap_top));
     ap_root.set_end_child(Some(&ap_bottom));
 
@@ -7495,7 +2874,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_detail_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(0)
+        .min_content_height(260)
         .child(&client_detail_box)
         .build();
     let wifi_geiger_state = Rc::new(RefCell::new(WifiGeigerUiState::default()));
@@ -7514,8 +2893,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_wifi_geiger_tone = Label::new(Some("Tone: -- Hz"));
     ap_wifi_geiger_tone.set_xalign(0.0);
     let ap_wifi_geiger_meter = DrawingArea::new();
-    ap_wifi_geiger_meter.set_content_width(520);
-    ap_wifi_geiger_meter.set_content_height(180);
+    ap_wifi_geiger_meter.set_width_request(520);
+    ap_wifi_geiger_meter.set_height_request(300);
     ap_wifi_geiger_meter.set_hexpand(true);
     ap_wifi_geiger_meter.set_vexpand(true);
     {
@@ -7553,7 +2932,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_geiger_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(0)
+        .min_content_height(260)
         .child(&ap_geiger_box)
         .build();
 
@@ -7579,8 +2958,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_wifi_geiger_tone = Label::new(Some("Tone: -- Hz"));
     client_wifi_geiger_tone.set_xalign(0.0);
     let client_wifi_geiger_meter = DrawingArea::new();
-    client_wifi_geiger_meter.set_content_width(520);
-    client_wifi_geiger_meter.set_content_height(180);
+    client_wifi_geiger_meter.set_width_request(520);
+    client_wifi_geiger_meter.set_height_request(300);
     client_wifi_geiger_meter.set_hexpand(true);
     client_wifi_geiger_meter.set_vexpand(true);
     {
@@ -7656,7 +3035,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_geiger_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(0)
+        .min_content_height(260)
         .child(&client_geiger_box)
         .build();
 
@@ -7672,8 +3051,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     client_root.set_position(DEFAULT_CLIENT_ROOT_POSITION);
     client_root.set_resize_start_child(true);
     client_root.set_resize_end_child(true);
-    client_root.set_shrink_start_child(true);
-    client_root.set_shrink_end_child(true);
+    client_root.set_shrink_start_child(false);
+    client_root.set_shrink_end_child(false);
     client_root.set_start_child(Some(&client_top));
     client_root.set_end_child(Some(&client_detail_notebook));
 
@@ -7738,7 +3117,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_geiger_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(0)
+        .min_content_height(220)
         .child(&bluetooth_geiger_box)
         .build();
 
@@ -7793,7 +3172,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_detail_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(0)
+        .min_content_height(220)
         .child(&bluetooth_detail_box)
         .build();
 
@@ -7802,8 +3181,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_bottom.set_position(DEFAULT_BLUETOOTH_BOTTOM_POSITION);
     bluetooth_bottom.set_resize_start_child(true);
     bluetooth_bottom.set_resize_end_child(true);
-    bluetooth_bottom.set_shrink_start_child(true);
-    bluetooth_bottom.set_shrink_end_child(true);
+    bluetooth_bottom.set_shrink_start_child(false);
+    bluetooth_bottom.set_shrink_end_child(false);
     bluetooth_bottom.set_start_child(Some(&bluetooth_geiger_scrolled));
     bluetooth_bottom.set_end_child(Some(&bluetooth_detail_scrolled));
 
@@ -7812,8 +3191,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_root.set_position(DEFAULT_BLUETOOTH_ROOT_POSITION);
     bluetooth_root.set_resize_start_child(true);
     bluetooth_root.set_resize_end_child(true);
-    bluetooth_root.set_shrink_start_child(true);
-    bluetooth_root.set_shrink_end_child(true);
+    bluetooth_root.set_shrink_start_child(false);
+    bluetooth_root.set_shrink_end_child(false);
     bluetooth_root.set_start_child(Some(&bluetooth_top));
     bluetooth_root.set_end_child(Some(&bluetooth_bottom));
 
@@ -7902,22 +3281,16 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     gps_status_label.set_xalign(0.0);
     gps_status_label.set_wrap(true);
     gps_status_label.set_selectable(true);
-    let runtime_activity_label = Label::new(Some("Runtime Activity: starting"));
-    runtime_activity_label.set_xalign(0.0);
-    runtime_activity_label.set_wrap(true);
-    runtime_activity_label.set_selectable(true);
 
     let channel_status_box = GtkBox::new(Orientation::Vertical, 6);
     channel_status_box.append(&Label::new(Some("Status")));
     channel_status_box.append(&status_label);
-    channel_status_box.append(&Label::new(Some("Runtime Activity")));
-    channel_status_box.append(&runtime_activity_label);
     channel_status_box.append(&Label::new(Some("GPS Status")));
     channel_status_box.append(&gps_status_label);
     let channel_status_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(0)
+        .min_content_height(170)
         .child(&channel_status_box)
         .build();
 
@@ -7926,462 +3299,11 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     channel_root.set_position(DEFAULT_CHANNEL_ROOT_POSITION);
     channel_root.set_resize_start_child(true);
     channel_root.set_resize_end_child(true);
-    channel_root.set_shrink_start_child(true);
-    channel_root.set_shrink_end_child(true);
+    channel_root.set_shrink_start_child(false);
+    channel_root.set_shrink_end_child(false);
     channel_root.set_start_child(Some(&channel_controls));
     channel_root.set_end_child(Some(&channel_status_scrolled));
     notebook.append_page(&channel_root, Some(&Label::new(Some("Channel Usage"))));
-
-    let sdr_model = Rc::new(RefCell::new(SdrUiModel {
-        current_freq_hz: SdrConfig::default().center_freq_hz,
-        sample_rate_hz: SdrConfig::default().sample_rate_hz,
-        squelch_dbm: SdrConfig::default().squelch_dbm,
-        ..SdrUiModel::default()
-    }));
-    let sdr_frequency_label = Label::new(Some(
-        "Center: 433920000 Hz | Sample Rate: 2400000 Hz | Sweep: active",
-    ));
-    sdr_frequency_label.set_xalign(0.0);
-    let sdr_decoder_label = Label::new(Some("Decoder: idle"));
-    sdr_decoder_label.set_xalign(0.0);
-    let sdr_dependency_label = Label::new(Some("Dependencies: not checked"));
-    sdr_dependency_label.set_xalign(0.0);
-    sdr_dependency_label.set_wrap(true);
-    let sdr_health_label = Label::new(Some("Decoder Health: no telemetry"));
-    sdr_health_label.set_xalign(0.0);
-    sdr_health_label.set_wrap(true);
-    let sdr_aircraft_correlation_label =
-        Label::new(Some("Aircraft Correlation: no correlated targets"));
-    sdr_aircraft_correlation_label.set_xalign(0.0);
-    sdr_aircraft_correlation_label.set_wrap(true);
-    let sdr_satcom_summary_label = Label::new(Some("Satcom Summary: no satcom observations"));
-    sdr_satcom_summary_label.set_xalign(0.0);
-    sdr_satcom_summary_label.set_wrap(true);
-    let sdr_center_geiger_rssi_label = Label::new(Some("Center Geiger RSSI: -- dBm"));
-    sdr_center_geiger_rssi_label.set_xalign(0.0);
-    let sdr_center_geiger_tone_label = Label::new(Some("Center Geiger Tone: -- Hz"));
-    sdr_center_geiger_tone_label.set_xalign(0.0);
-    let sdr_center_geiger_progress = ProgressBar::new();
-    sdr_center_geiger_progress.set_show_text(true);
-    sdr_center_geiger_progress.set_text(Some("No spectrum yet"));
-    let sdr_center_geiger_auto_squelch_check = CheckButton::with_label("Auto Squelch (Center)");
-    sdr_center_geiger_auto_squelch_check.set_active(false);
-    let sdr_center_geiger_margin_spin = SpinButton::with_range(2.0, 30.0, 1.0);
-    sdr_center_geiger_margin_spin.set_value(8.0);
-
-    let sdr_hardware_combo = ComboBoxText::new();
-    for hardware in [SdrHardware::default()] {
-        sdr_hardware_combo.append(Some(hardware.id()), hardware.label());
-    }
-    sdr_hardware_combo.set_active_id(Some(SdrHardware::default().id()));
-
-    let sdr_center_freq_entry = Entry::new();
-    sdr_center_freq_entry.set_width_chars(14);
-    sdr_center_freq_entry.set_text(&SdrConfig::default().center_freq_hz.to_string());
-    let sdr_sample_rate_entry = Entry::new();
-    sdr_sample_rate_entry.set_width_chars(10);
-    sdr_sample_rate_entry.set_text(&SdrConfig::default().sample_rate_hz.to_string());
-    let sdr_set_frequency_btn = Button::with_label("Set Center");
-    let sdr_start_btn = Button::with_label("Start SDR");
-    let sdr_stop_btn = Button::with_label("Stop SDR");
-    let sdr_pause_check = CheckButton::with_label("Pause Sweep");
-
-    let sdr_decoder_combo = ComboBoxText::new();
-    let sdr_builtin_decoders = sdr::builtin_decoders_in_priority_order();
-    let plugin_path = sdr::default_plugin_config_path();
-    let sdr_plugin_defs = Rc::new(sdr::load_plugin_definitions(plugin_path.as_deref()));
-    let plugin_decoders = sdr_plugin_defs
-        .iter()
-        .cloned()
-        .map(|plugin| SdrDecoderKind::Plugin {
-            id: plugin.id,
-            label: plugin.label,
-            command_template: plugin.command_template,
-            protocol: plugin.protocol,
-        })
-        .collect::<Vec<_>>();
-    let mut sdr_decoders = Vec::with_capacity(sdr_builtin_decoders.len() + plugin_decoders.len());
-    sdr_decoders.extend(sdr_builtin_decoders);
-    sdr_decoders.extend(plugin_decoders);
-    let sdr_decoder_lookup: Rc<RefCell<HashMap<String, SdrDecoderKind>>> =
-        Rc::new(RefCell::new(HashMap::new()));
-    let sdr_decoder_order: Rc<Vec<String>> =
-        Rc::new(sdr_decoders.iter().map(|decoder| decoder.id()).collect());
-    for decoder in &sdr_decoders {
-        let id = decoder.id();
-        let label = decoder.label();
-        sdr_decoder_combo.append(Some(&id), &label);
-        sdr_decoder_lookup
-            .borrow_mut()
-            .insert(id.to_string(), decoder.clone());
-    }
-    sdr_decoder_combo.set_active(Some(0));
-
-    let sdr_decode_start_btn = Button::with_label("Start Decode");
-    let sdr_decode_stop_btn = Button::with_label("Stop Decode");
-    let sdr_dep_refresh_btn = Button::with_label("Refresh Dependencies");
-    let sdr_dep_install_btn = Button::with_label("Install Missing Dependencies");
-    let sdr_validate_decoder_btn = Button::with_label("Validate Decoder");
-
-    let sdr_log_enable_check = CheckButton::with_label("Log decoder output");
-    let sdr_log_dir_entry = Entry::new();
-    sdr_log_dir_entry.set_width_chars(42);
-    sdr_log_dir_entry.set_text(
-        SdrConfig::default()
-            .log_output_dir
-            .to_string_lossy()
-            .as_ref(),
-    );
-    let sdr_scan_enable_check = CheckButton::with_label("Scan Range");
-    sdr_scan_enable_check.set_active(SdrConfig::default().scan_range_enabled);
-    let sdr_scan_start_entry = Entry::new();
-    sdr_scan_start_entry.set_width_chars(12);
-    sdr_scan_start_entry.set_text(&SdrConfig::default().scan_start_hz.to_string());
-    let sdr_scan_end_entry = Entry::new();
-    sdr_scan_end_entry.set_width_chars(12);
-    sdr_scan_end_entry.set_text(&SdrConfig::default().scan_end_hz.to_string());
-    let sdr_scan_step_entry = Entry::new();
-    sdr_scan_step_entry.set_width_chars(10);
-    sdr_scan_step_entry.set_text(&SdrConfig::default().scan_step_hz.to_string());
-    let sdr_scan_speed_entry = Entry::new();
-    sdr_scan_speed_entry.set_width_chars(6);
-    sdr_scan_speed_entry.set_text(&format!("{:.2}", SdrConfig::default().scan_steps_per_sec));
-    let sdr_squelch_scale = gtk::Scale::with_range(Orientation::Horizontal, -130.0, -10.0, 1.0);
-    sdr_squelch_scale.set_hexpand(true);
-    sdr_squelch_scale.set_value(SdrConfig::default().squelch_dbm as f64);
-    let sdr_squelch_value_label = Label::new(Some(&format!(
-        "{:.0} dBm",
-        SdrConfig::default().squelch_dbm
-    )));
-    sdr_squelch_value_label.set_xalign(0.0);
-    let sdr_autotune_check = CheckButton::with_label("Auto-tune decoders");
-    sdr_autotune_check.set_active(SdrConfig::default().auto_tune_decoders);
-    let sdr_bias_tee_check = CheckButton::with_label("Bias-Tee / Antenna Power");
-    sdr_bias_tee_check.set_active(SdrConfig::default().bias_tee_enabled);
-    let sdr_no_payload_satcom_check =
-        CheckButton::with_label("Capture Satellite Payload (Unencrypted)");
-    sdr_no_payload_satcom_check
-        .set_active(state.borrow().settings.sdr_satcom_payload_capture_enabled);
-    let sdr_satcom_denylist_entry = Entry::new();
-    sdr_satcom_denylist_entry.set_width_chars(28);
-    sdr_satcom_denylist_entry
-        .set_placeholder_text(Some("protocol/decoder tokens, comma-separated"));
-    let sdr_satcom_denylist_apply_btn = Button::with_label("Apply");
-    let satcom_parse_denylist_value = {
-        let settings_value = state.borrow().settings.sdr_satcom_parse_denylist.join(",");
-        if !settings_value.trim().is_empty() {
-            settings_value
-        } else {
-            std::env::var("EASYWIFI_SATCOM_PARSE_DENYLIST")
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .unwrap_or_default()
-        }
-    };
-    sdr_satcom_denylist_entry.set_text(&satcom_parse_denylist_value);
-    let sdr_sample_duration_spin = SpinButton::with_range(1.0, 600.0, 1.0);
-    sdr_sample_duration_spin.set_value(10.0);
-    let sdr_sample_dir_entry = Entry::new();
-    sdr_sample_dir_entry.set_width_chars(42);
-    sdr_sample_dir_entry.set_text(
-        SdrConfig::default()
-            .log_output_dir
-            .join("iq_samples")
-            .to_string_lossy()
-            .as_ref(),
-    );
-    let sdr_capture_sample_btn = Button::with_label("Capture IQ Sample");
-    let sdr_export_map_btn = Button::with_label("Export Map JSON");
-    let sdr_export_decode_btn = Button::with_label("Export Decode JSON");
-    let sdr_export_decode_filtered_btn = Button::with_label("Export Decode (Filtered)");
-    let sdr_export_health_btn = Button::with_label("Export SDR Health JSON");
-    let sdr_export_satcom_btn = Button::with_label("Export Satcom JSON");
-    let sdr_export_satcom_filtered_btn = Button::with_label("Export Satcom (Filtered)");
-    let sdr_export_aircraft_correlation_btn = Button::with_label("Export Aircraft Correlation");
-    let sdr_satcom_filter_all_btn = Button::with_label("Satcom Filter: All");
-    let sdr_satcom_filter_parsed_btn = Button::with_label("Satcom Filter: Parsed");
-    let sdr_satcom_filter_denied_btn = Button::with_label("Satcom Filter: Denied");
-
-    let mut initial_sdr_bookmarks = vec![
-        ("ADS-B (1090 MHz)".to_string(), 1_090_000_000),
-        ("ACARS (131.550 MHz)".to_string(), 131_550_000),
-        ("AIS Ch A (161.975 MHz)".to_string(), 161_975_000),
-        ("AIS Ch B (162.025 MHz)".to_string(), 162_025_000),
-        ("POCSAG (929.6125 MHz)".to_string(), 929_612_500),
-        ("NOAA WX 162.550".to_string(), 162_550_000),
-        ("APRS 144.390".to_string(), 144_390_000),
-        ("Iridium 1626 MHz".to_string(), 1_626_000_000),
-        ("Inmarsat Aero 1545.000".to_string(), 1_545_000_000),
-        ("DAB Block 11D 222.064".to_string(), 222_064_000),
-        ("VOR 113.000".to_string(), 113_000_000),
-    ];
-    let persisted_bookmarks = {
-        state
-            .borrow()
-            .settings
-            .sdr_bookmarks
-            .iter()
-            .filter(|bookmark| bookmark.frequency_hz >= 100_000)
-            .map(|bookmark| {
-                let label = if bookmark.label.trim().is_empty() {
-                    format!("{:.6} MHz", bookmark.frequency_hz as f64 / 1_000_000.0)
-                } else {
-                    bookmark.label.clone()
-                };
-                (label, bookmark.frequency_hz)
-            })
-            .collect::<Vec<_>>()
-    };
-    initial_sdr_bookmarks.extend(persisted_bookmarks);
-    initial_sdr_bookmarks.sort_by_key(|(_, freq)| *freq);
-    initial_sdr_bookmarks.dedup_by(|left, right| left.1 == right.1);
-    let sdr_bookmarks: Rc<RefCell<Vec<(String, u64)>>> =
-        Rc::new(RefCell::new(initial_sdr_bookmarks));
-    let sdr_bookmark_combo = ComboBoxText::new();
-    for (label, freq) in sdr_bookmarks.borrow().iter() {
-        sdr_bookmark_combo.append(Some(&freq.to_string()), label);
-    }
-    sdr_bookmark_combo.set_active(Some(0));
-    let sdr_bookmark_add_btn = Button::with_label("Add Bookmark");
-    let sdr_bookmark_jump_btn = Button::with_label("Jump");
-    let sdr_bookmark_decode_btn = Button::with_label("Decode Bookmark");
-    let sdr_bookmark_scan_window_entry = Entry::new();
-    sdr_bookmark_scan_window_entry.set_width_chars(7);
-    sdr_bookmark_scan_window_entry.set_text("100");
-    let sdr_bookmark_scan_btn = Button::with_label("Scan Around Bookmark");
-    let sdr_preset_defs = Rc::new(RefCell::new(sdr_presets_from_settings(
-        &state.borrow().settings,
-    )));
-    let sdr_preset_combo = ComboBoxText::new();
-    rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), None);
-    let sdr_preset_apply_btn = Button::with_label("Apply Preset");
-    let sdr_preset_label_entry = Entry::new();
-    sdr_preset_label_entry.set_width_chars(24);
-    sdr_preset_label_entry.set_placeholder_text(Some("Preset Label"));
-    let sdr_preset_save_btn = Button::with_label("Save Current as Preset");
-    let sdr_preset_rename_btn = Button::with_label("Rename Selected");
-    let sdr_preset_delete_btn = Button::with_label("Delete Selected");
-    let sdr_preset_export_btn = Button::with_label("Export Presets JSON");
-    let sdr_preset_import_btn = Button::with_label("Import Presets JSON");
-    let sdr_preset_up_btn = Button::with_label("Move Up");
-    let sdr_preset_down_btn = Button::with_label("Move Down");
-
-    let sdr_controls = Grid::new();
-    sdr_controls.set_column_spacing(10);
-    sdr_controls.set_row_spacing(6);
-    sdr_controls.attach(&Label::new(Some("Hardware")), 0, 0, 1, 1);
-    sdr_controls.attach(&sdr_hardware_combo, 1, 0, 1, 1);
-    sdr_controls.attach(&Label::new(Some("Center (Hz)")), 2, 0, 1, 1);
-    sdr_controls.attach(&sdr_center_freq_entry, 3, 0, 1, 1);
-    sdr_controls.attach(&Label::new(Some("Sample Rate")), 4, 0, 1, 1);
-    sdr_controls.attach(&sdr_sample_rate_entry, 5, 0, 1, 1);
-    sdr_controls.attach(&sdr_set_frequency_btn, 6, 0, 1, 1);
-    sdr_controls.attach(&sdr_start_btn, 7, 0, 1, 1);
-    sdr_controls.attach(&sdr_stop_btn, 8, 0, 1, 1);
-    sdr_controls.attach(&sdr_pause_check, 9, 0, 1, 1);
-    sdr_controls.attach(&Label::new(Some("Decode")), 0, 1, 1, 1);
-    sdr_controls.attach(&sdr_decoder_combo, 1, 1, 2, 1);
-    sdr_controls.attach(&sdr_decode_start_btn, 3, 1, 1, 1);
-    sdr_controls.attach(&sdr_decode_stop_btn, 4, 1, 1, 1);
-    sdr_controls.attach(&sdr_dep_refresh_btn, 5, 1, 2, 1);
-    sdr_controls.attach(&sdr_dep_install_btn, 7, 1, 2, 1);
-    sdr_controls.attach(&sdr_validate_decoder_btn, 9, 1, 2, 1);
-    sdr_controls.attach(&sdr_log_enable_check, 0, 2, 2, 1);
-    sdr_controls.attach(&Label::new(Some("Log Dir")), 2, 2, 1, 1);
-    sdr_controls.attach(&sdr_log_dir_entry, 3, 2, 7, 1);
-    sdr_controls.attach(&sdr_scan_enable_check, 0, 3, 2, 1);
-    sdr_controls.attach(&Label::new(Some("Scan Start")), 2, 3, 1, 1);
-    sdr_controls.attach(&sdr_scan_start_entry, 3, 3, 1, 1);
-    sdr_controls.attach(&Label::new(Some("Scan End")), 4, 3, 1, 1);
-    sdr_controls.attach(&sdr_scan_end_entry, 5, 3, 1, 1);
-    sdr_controls.attach(&Label::new(Some("Step (Hz)")), 6, 3, 1, 1);
-    sdr_controls.attach(&sdr_scan_step_entry, 7, 3, 1, 1);
-    sdr_controls.attach(&Label::new(Some("Steps/s")), 8, 3, 1, 1);
-    sdr_controls.attach(&sdr_scan_speed_entry, 9, 3, 1, 1);
-    sdr_controls.attach(&Label::new(Some("Squelch")), 0, 4, 1, 1);
-    sdr_controls.attach(&sdr_squelch_scale, 1, 4, 7, 1);
-    sdr_controls.attach(&sdr_squelch_value_label, 8, 4, 2, 1);
-    sdr_controls.attach(&sdr_autotune_check, 0, 5, 2, 1);
-    sdr_controls.attach(&sdr_bias_tee_check, 2, 5, 3, 1);
-    sdr_controls.attach(&sdr_no_payload_satcom_check, 5, 5, 3, 1);
-    sdr_controls.attach(&Label::new(Some("Satcom Parse Denylist")), 8, 5, 1, 1);
-    sdr_controls.attach(&sdr_satcom_denylist_entry, 9, 5, 1, 1);
-    sdr_controls.attach(&sdr_satcom_denylist_apply_btn, 10, 5, 1, 1);
-    sdr_controls.attach(&Label::new(Some("Bookmarks")), 0, 6, 1, 1);
-    sdr_controls.attach(&sdr_bookmark_combo, 1, 6, 2, 1);
-    sdr_controls.attach(&sdr_bookmark_jump_btn, 3, 6, 1, 1);
-    sdr_controls.attach(&sdr_bookmark_add_btn, 4, 6, 1, 1);
-    sdr_controls.attach(&sdr_bookmark_decode_btn, 5, 7, 1, 1);
-    sdr_controls.attach(&Label::new(Some("Scan ±kHz")), 0, 7, 1, 1);
-    sdr_controls.attach(&sdr_bookmark_scan_window_entry, 1, 7, 1, 1);
-    sdr_controls.attach(&sdr_bookmark_scan_btn, 2, 7, 3, 1);
-    sdr_controls.attach(&Label::new(Some("Sample (s)")), 5, 6, 1, 1);
-    sdr_controls.attach(&sdr_sample_duration_spin, 6, 6, 1, 1);
-    sdr_controls.attach(&Label::new(Some("IQ Dir")), 7, 6, 1, 1);
-    sdr_controls.attach(&sdr_sample_dir_entry, 8, 6, 2, 1);
-    sdr_controls.attach(&sdr_capture_sample_btn, 10, 6, 1, 1);
-    sdr_controls.attach(&sdr_satcom_filter_all_btn, 6, 7, 1, 1);
-    sdr_controls.attach(&sdr_satcom_filter_parsed_btn, 7, 7, 1, 1);
-    sdr_controls.attach(&sdr_satcom_filter_denied_btn, 8, 7, 1, 1);
-    sdr_controls.attach(&sdr_export_map_btn, 9, 7, 1, 1);
-    sdr_controls.attach(&sdr_export_satcom_btn, 10, 7, 1, 1);
-    sdr_controls.attach(&sdr_export_satcom_filtered_btn, 9, 8, 2, 1);
-    sdr_controls.attach(&sdr_export_decode_btn, 7, 14, 2, 1);
-    sdr_controls.attach(&sdr_export_aircraft_correlation_btn, 9, 14, 2, 1);
-    sdr_controls.attach(&sdr_export_decode_filtered_btn, 7, 16, 2, 1);
-    sdr_controls.attach(&sdr_export_health_btn, 7, 15, 4, 1);
-    sdr_controls.attach(&sdr_center_geiger_rssi_label, 0, 8, 3, 1);
-    sdr_controls.attach(&sdr_center_geiger_tone_label, 3, 8, 3, 1);
-    sdr_controls.attach(&sdr_center_geiger_progress, 6, 8, 5, 1);
-    sdr_controls.attach(&sdr_center_geiger_auto_squelch_check, 0, 9, 3, 1);
-    sdr_controls.attach(&Label::new(Some("Center Margin (dB)")), 3, 9, 2, 1);
-    sdr_controls.attach(&sdr_center_geiger_margin_spin, 5, 9, 1, 1);
-    sdr_controls.attach(&Label::new(Some("Preset")), 6, 9, 1, 1);
-    sdr_controls.attach(&sdr_preset_combo, 7, 9, 2, 1);
-    sdr_controls.attach(&sdr_preset_apply_btn, 9, 9, 2, 1);
-    sdr_controls.attach(&sdr_preset_label_entry, 7, 10, 2, 1);
-    sdr_controls.attach(&sdr_preset_save_btn, 9, 10, 2, 1);
-    sdr_controls.attach(&sdr_preset_rename_btn, 7, 11, 2, 1);
-    sdr_controls.attach(&sdr_preset_delete_btn, 9, 11, 2, 1);
-    sdr_controls.attach(&sdr_preset_export_btn, 7, 12, 2, 1);
-    sdr_controls.attach(&sdr_preset_import_btn, 9, 12, 2, 1);
-    sdr_controls.attach(&sdr_preset_up_btn, 7, 13, 2, 1);
-    sdr_controls.attach(&sdr_preset_down_btn, 9, 13, 2, 1);
-
-    let sdr_spectrogram_draw = DrawingArea::new();
-    sdr_spectrogram_draw.set_content_width(1200);
-    sdr_spectrogram_draw.set_content_height(230);
-    sdr_spectrogram_draw.set_hexpand(true);
-    sdr_spectrogram_draw.set_vexpand(true);
-    {
-        let sdr_model = sdr_model.clone();
-        sdr_spectrogram_draw.set_draw_func(move |_, ctx, width, height| {
-            draw_sdr_spectrogram(ctx, width as f64, height as f64, &sdr_model.borrow());
-        });
-    }
-
-    let sdr_fft_draw = DrawingArea::new();
-    sdr_fft_draw.set_content_width(1200);
-    sdr_fft_draw.set_content_height(220);
-    sdr_fft_draw.set_hexpand(true);
-    sdr_fft_draw.set_vexpand(true);
-    {
-        let sdr_model = sdr_model.clone();
-        sdr_fft_draw.set_draw_func(move |_, ctx, width, height| {
-            draw_sdr_fft(ctx, width as f64, height as f64, &sdr_model.borrow());
-        });
-    }
-
-    let sdr_map_draw = DrawingArea::new();
-    sdr_map_draw.set_content_width(1200);
-    sdr_map_draw.set_content_height(200);
-    sdr_map_draw.set_hexpand(true);
-    sdr_map_draw.set_vexpand(false);
-    {
-        let sdr_model = sdr_model.clone();
-        sdr_map_draw.set_draw_func(move |_, ctx, width, height| {
-            draw_sdr_map(ctx, width as f64, height as f64, &sdr_model.borrow());
-        });
-    }
-
-    let sdr_decode_list = ListBox::new();
-    sdr_decode_list.set_selection_mode(gtk::SelectionMode::None);
-    let sdr_decode_scrolled = ScrolledWindow::builder()
-        .vexpand(true)
-        .hexpand(true)
-        .child(&sdr_decode_list)
-        .build();
-
-    let (sdr_decode_pagination_row, sdr_decode_pagination) = build_table_pagination_controls(
-        default_rows_per_page,
-        vec![
-            ("time".to_string(), "Time".to_string(), 20),
-            ("decoder".to_string(), "Decoder".to_string(), 14),
-            ("freq".to_string(), "Freq".to_string(), 13),
-            ("protocol".to_string(), "Protocol".to_string(), 14),
-            ("message".to_string(), "Message".to_string(), 50),
-            ("raw".to_string(), "Raw".to_string(), 50),
-        ],
-    );
-    let sdr_decode_header_holder = GtkBox::new(Orientation::Vertical, 0);
-    sdr_decode_header_holder.append(&sdr_decode_table_header());
-    sdr_decode_header_holder.append(&sdr_decode_pagination.filter_bar);
-
-    let sdr_decode_box = GtkBox::new(Orientation::Vertical, 4);
-    sdr_decode_box.append(&sdr_decode_header_holder);
-    sdr_decode_box.append(&sdr_decode_scrolled);
-    sdr_decode_box.append(&sdr_decode_pagination_row);
-
-    let sdr_satcom_list = ListBox::new();
-    sdr_satcom_list.set_selection_mode(gtk::SelectionMode::None);
-    let sdr_satcom_scrolled = ScrolledWindow::builder()
-        .vexpand(true)
-        .hexpand(true)
-        .child(&sdr_satcom_list)
-        .build();
-    let (sdr_satcom_pagination_row, sdr_satcom_pagination) = build_table_pagination_controls(
-        default_rows_per_page,
-        vec![
-            ("time".to_string(), "Time".to_string(), 20),
-            ("decoder".to_string(), "Decoder".to_string(), 14),
-            ("protocol".to_string(), "Protocol".to_string(), 14),
-            ("freq".to_string(), "Freq".to_string(), 13),
-            ("band".to_string(), "Band".to_string(), 14),
-            ("posture".to_string(), "Encryption".to_string(), 12),
-            (
-                "payload_capture".to_string(),
-                "Payload Capture".to_string(),
-                14,
-            ),
-            ("payload_parse".to_string(), "Payload Parse".to_string(), 14),
-            (
-                "payload_fields".to_string(),
-                "Payload Fields".to_string(),
-                36,
-            ),
-            ("coords".to_string(), "Coords".to_string(), 8),
-            ("identifiers".to_string(), "Identifiers".to_string(), 20),
-            ("summary".to_string(), "Summary".to_string(), 40),
-        ],
-    );
-    let sdr_satcom_header_holder = GtkBox::new(Orientation::Vertical, 0);
-    sdr_satcom_header_holder.append(&sdr_satcom_table_header());
-    sdr_satcom_header_holder.append(&sdr_satcom_pagination.filter_bar);
-    let sdr_satcom_box = GtkBox::new(Orientation::Vertical, 4);
-    sdr_satcom_box.append(&sdr_satcom_header_holder);
-    sdr_satcom_box.append(&sdr_satcom_scrolled);
-    sdr_satcom_box.append(&sdr_satcom_pagination_row);
-
-    let sdr_output_notebook = Notebook::new();
-    sdr_output_notebook.append_page(&sdr_decode_box, Some(&Label::new(Some("Decode Output"))));
-    sdr_output_notebook.append_page(&sdr_satcom_box, Some(&Label::new(Some("Satcom Audit"))));
-
-    let sdr_top = GtkBox::new(Orientation::Vertical, 6);
-    sdr_top.append(&sdr_controls);
-    sdr_top.append(&sdr_frequency_label);
-    sdr_top.append(&sdr_decoder_label);
-    sdr_top.append(&sdr_dependency_label);
-    sdr_top.append(&sdr_health_label);
-    sdr_top.append(&sdr_aircraft_correlation_label);
-    sdr_top.append(&sdr_satcom_summary_label);
-    sdr_top.append(&Label::new(Some("Spectrogram")));
-    sdr_top.append(&sdr_spectrogram_draw);
-    sdr_top.append(&Label::new(Some("FFT")));
-    sdr_top.append(&sdr_fft_draw);
-    sdr_top.append(&Label::new(Some("Map (decoded coordinates)")));
-    sdr_top.append(&sdr_map_draw);
-
-    let sdr_root = Paned::new(Orientation::Vertical);
-    sdr_root.set_wide_handle(true);
-    sdr_root.set_position(DEFAULT_SDR_ROOT_POSITION);
-    sdr_root.set_resize_start_child(true);
-    sdr_root.set_resize_end_child(true);
-    sdr_root.set_shrink_start_child(true);
-    sdr_root.set_shrink_end_child(true);
-    sdr_root.set_start_child(Some(&sdr_top));
-    sdr_root.set_end_child(Some(&sdr_output_notebook));
-    sdr_root.set_visible(false);
 
     let selected_packet_mix: Rc<RefCell<PacketTypeBreakdown>> =
         Rc::new(RefCell::new(PacketTypeBreakdown::default()));
@@ -8495,22 +3417,16 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 return;
             };
             let label = ap.ssid.clone().unwrap_or_else(|| ap.bssid.clone());
-            let _ = state.borrow_mut().lock_wifi_to_channel(
-                channel,
-                "HT20",
-                label,
-                ap.source_adapters.first().map(String::as_str),
-            );
+            let _ = state
+                .borrow_mut()
+                .lock_wifi_to_channel(channel, "HT20", label);
         });
     }
 
     {
         let state = state.clone();
-        let ap_list = ap_list.clone();
         ap_geiger_unlock_btn.connect_clicked(move |_| {
-            let preferred =
-                selected_ap(&state, &ap_list).and_then(|ap| ap.source_adapters.first().cloned());
-            let _ = state.borrow_mut().unlock_wifi_card(preferred.as_deref());
+            let _ = state.borrow_mut().unlock_wifi_card();
         });
     }
 
@@ -8557,22 +3473,16 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 };
                 (channel, ap.ssid.clone().unwrap_or_else(|| ap.bssid.clone()))
             };
-            let _ = state.borrow_mut().lock_wifi_to_channel(
-                channel,
-                "HT20",
-                label,
-                client.source_adapters.first().map(String::as_str),
-            );
+            let _ = state
+                .borrow_mut()
+                .lock_wifi_to_channel(channel, "HT20", label);
         });
     }
 
     {
         let state = state.clone();
-        let client_list = client_list.clone();
         client_geiger_unlock_btn.connect_clicked(move |_| {
-            let preferred = selected_client(&state, &client_list)
-                .and_then(|client| client.source_adapters.first().cloned());
-            let _ = state.borrow_mut().unlock_wifi_card(preferred.as_deref());
+            let _ = state.borrow_mut().unlock_wifi_card();
         });
     }
 
@@ -8606,14 +3516,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     .push_status("no bluetooth device selected for locate".to_string());
                 return;
             };
-            if !bluetooth_record_supports_bluez_actions(&device) {
-                state.borrow_mut().push_status(format!(
-                    "bluetooth geiger tracking requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
-                    device.mac
-                ));
-                return;
-            }
-            start_bluetooth_geiger_tracking(&state, &bluetooth_geiger_state, &device);
+            start_bluetooth_geiger_tracking(&state, &bluetooth_geiger_state, &device.mac);
         });
     }
 
@@ -8649,20 +3552,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             let (controller, sender) = {
                 let s = state.borrow();
                 (
-                    bluetooth_action_controller(
-                        s.settings.bluetooth_controller.as_deref(),
-                        &device,
-                    ),
+                    s.settings.bluetooth_controller.clone(),
                     s.bluetooth_sender.clone(),
                 )
             };
-            if !bluetooth_record_supports_bluez_actions(&device) {
-                state.borrow_mut().push_status(format!(
-                    "bluetooth enumeration requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
-                    device.mac
-                ));
-                return;
-            }
             state.borrow_mut().push_status(format!(
                 "starting active bluetooth enumeration for {}",
                 device.mac
@@ -8711,20 +3604,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             let (controller, sender) = {
                 let s = state.borrow();
                 (
-                    bluetooth_action_controller(
-                        s.settings.bluetooth_controller.as_deref(),
-                        &device,
-                    ),
+                    s.settings.bluetooth_controller.clone(),
                     s.bluetooth_sender.clone(),
                 )
             };
-            if !bluetooth_record_supports_bluez_actions(&device) {
-                state.borrow_mut().push_status(format!(
-                    "bluetooth disconnect requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
-                    device.mac
-                ));
-                return;
-            }
             state
                 .borrow_mut()
                 .push_status(format!("disconnecting bluetooth device {}", device.mac));
@@ -8785,12 +3668,11 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         ap_export_pcap.connect_clicked(move |_| {
             if let Some(ap) = selected_ap(&state, &ap_list) {
                 let mut s = state.borrow_mut();
-                let gps_track = s.gps_track_for_export();
                 let out = s.exporter.export_filtered_pcap(
                     &s.session_capture_path,
                     &format!("ap_{}.pcapng", sanitize_name(&ap.bssid)),
                     &format!("wlan.bssid == {}", ap.bssid),
-                    &gps_track,
+                    &s.gps_track,
                 );
                 if out.is_ok() {
                     s.push_status("exported AP filtered PCAPNG with GPS".to_string());
@@ -8806,11 +3688,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         ap_export_hs.connect_clicked(move |_| {
             if let Some(ap) = selected_ap(&state, &ap_list) {
                 let mut s = state.borrow_mut();
-                let gps_track = s.gps_track_for_export();
                 let out = s.exporter.export_handshake_pcap(
                     &s.session_capture_path,
                     &ap.bssid,
-                    &gps_track,
+                    &s.gps_track,
                 );
                 if out.is_ok() {
                     s.push_status("exported handshake-only PCAPNG with GPS".to_string());
@@ -8834,69 +3715,17 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         client_export_pcap.connect_clicked(move |_| {
             if let Some(client) = selected_client(&state, &client_list) {
                 let mut s = state.borrow_mut();
-                let gps_track = s.gps_track_for_export();
                 let out = s.exporter.export_filtered_pcap(
                     &s.session_capture_path,
                     &format!("client_{}.pcapng", sanitize_name(&client.mac)),
                     &format!("wlan.sa == {} || wlan.da == {}", client.mac, client.mac),
-                    &gps_track,
+                    &s.gps_track,
                 );
                 if out.is_ok() {
                     s.push_status("exported client filtered PCAPNG with GPS".to_string());
                 } else if let Err(err) = out {
                     s.push_status(format!("Client PCAP export failed: {err}"));
                 }
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let ap_inline_channel_draw = ap_inline_channel_draw.clone();
-        ap_inline_channel_band_combo.connect_changed(move |_| {
-            let _ = state.borrow();
-            ap_inline_channel_draw.queue_draw();
-        });
-    }
-
-    {
-        let state = state.clone();
-        let ap_inline_channel_band_combo = ap_inline_channel_band_combo.clone();
-        ap_inline_channel_draw.set_draw_func(move |_, ctx, width, height| {
-            draw_channel_usage_chart(
-                ctx,
-                width as f64,
-                height as f64,
-                &state.borrow().channel_usage,
-                ap_inline_channel_band_combo.active_id().as_deref(),
-            );
-        });
-    }
-
-    {
-        let state = state.clone();
-        let ap_inline_channel_box = ap_inline_channel_box.clone();
-        let ap_inline_channel_draw = ap_inline_channel_draw.clone();
-        let window = window.clone();
-        ap_inline_channel_toggle.connect_toggled(move |check| {
-            let enabled = check.is_active();
-            ap_inline_channel_box.set_visible(enabled);
-            if enabled {
-                ap_inline_channel_draw.queue_draw();
-            }
-            {
-                let mut s = state.borrow_mut();
-                if s.settings.show_ap_inline_channel_usage != enabled {
-                    s.settings.show_ap_inline_channel_usage = enabled;
-                    s.push_status(format!(
-                        "AP inline channel usage {}",
-                        if enabled { "enabled" } else { "hidden" }
-                    ));
-                    s.save_settings_to_disk();
-                }
-            }
-            if let Some(app) = window.application() {
-                sync_view_menu_action_state(&app, "settings_show_ap_inline_channel_usage", enabled);
             }
         });
     }
@@ -8924,2165 +3753,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         });
     }
 
-    {
-        let state = state.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        sdr_start_btn.connect_clicked(move |_| {
-            let config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            let mut s = state.borrow_mut();
-            s.start_sdr_runtime(config.clone());
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                apply_sdr_runtime_controls(runtime, &config);
-                runtime.refresh_dependencies();
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        sdr_stop_btn.connect_clicked(move |_| {
-            state.borrow_mut().stop_sdr_runtime();
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        sdr_set_frequency_btn.connect_clicked(move |_| {
-            let config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            let mut s = state.borrow_mut();
-            if s.sdr_runtime.is_none() {
-                s.start_sdr_runtime(config.clone());
-            }
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_center_freq(config.center_freq_hz);
-                apply_sdr_runtime_controls(runtime, &config);
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        sdr_pause_check.connect_toggled(move |check| {
-            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
-                runtime.set_sweep_paused(check.is_active());
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        let sdr_decoder_combo = sdr_decoder_combo.clone();
-        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
-        let sdr_plugin_defs = sdr_plugin_defs.clone();
-        sdr_validate_decoder_btn.connect_clicked(move |_| {
-            let Some(active_id) = sdr_decoder_combo.active_id() else {
-                state
-                    .borrow_mut()
-                    .push_status("decoder validation skipped: no decoder selected".to_string());
-                return;
-            };
-            let decoder_id = active_id.as_str().to_string();
-            let decoder = { sdr_decoder_lookup.borrow().get(&decoder_id).cloned() };
-            let Some(decoder) = decoder else {
-                state.borrow_mut().push_status(format!(
-                    "decoder validation skipped: selected decoder not found ({decoder_id})"
-                ));
-                return;
-            };
-
-            let config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            let command = sdr::decoder_command_preview(
-                &decoder,
-                config.center_freq_hz,
-                config.sample_rate_hz,
-                config.hardware,
-                sdr_plugin_defs.as_slice(),
-            );
-            let reason = sdr::decoder_unavailability_hint(&decoder, config.hardware);
-            let missing = sdr::dependency_status_snapshot(sdr_plugin_defs.as_slice())
-                .into_iter()
-                .filter(|status| !status.installed)
-                .map(|status| format!("{} ({})", status.tool, status.package_hint))
-                .collect::<Vec<_>>();
-            let mut s = state.borrow_mut();
-            if let Some(command) = command {
-                s.push_status(format!(
-                    "decoder validation ok [{} @ {} {:.3} MHz]: {} | missing_deps={}",
-                    decoder_id,
-                    config.hardware.label(),
-                    config.center_freq_hz as f64 / 1_000_000.0,
-                    command,
-                    missing.len()
-                ));
-            } else {
-                let reason = reason.unwrap_or_else(|| {
-                    "command path unavailable for current hardware/toolchain".to_string()
-                });
-                if missing.is_empty() {
-                    s.push_status(format!(
-                        "decoder validation failed [{} @ {}]: {}",
-                        decoder_id,
-                        config.hardware.label(),
-                        reason
-                    ));
-                } else {
-                    s.push_status(format!(
-                        "decoder validation failed [{} @ {}]: {} | missing_deps={}",
-                        decoder_id,
-                        config.hardware.label(),
-                        reason,
-                        missing.join(", ")
-                    ));
-                }
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_scan_enable_check_for_apply = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry_for_apply = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry_for_apply = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry_for_apply = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry_for_apply = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale_for_apply = sdr_squelch_scale.clone();
-        let sdr_autotune_check_for_apply = sdr_autotune_check.clone();
-        let sdr_bias_tee_check_for_apply = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check_for_apply = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry_for_apply = sdr_satcom_denylist_entry.clone();
-
-        let apply_scan: Rc<dyn Fn()> = Rc::new(move || {
-            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
-                let config = sdr_config_from_inputs(
-                    &sdr_hardware_combo,
-                    &sdr_center_freq_entry,
-                    &sdr_sample_rate_entry,
-                    &sdr_log_enable_check,
-                    &sdr_log_dir_entry,
-                    &sdr_scan_enable_check_for_apply,
-                    &sdr_scan_start_entry_for_apply,
-                    &sdr_scan_end_entry_for_apply,
-                    &sdr_scan_step_entry_for_apply,
-                    &sdr_scan_speed_entry_for_apply,
-                    &sdr_squelch_scale_for_apply,
-                    &sdr_autotune_check_for_apply,
-                    &sdr_bias_tee_check_for_apply,
-                    &sdr_no_payload_satcom_check_for_apply,
-                    &sdr_satcom_denylist_entry_for_apply,
-                );
-                runtime.set_scan_range(
-                    config.scan_range_enabled,
-                    config.scan_start_hz,
-                    config.scan_end_hz,
-                    config.scan_step_hz,
-                    config.scan_steps_per_sec,
-                );
-            }
-        });
-
-        {
-            let apply_scan = apply_scan.clone();
-            sdr_scan_enable_check.connect_toggled(move |_| (apply_scan)());
-        }
-        {
-            let apply_scan = apply_scan.clone();
-            sdr_scan_start_entry.connect_activate(move |_| (apply_scan)());
-        }
-        {
-            let apply_scan = apply_scan.clone();
-            sdr_scan_end_entry.connect_activate(move |_| (apply_scan)());
-        }
-        {
-            let apply_scan = apply_scan.clone();
-            sdr_scan_step_entry.connect_activate(move |_| (apply_scan)());
-        }
-        {
-            let apply_scan = apply_scan.clone();
-            sdr_scan_speed_entry.connect_activate(move |_| (apply_scan)());
-        }
-    }
-
-    {
-        let state = state.clone();
-        let sdr_squelch_value_label = sdr_squelch_value_label.clone();
-        sdr_squelch_scale.connect_value_changed(move |scale| {
-            let squelch = scale.value() as f32;
-            sdr_squelch_value_label.set_text(&format!("{squelch:.0} dBm"));
-            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
-                runtime.set_squelch(squelch);
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        sdr_satcom_denylist_apply_btn.connect_clicked(move |_| {
-            let denylist =
-                parse_satcom_parse_denylist_input(sdr_satcom_denylist_entry.text().as_str());
-            let mut s = state.borrow_mut();
-            if s.settings.sdr_satcom_parse_denylist != denylist {
-                s.settings.sdr_satcom_parse_denylist = denylist.clone();
-                s.save_settings_to_disk();
-            }
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_satcom_parse_denylist(denylist.clone());
-            }
-            s.push_status(format!(
-                "satcom parse denylist {}",
-                if denylist.is_empty() {
-                    "cleared".to_string()
-                } else {
-                    format!("applied: {}", denylist.join(", "))
-                }
-            ));
-        });
-    }
-
-    {
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_spectrogram_draw_for_click = sdr_spectrogram_draw.clone();
-        let click = GestureClick::new();
-        click.set_button(1);
-        click.connect_pressed(move |_, _, _x, y| {
-            let height = sdr_spectrogram_draw_for_click.allocated_height().max(1) as f64;
-            let normalized = (1.0 - (y / height)).clamp(0.0, 1.0);
-            let squelch = -130.0 + (normalized * 120.0);
-            sdr_squelch_scale.set_value(squelch);
-        });
-        sdr_spectrogram_draw.add_controller(click);
-    }
-
-    {
-        let state = state.clone();
-        sdr_autotune_check.connect_toggled(move |check| {
-            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
-                runtime.set_auto_tune(check.is_active());
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        sdr_bias_tee_check.connect_toggled(move |check| {
-            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
-                runtime.set_bias_tee(check.is_active());
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        sdr_no_payload_satcom_check.connect_toggled(move |check| {
-            let payload_capture_enabled = check.is_active();
-            let mut s = state.borrow_mut();
-            if s.settings.sdr_satcom_payload_capture_enabled != payload_capture_enabled {
-                s.settings.sdr_satcom_payload_capture_enabled = payload_capture_enabled;
-                s.save_settings_to_disk();
-            }
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_no_payload_satcom(!payload_capture_enabled);
-            }
-            s.push_status(format!(
-                "satellite payload capture {}",
-                if payload_capture_enabled {
-                    "enabled"
-                } else {
-                    "disabled"
-                }
-            ));
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-        sdr_bookmark_jump_btn.connect_clicked(move |_| {
-            let Some(active_id) = sdr_bookmark_combo.active_id() else {
-                return;
-            };
-            let Ok(freq_hz) = active_id.as_str().parse::<u64>() else {
-                return;
-            };
-            sdr_center_freq_entry.set_text(&freq_hz.to_string());
-            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
-                runtime.set_center_freq(freq_hz);
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-        let sdr_decoder_combo = sdr_decoder_combo.clone();
-        let sdr_decoder_order = sdr_decoder_order.clone();
-        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
-        let sdr_plugin_defs = sdr_plugin_defs.clone();
-        sdr_bookmark_decode_btn.connect_clicked(move |_| {
-            let Some(active_id) = sdr_bookmark_combo.active_id() else {
-                return;
-            };
-            let Ok(freq_hz) = active_id.as_str().parse::<u64>() else {
-                return;
-            };
-            let Some(selected_decoder_id) = sdr_decoder_combo.active_id() else {
-                return;
-            };
-            let bookmark_label = sdr_bookmark_combo
-                .active_text()
-                .map(|text| text.to_string())
-                .unwrap_or_default();
-
-            sdr_center_freq_entry.set_text(&freq_hz.to_string());
-            let mut config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            config.center_freq_hz = freq_hz;
-
-            let mut s = state.borrow_mut();
-            if s.sdr_runtime.is_none() {
-                s.start_sdr_runtime(config.clone());
-            }
-
-            let decoder_candidates = {
-                let lookup = sdr_decoder_lookup.borrow();
-                let mut candidates = vec![selected_decoder_id.to_string()];
-                for decoder_id in prioritized_decoder_ids_for_bookmark_label(
-                    sdr_decoder_order.as_slice(),
-                    &lookup,
-                    bookmark_label.as_str(),
-                ) {
-                    if !candidates.contains(&decoder_id) {
-                        candidates.push(decoder_id);
-                    }
-                }
-                candidates
-            };
-            let mut selected_unavailable_reason: Option<String> = None;
-            let mut chosen_decoder: Option<SdrDecoderKind> = None;
-            for decoder_id in decoder_candidates.iter() {
-                let Some(decoder) = sdr_decoder_lookup
-                    .borrow()
-                    .get(decoder_id.as_str())
-                    .cloned()
-                else {
-                    continue;
-                };
-                let unavailable_reason = sdr::decoder_launch_unavailable_reason(
-                    &decoder,
-                    config.center_freq_hz,
-                    config.sample_rate_hz,
-                    config.hardware,
-                    sdr_plugin_defs.as_slice(),
-                );
-                if decoder_id == selected_decoder_id.as_str() {
-                    selected_unavailable_reason = unavailable_reason.clone();
-                }
-                if unavailable_reason.is_none() {
-                    chosen_decoder = Some(decoder);
-                    break;
-                }
-            }
-            let Some(decoder) = chosen_decoder else {
-                s.push_status(format!(
-                    "bookmark decode unavailable {} on {}: {}",
-                    selected_decoder_id,
-                    config.hardware.label(),
-                    selected_unavailable_reason
-                        .unwrap_or_else(|| "no compatible decoder command available".to_string())
-                ));
-                return;
-            };
-            if decoder.id().as_str() != selected_decoder_id.as_str() {
-                let _ = sdr_decoder_combo.set_active_id(Some(decoder.id().as_str()));
-            }
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_center_freq(config.center_freq_hz);
-                apply_sdr_runtime_controls(runtime, &config);
-                runtime.start_decode(decoder.clone());
-                s.push_status(format!(
-                    "bookmark decode started [{}] at {:.6} MHz",
-                    decoder.label(),
-                    config.center_freq_hz as f64 / 1_000_000.0
-                ));
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_bookmarks = sdr_bookmarks.clone();
-        let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        sdr_bookmark_add_btn.connect_clicked(move |_| {
-            let Ok(freq_hz) = sdr_center_freq_entry.text().trim().parse::<u64>() else {
-                return;
-            };
-            if freq_hz < 100_000 {
-                return;
-            }
-            let label = format!("{:.6} MHz", freq_hz as f64 / 1_000_000.0);
-            if !sdr_bookmarks
-                .borrow()
-                .iter()
-                .any(|(_, freq)| *freq == freq_hz)
-            {
-                sdr_bookmarks.borrow_mut().push((label.clone(), freq_hz));
-                let mut s = state.borrow_mut();
-                if !s
-                    .settings
-                    .sdr_bookmarks
-                    .iter()
-                    .any(|bookmark| bookmark.frequency_hz == freq_hz)
-                {
-                    s.settings.sdr_bookmarks.push(SdrBookmarkSetting {
-                        label: label.clone(),
-                        frequency_hz: freq_hz,
-                    });
-                    normalize_sdr_bookmark_settings(&mut s.settings.sdr_bookmarks);
-                    s.save_settings_to_disk();
-                }
-            }
-            refresh_sdr_bookmark_combo(&sdr_bookmarks, &sdr_bookmark_combo, Some(freq_hz));
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_bookmark_combo = sdr_bookmark_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_bookmark_scan_window_entry = sdr_bookmark_scan_window_entry.clone();
-        sdr_bookmark_scan_btn.connect_clicked(move |_| {
-            let Some(active_id) = sdr_bookmark_combo.active_id() else {
-                return;
-            };
-            let Ok(center_hz) = active_id.as_str().parse::<u64>() else {
-                return;
-            };
-            let window_khz = sdr_bookmark_scan_window_entry
-                .text()
-                .trim()
-                .parse::<u64>()
-                .unwrap_or(100)
-                .clamp(1, 50_000);
-            let half_window_hz = window_khz.saturating_mul(1_000);
-            let start_hz = center_hz.saturating_sub(half_window_hz).max(100_000);
-            let end_hz = center_hz.saturating_add(half_window_hz).max(start_hz + 1);
-            let span_hz = end_hz.saturating_sub(start_hz);
-            let step_hz = if span_hz <= 2_000_000 {
-                12_500
-            } else if span_hz <= 20_000_000 {
-                25_000
-            } else {
-                50_000
-            };
-            let steps_per_sec = sdr_scan_speed_entry
-                .text()
-                .trim()
-                .parse::<f64>()
-                .unwrap_or(8.0)
-                .max(0.1);
-            let squelch_dbm = sdr_squelch_scale.value() as f32;
-            let sample_rate_hz = (((span_hz.saturating_mul(12)) / 10)
-                .max(2_000_000)
-                .min(20_000_000)) as u32;
-            sdr_center_freq_entry.set_text(&center_hz.to_string());
-            sdr_sample_rate_entry.set_text(&sample_rate_hz.to_string());
-            sdr_scan_enable_check.set_active(true);
-            sdr_scan_start_entry.set_text(&start_hz.to_string());
-            sdr_scan_end_entry.set_text(&end_hz.to_string());
-            sdr_scan_step_entry.set_text(&step_hz.to_string());
-            sdr_scan_speed_entry.set_text(&format!("{steps_per_sec:.2}"));
-
-            let mut s = state.borrow_mut();
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_center_freq(center_hz);
-                runtime.set_scan_range(true, start_hz, end_hz, step_hz, steps_per_sec);
-                runtime.set_squelch(squelch_dbm);
-            }
-            s.push_status(format!(
-                "bookmark scan applied: center {:.3} MHz ±{} kHz (range {:.3}-{:.3} MHz, speed {:.2}/s, squelch {:.0} dBm)",
-                center_hz as f64 / 1_000_000.0,
-                window_khz,
-                start_hz as f64 / 1_000_000.0,
-                end_hz as f64 / 1_000_000.0,
-                steps_per_sec,
-                squelch_dbm
-            ));
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_preset_defs = sdr_preset_defs.clone();
-        let sdr_preset_combo = sdr_preset_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        sdr_preset_apply_btn.connect_clicked(move |_| {
-            let Some(active_id) = sdr_preset_combo.active_id() else {
-                return;
-            };
-            let Some(preset) = sdr_preset_defs
-                .borrow()
-                .iter()
-                .find(|p| p.id == active_id.as_str())
-                .cloned()
-            else {
-                return;
-            };
-
-            sdr_center_freq_entry.set_text(&preset.center_freq_hz.to_string());
-            sdr_sample_rate_entry.set_text(&preset.sample_rate_hz.to_string());
-            sdr_scan_enable_check.set_active(preset.scan_enabled);
-            sdr_scan_start_entry.set_text(&preset.scan_start_hz.to_string());
-            sdr_scan_end_entry.set_text(&preset.scan_end_hz.to_string());
-            sdr_scan_step_entry.set_text(&preset.scan_step_hz.to_string());
-            sdr_scan_speed_entry.set_text(&format!("{:.2}", preset.scan_steps_per_sec));
-            sdr_squelch_scale.set_value(preset.squelch_dbm as f64);
-
-            let config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-
-            let mut s = state.borrow_mut();
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_center_freq(config.center_freq_hz);
-                apply_sdr_runtime_controls(runtime, &config);
-            }
-            s.push_status(format!("applied SDR preset {}", preset.label));
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_preset_defs = sdr_preset_defs.clone();
-        let sdr_preset_combo = sdr_preset_combo.clone();
-        let sdr_preset_label_entry = sdr_preset_label_entry.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        sdr_preset_save_btn.connect_clicked(move |_| {
-            let config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-
-            let mut s = state.borrow_mut();
-            let label =
-                normalized_sdr_preset_label(&sdr_preset_label_entry.text(), config.center_freq_hz);
-            s.settings
-                .sdr_operator_presets
-                .push(SdrOperatorPresetSetting {
-                    label: label.clone(),
-                    center_freq_hz: config.center_freq_hz,
-                    sample_rate_hz: config.sample_rate_hz,
-                    scan_enabled: config.scan_range_enabled,
-                    scan_start_hz: config.scan_start_hz,
-                    scan_end_hz: config.scan_end_hz,
-                    scan_step_hz: config.scan_step_hz,
-                    scan_steps_per_sec: config.scan_steps_per_sec,
-                    squelch_dbm: config.squelch_dbm,
-                });
-            s.save_settings_to_disk();
-            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
-            let id = user_sdr_preset_id(s.settings.sdr_operator_presets.len() - 1);
-            rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), Some(&id));
-            sdr_preset_label_entry.set_text("");
-            s.push_status(format!("saved SDR preset {label}"));
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_preset_defs = sdr_preset_defs.clone();
-        let sdr_preset_combo = sdr_preset_combo.clone();
-        let sdr_preset_label_entry = sdr_preset_label_entry.clone();
-        sdr_preset_rename_btn.connect_clicked(move |_| {
-            let Some(active_id) = sdr_preset_combo.active_id() else {
-                return;
-            };
-            let Some(index) = parse_user_sdr_preset_id(active_id.as_str()) else {
-                state
-                    .borrow_mut()
-                    .push_status("rename skipped: built-in presets cannot be renamed".to_string());
-                return;
-            };
-            let requested = sdr_preset_label_entry.text();
-            if requested.trim().is_empty() {
-                state
-                    .borrow_mut()
-                    .push_status("rename skipped: enter a preset label first".to_string());
-                return;
-            }
-            let mut s = state.borrow_mut();
-            let Some(existing) = s.settings.sdr_operator_presets.get(index) else {
-                s.push_status("rename skipped: selected preset no longer exists".to_string());
-                return;
-            };
-            let label = normalized_sdr_preset_label(&requested, existing.center_freq_hz);
-            if let Some(preset) = s.settings.sdr_operator_presets.get_mut(index) {
-                preset.label = label.clone();
-            }
-            s.save_settings_to_disk();
-            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
-            rebuild_sdr_preset_combo(
-                &sdr_preset_combo,
-                &sdr_preset_defs.borrow(),
-                Some(active_id.as_str()),
-            );
-            sdr_preset_label_entry.set_text("");
-            s.push_status(format!("renamed SDR preset to {label}"));
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_preset_defs = sdr_preset_defs.clone();
-        let sdr_preset_combo = sdr_preset_combo.clone();
-        sdr_preset_delete_btn.connect_clicked(move |_| {
-            let Some(active_id) = sdr_preset_combo.active_id() else {
-                return;
-            };
-            let Some(index) = parse_user_sdr_preset_id(active_id.as_str()) else {
-                state
-                    .borrow_mut()
-                    .push_status("delete skipped: built-in presets cannot be deleted".to_string());
-                return;
-            };
-            let mut s = state.borrow_mut();
-            if index >= s.settings.sdr_operator_presets.len() {
-                s.push_status("delete skipped: selected preset no longer exists".to_string());
-                return;
-            }
-            let removed = s.settings.sdr_operator_presets.remove(index);
-            s.save_settings_to_disk();
-            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
-            rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), None);
-            s.push_status(format!("deleted SDR preset {}", removed.label));
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_preset_defs = sdr_preset_defs.clone();
-        let sdr_preset_combo = sdr_preset_combo.clone();
-        sdr_preset_up_btn.connect_clicked(move |_| {
-            let Some(active_id) = sdr_preset_combo.active_id() else {
-                return;
-            };
-            let Some(index) = parse_user_sdr_preset_id(active_id.as_str()) else {
-                state
-                    .borrow_mut()
-                    .push_status("reorder skipped: built-in presets cannot be moved".to_string());
-                return;
-            };
-            let mut s = state.borrow_mut();
-            if index == 0 || index >= s.settings.sdr_operator_presets.len() {
-                s.push_status("reorder skipped: preset is already at top".to_string());
-                return;
-            }
-            s.settings.sdr_operator_presets.swap(index - 1, index);
-            s.save_settings_to_disk();
-            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
-            let new_id = user_sdr_preset_id(index - 1);
-            rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), Some(&new_id));
-            s.push_status("moved SDR preset up".to_string());
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_preset_defs = sdr_preset_defs.clone();
-        let sdr_preset_combo = sdr_preset_combo.clone();
-        sdr_preset_down_btn.connect_clicked(move |_| {
-            let Some(active_id) = sdr_preset_combo.active_id() else {
-                return;
-            };
-            let Some(index) = parse_user_sdr_preset_id(active_id.as_str()) else {
-                state
-                    .borrow_mut()
-                    .push_status("reorder skipped: built-in presets cannot be moved".to_string());
-                return;
-            };
-            let mut s = state.borrow_mut();
-            if index + 1 >= s.settings.sdr_operator_presets.len() {
-                s.push_status("reorder skipped: preset is already at bottom".to_string());
-                return;
-            }
-            s.settings.sdr_operator_presets.swap(index, index + 1);
-            s.save_settings_to_disk();
-            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
-            let new_id = user_sdr_preset_id(index + 1);
-            rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), Some(&new_id));
-            s.push_status("moved SDR preset down".to_string());
-        });
-    }
-
-    {
-        let state = state.clone();
-        sdr_preset_export_btn.connect_clicked(move |_| {
-            let path = sdr_preset_exchange_path();
-            let parent = path.parent().map(PathBuf::from);
-            if let Some(dir) = parent {
-                if let Err(err) = fs::create_dir_all(&dir) {
-                    state.borrow_mut().push_status(format!(
-                        "SDR preset export failed creating directory {}: {err}",
-                        dir.display()
-                    ));
-                    return;
-                }
-            }
-
-            let presets = state.borrow().settings.sdr_operator_presets.clone();
-            match serde_json::to_string_pretty(&presets) {
-                Ok(serialized) => {
-                    if let Err(err) = fs::write(&path, serialized) {
-                        state.borrow_mut().push_status(format!(
-                            "SDR preset export failed writing {}: {err}",
-                            path.display()
-                        ));
-                        return;
-                    }
-                    state.borrow_mut().push_status(format!(
-                        "exported {} SDR presets to {}",
-                        presets.len(),
-                        path.display()
-                    ));
-                }
-                Err(err) => {
-                    state.borrow_mut().push_status(format!(
-                        "SDR preset export failed serializing presets: {err}"
-                    ));
-                }
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_preset_defs = sdr_preset_defs.clone();
-        let sdr_preset_combo = sdr_preset_combo.clone();
-        sdr_preset_import_btn.connect_clicked(move |_| {
-            let path = sdr_preset_exchange_path();
-            let raw = match fs::read_to_string(&path) {
-                Ok(raw) => raw,
-                Err(err) => {
-                    state.borrow_mut().push_status(format!(
-                        "SDR preset import failed reading {}: {err}",
-                        path.display()
-                    ));
-                    return;
-                }
-            };
-            let imported = match serde_json::from_str::<Vec<SdrOperatorPresetSetting>>(&raw) {
-                Ok(imported) => imported,
-                Err(err) => {
-                    state.borrow_mut().push_status(format!(
-                        "SDR preset import failed parsing {}: {err}",
-                        path.display()
-                    ));
-                    return;
-                }
-            };
-
-            let mut s = state.borrow_mut();
-            let added = merge_sdr_operator_presets(&mut s.settings.sdr_operator_presets, imported);
-
-            s.save_settings_to_disk();
-            *sdr_preset_defs.borrow_mut() = sdr_presets_from_settings(&s.settings);
-            rebuild_sdr_preset_combo(&sdr_preset_combo, &sdr_preset_defs.borrow(), None);
-            s.push_status(format!(
-                "imported {} SDR presets from {}",
-                added,
-                path.display()
-            ));
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        let sdr_sample_duration_spin = sdr_sample_duration_spin.clone();
-        let sdr_sample_dir_entry = sdr_sample_dir_entry.clone();
-        sdr_capture_sample_btn.connect_clicked(move |_| {
-            let config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            let duration_secs = sdr_sample_duration_spin.value_as_int().max(1) as u32;
-            let output_dir_text = sdr_sample_dir_entry.text().trim().to_string();
-            let output_dir = if output_dir_text.is_empty() {
-                config.log_output_dir.join("iq_samples")
-            } else {
-                PathBuf::from(output_dir_text)
-            };
-
-            let mut s = state.borrow_mut();
-            if s.sdr_runtime.is_none() {
-                s.start_sdr_runtime(config.clone());
-            }
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_center_freq(config.center_freq_hz);
-                apply_sdr_runtime_controls(runtime, &config);
-                runtime.capture_sample(duration_secs, output_dir.clone());
-                s.push_status(format!(
-                    "capturing IQ sample at {} Hz for {}s into {}",
-                    config.center_freq_hz,
-                    duration_secs,
-                    output_dir.display()
-                ));
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_model = sdr_model.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        sdr_export_decode_btn.connect_clicked(move |_| {
-            let rows = sdr_model.borrow().decode_rows.clone();
-            if rows.is_empty() {
-                state
-                    .borrow_mut()
-                    .push_status("SDR decode export skipped: no decode rows yet".to_string());
-                return;
-            }
-
-            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
-            let output_dir = if output_dir_text.is_empty() {
-                SdrConfig::default().log_output_dir
-            } else {
-                PathBuf::from(output_dir_text)
-            };
-            if let Err(err) = fs::create_dir_all(&output_dir) {
-                state.borrow_mut().push_status(format!(
-                    "SDR decode export failed (create dir {}): {err}",
-                    output_dir.display()
-                ));
-                return;
-            }
-
-            let json_path = output_dir.join(format!(
-                "sdr_decode_rows_{}.json",
-                Utc::now().format("%Y%m%dT%H%M%SZ")
-            ));
-            match export_sdr_decode_artifacts(&json_path, &rows) {
-                Ok((json_path, csv_path)) => state.borrow_mut().push_status(format!(
-                    "exported SDR decode artifacts: {}, {}",
-                    json_path.display(),
-                    csv_path.display()
-                )),
-                Err(err) => state
-                    .borrow_mut()
-                    .push_status(format!("SDR decode export failed: {err}")),
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_model = sdr_model.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_decode_pagination = sdr_decode_pagination.clone();
-        sdr_export_decode_filtered_btn.connect_clicked(move |_| {
-            let all_rows = sdr_model.borrow().decode_rows.clone();
-            let filters = pagination_filter_terms(&sdr_decode_pagination);
-            let filtered = all_rows
-                .into_iter()
-                .filter(|row| {
-                    row_matches_column_filters(&filters, |column_id| {
-                        sdr_decode_row_column_value(row, column_id)
-                    })
-                })
-                .collect::<Vec<_>>();
-            if filtered.is_empty() {
-                state.borrow_mut().push_status(
-                    "SDR decode filtered export skipped: no rows match active filters".to_string(),
-                );
-                return;
-            }
-            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
-            let output_dir = if output_dir_text.is_empty() {
-                SdrConfig::default().log_output_dir
-            } else {
-                PathBuf::from(output_dir_text)
-            };
-            if let Err(err) = fs::create_dir_all(&output_dir) {
-                state.borrow_mut().push_status(format!(
-                    "SDR decode filtered export failed (create dir {}): {err}",
-                    output_dir.display()
-                ));
-                return;
-            }
-            let json_path = output_dir.join(format!(
-                "sdr_decode_filtered_{}.json",
-                Utc::now().format("%Y%m%dT%H%M%SZ")
-            ));
-            match export_sdr_decode_artifacts(&json_path, &filtered) {
-                Ok((json_path, csv_path)) => state.borrow_mut().push_status(format!(
-                    "exported filtered SDR decode artifacts: {}, {} | filters={}",
-                    json_path.display(),
-                    csv_path.display(),
-                    pagination_filter_signature(&filters)
-                )),
-                Err(err) => state
-                    .borrow_mut()
-                    .push_status(format!("SDR decode filtered export failed: {err}")),
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_model = sdr_model.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        sdr_export_health_btn.connect_clicked(move |_| {
-            let snapshot = {
-                let model = sdr_model.borrow();
-                build_sdr_health_snapshot(
-                    &model.decode_rows,
-                    &model.satcom_observations,
-                    &model.decoder_telemetry,
-                    &model.decoder_telemetry_rates,
-                )
-            };
-            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
-            let output_dir = if output_dir_text.is_empty() {
-                SdrConfig::default().log_output_dir
-            } else {
-                PathBuf::from(output_dir_text)
-            };
-            if let Err(err) = fs::create_dir_all(&output_dir) {
-                state.borrow_mut().push_status(format!(
-                    "SDR health export failed (create dir {}): {err}",
-                    output_dir.display()
-                ));
-                return;
-            }
-            let path = output_dir.join(format!(
-                "sdr_health_snapshot_{}.json",
-                Utc::now().format("%Y%m%dT%H%M%SZ")
-            ));
-            match write_json_pretty(&path, &snapshot) {
-                Ok(()) => state
-                    .borrow_mut()
-                    .push_status(format!("exported SDR health snapshot: {}", path.display())),
-                Err(err) => state
-                    .borrow_mut()
-                    .push_status(format!("SDR health export failed: {err}")),
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_model = sdr_model.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        sdr_export_map_btn.connect_clicked(move |_| {
-            let points = sdr_model.borrow().map_points.clone();
-            if points.is_empty() {
-                state
-                    .borrow_mut()
-                    .push_status("SDR map export skipped: no coordinate points yet".to_string());
-                return;
-            }
-
-            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
-            let output_dir = if output_dir_text.is_empty() {
-                SdrConfig::default().log_output_dir
-            } else {
-                PathBuf::from(output_dir_text)
-            };
-
-            if let Err(err) = fs::create_dir_all(&output_dir) {
-                state.borrow_mut().push_status(format!(
-                    "SDR map export failed (create dir {}): {err}",
-                    output_dir.display()
-                ));
-                return;
-            }
-
-            let file_path = output_dir.join(format!(
-                "sdr_map_points_{}.json",
-                Utc::now().format("%Y%m%dT%H%M%SZ")
-            ));
-            match serde_json::to_vec_pretty(&points) {
-                Ok(data) => {
-                    if let Err(err) = fs::write(&file_path, data) {
-                        state.borrow_mut().push_status(format!(
-                            "SDR map export failed (write {}): {err}",
-                            file_path.display()
-                        ));
-                    } else {
-                        state.borrow_mut().push_status(format!(
-                            "exported SDR map points: {}",
-                            file_path.display()
-                        ));
-                    }
-                }
-                Err(err) => {
-                    state
-                        .borrow_mut()
-                        .push_status(format!("SDR map export serialization failed: {err}"));
-                }
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_model = sdr_model.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
-        sdr_export_satcom_btn.connect_clicked(move |_| {
-            let observations = sdr_model.borrow().satcom_observations.clone();
-            if observations.is_empty() {
-                state.borrow_mut().push_status(
-                    "SDR satcom export skipped: no satcom observations yet".to_string(),
-                );
-                return;
-            }
-
-            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
-            let output_dir = if output_dir_text.is_empty() {
-                SdrConfig::default().log_output_dir
-            } else {
-                PathBuf::from(output_dir_text)
-            };
-
-            if let Err(err) = fs::create_dir_all(&output_dir) {
-                state.borrow_mut().push_status(format!(
-                    "SDR satcom export failed (create dir {}): {err}",
-                    output_dir.display()
-                ));
-                return;
-            }
-
-            let file_path = output_dir.join(format!(
-                "sdr_satcom_audit_{}.json",
-                Utc::now().format("%Y%m%dT%H%M%SZ")
-            ));
-            match export_sdr_satcom_artifacts(&file_path, &observations) {
-                Ok((json_path, csv_path, parsed_path, denied_path, summary_path)) => {
-                    let payload_capture_mode = observations
-                        .first()
-                        .map(|row| row.payload_capture_mode.as_str())
-                        .unwrap_or("unknown");
-                    state.borrow_mut().push_status(format!(
-                        "exported SDR satcom artifacts: {}, {}, {}, {}, {} | payload_capture={}",
-                        json_path.display(),
-                        csv_path.display(),
-                        parsed_path.display(),
-                        denied_path.display(),
-                        summary_path.display(),
-                        payload_capture_mode
-                    ));
-                }
-                Err(err) => {
-                    state
-                        .borrow_mut()
-                        .push_status(format!("SDR satcom export failed: {err}"));
-                    return;
-                }
-            }
-            let filters = pagination_filter_terms(&sdr_satcom_pagination);
-            if !filters.is_empty() {
-                state.borrow_mut().push_status(format!(
-                    "active satcom table filters during export: {}",
-                    pagination_filter_signature(&filters)
-                ));
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_model = sdr_model.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
-        sdr_export_satcom_filtered_btn.connect_clicked(move |_| {
-            let all_observations = sdr_model.borrow().satcom_observations.clone();
-            let filters = pagination_filter_terms(&sdr_satcom_pagination);
-            let filtered = all_observations
-                .into_iter()
-                .filter(|row| {
-                    row_matches_column_filters(&filters, |column_id| {
-                        sdr_satcom_row_column_value(row, column_id)
-                    })
-                })
-                .collect::<Vec<_>>();
-            if filtered.is_empty() {
-                state.borrow_mut().push_status(
-                    "SDR satcom filtered export skipped: no rows match active filters".to_string(),
-                );
-                return;
-            }
-            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
-            let output_dir = if output_dir_text.is_empty() {
-                SdrConfig::default().log_output_dir
-            } else {
-                PathBuf::from(output_dir_text)
-            };
-            if let Err(err) = fs::create_dir_all(&output_dir) {
-                state.borrow_mut().push_status(format!(
-                    "SDR satcom filtered export failed (create dir {}): {err}",
-                    output_dir.display()
-                ));
-                return;
-            }
-            let file_path = output_dir.join(format!(
-                "sdr_satcom_filtered_{}.json",
-                Utc::now().format("%Y%m%dT%H%M%SZ")
-            ));
-            match export_sdr_satcom_artifacts(&file_path, &filtered) {
-                Ok((json_path, csv_path, parsed_path, denied_path, summary_path)) => {
-                    let payload_capture_mode = filtered
-                        .first()
-                        .map(|row| row.payload_capture_mode.as_str())
-                        .unwrap_or("unknown");
-                    state.borrow_mut().push_status(format!(
-                        "exported filtered SDR satcom artifacts: {}, {}, {}, {}, {} | payload_capture={} | filters={}",
-                        json_path.display(),
-                        csv_path.display(),
-                        parsed_path.display(),
-                        denied_path.display(),
-                        summary_path.display(),
-                        payload_capture_mode,
-                        pagination_filter_signature(&filters)
-                    ));
-                }
-                Err(err) => {
-                    state
-                        .borrow_mut()
-                        .push_status(format!("SDR satcom filtered export failed: {err}"));
-                }
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_model = sdr_model.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        sdr_export_aircraft_correlation_btn.connect_clicked(move |_| {
-            let correlations = {
-                let model = sdr_model.borrow();
-                sdr::correlate_aircraft(&model.decode_rows)
-            };
-            if correlations.is_empty() {
-                state.borrow_mut().push_status(
-                    "SDR aircraft correlation export skipped: no ADS-B/ACARS correlated rows yet"
-                        .to_string(),
-                );
-                return;
-            }
-
-            let output_dir_text = sdr_log_dir_entry.text().trim().to_string();
-            let output_dir = if output_dir_text.is_empty() {
-                SdrConfig::default().log_output_dir
-            } else {
-                PathBuf::from(output_dir_text)
-            };
-            if let Err(err) = fs::create_dir_all(&output_dir) {
-                state.borrow_mut().push_status(format!(
-                    "SDR aircraft correlation export failed (create dir {}): {err}",
-                    output_dir.display()
-                ));
-                return;
-            }
-
-            let json_path = output_dir.join(format!(
-                "sdr_aircraft_correlation_{}.json",
-                Utc::now().format("%Y%m%dT%H%M%SZ")
-            ));
-            match export_sdr_aircraft_correlation_artifacts(&json_path, &correlations) {
-                Ok((json_path, csv_path)) => state.borrow_mut().push_status(format!(
-                    "exported SDR aircraft correlation artifacts: {}, {}",
-                    json_path.display(),
-                    csv_path.display()
-                )),
-                Err(err) => state
-                    .borrow_mut()
-                    .push_status(format!("SDR aircraft correlation export failed: {err}")),
-            }
-        });
-    }
-
-    {
-        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
-        sdr_satcom_filter_all_btn.connect_clicked(move |_| {
-            set_pagination_column_filter(&sdr_satcom_pagination, "payload_parse", "");
-        });
-    }
-    {
-        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
-        sdr_satcom_filter_parsed_btn.connect_clicked(move |_| {
-            set_pagination_column_filter(&sdr_satcom_pagination, "payload_parse", "parsed");
-        });
-    }
-    {
-        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
-        sdr_satcom_filter_denied_btn.connect_clicked(move |_| {
-            set_pagination_column_filter(
-                &sdr_satcom_pagination,
-                "payload_parse",
-                "denied_by_policy",
-            );
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        sdr_dep_refresh_btn.connect_clicked(move |_| {
-            let config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            let mut s = state.borrow_mut();
-            if s.sdr_runtime.is_none() {
-                s.start_sdr_runtime(config.clone());
-            }
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                apply_sdr_runtime_controls(runtime, &config);
-                runtime.refresh_dependencies();
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        sdr_dep_install_btn.connect_clicked(move |_| {
-            let config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            let mut s = state.borrow_mut();
-            if s.sdr_runtime.is_none() {
-                s.start_sdr_runtime(config.clone());
-            }
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                apply_sdr_runtime_controls(runtime, &config);
-                runtime.install_missing_dependencies();
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        let sdr_decoder_combo = sdr_decoder_combo.clone();
-        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
-        let sdr_plugin_defs = sdr_plugin_defs.clone();
-        sdr_decode_start_btn.connect_clicked(move |_| {
-            let config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            let Some(decoder_id) = sdr_decoder_combo.active_id() else {
-                return;
-            };
-            let Some(decoder) = sdr_decoder_lookup
-                .borrow()
-                .get(decoder_id.as_str())
-                .cloned()
-            else {
-                return;
-            };
-
-            let mut s = state.borrow_mut();
-            if s.sdr_runtime.is_none() {
-                s.start_sdr_runtime(config.clone());
-            }
-            if let Some(reason) = sdr::decoder_launch_unavailable_reason(
-                &decoder,
-                config.center_freq_hz,
-                config.sample_rate_hz,
-                config.hardware,
-                &sdr_plugin_defs,
-            ) {
-                s.push_status(format!(
-                    "decoder {} unavailable on {}: {}",
-                    decoder.label(),
-                    config.hardware.label(),
-                    reason
-                ));
-                return;
-            }
-            if let Some(runtime) = s.sdr_runtime.as_ref() {
-                runtime.set_center_freq(config.center_freq_hz);
-                apply_sdr_runtime_controls(runtime, &config);
-                runtime.start_decode(decoder);
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        sdr_decode_stop_btn.connect_clicked(move |_| {
-            if let Some(runtime) = state.borrow().sdr_runtime.as_ref() {
-                runtime.stop_decode();
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let sdr_fft_draw = sdr_fft_draw.clone();
-        let sdr_fft_draw_for_click = sdr_fft_draw.clone();
-        let sdr_model = sdr_model.clone();
-        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
-        let sdr_decoder_order = sdr_decoder_order.clone();
-        let sdr_decoder_combo = sdr_decoder_combo.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        let sdr_plugin_defs = sdr_plugin_defs.clone();
-        let right_click = GestureClick::new();
-        right_click.set_button(3);
-        right_click.connect_pressed(move |_, _, x, y| {
-            let width = sdr_fft_draw_for_click.allocated_width().max(1) as f64;
-            let model = sdr_model.borrow();
-            let sample_rate = model.sample_rate_hz.max(1) as f64;
-            let left_hz = model.current_freq_hz as f64 - sample_rate / 2.0;
-            let click_ratio = (x / width).clamp(0.0, 1.0);
-            let clicked_freq_hz = (left_hz + click_ratio * sample_rate).max(100_000.0) as u64;
-            drop(model);
-
-            sdr_center_freq_entry.set_text(&clicked_freq_hz.to_string());
-
-            let popover = Popover::new();
-            popover.set_has_arrow(true);
-            popover.set_parent(&sdr_fft_draw_for_click);
-            let rect = gdk::Rectangle::new(x as i32, y as i32, 1, 1);
-            popover.set_pointing_to(Some(&rect));
-            let popover_box = GtkBox::new(Orientation::Vertical, 4);
-            let title = Label::new(Some(&format!("Decode {} Hz", clicked_freq_hz)));
-            title.set_xalign(0.0);
-            popover_box.append(&title);
-            let menu_config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            for decoder_id in sdr_decoder_order.iter() {
-                let Some(decoder) = sdr_decoder_lookup.borrow().get(decoder_id).cloned() else {
-                    continue;
-                };
-                let unavailable_reason = sdr::decoder_launch_unavailable_reason(
-                    &decoder,
-                    clicked_freq_hz,
-                    menu_config.sample_rate_hz,
-                    menu_config.hardware,
-                    &sdr_plugin_defs,
-                );
-                let button = if unavailable_reason.is_some() {
-                    Button::with_label(&format!("Decode -> {} (unavailable)", decoder.label()))
-                } else {
-                    Button::with_label(&format!("Decode -> {}", decoder.label()))
-                };
-                button.set_sensitive(unavailable_reason.is_none());
-                if let Some(reason) = unavailable_reason.as_deref() {
-                    button.set_tooltip_text(Some(reason));
-                }
-                let state = state.clone();
-                let decoder = decoder.clone();
-                let sdr_hardware_combo = sdr_hardware_combo.clone();
-                let sdr_decoder_combo = sdr_decoder_combo.clone();
-                let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-                let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-                let sdr_log_enable_check = sdr_log_enable_check.clone();
-                let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-                let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-                let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-                let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-                let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-                let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-                let sdr_squelch_scale = sdr_squelch_scale.clone();
-                let sdr_autotune_check = sdr_autotune_check.clone();
-                let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-                let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-                let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-                let popover = popover.clone();
-                let sdr_plugin_defs = sdr_plugin_defs.clone();
-                button.connect_clicked(move |_| {
-                    let config = sdr_config_from_inputs(
-                        &sdr_hardware_combo,
-                        &sdr_center_freq_entry,
-                        &sdr_sample_rate_entry,
-                        &sdr_log_enable_check,
-                        &sdr_log_dir_entry,
-                        &sdr_scan_enable_check,
-                        &sdr_scan_start_entry,
-                        &sdr_scan_end_entry,
-                        &sdr_scan_step_entry,
-                        &sdr_scan_speed_entry,
-                        &sdr_squelch_scale,
-                        &sdr_autotune_check,
-                        &sdr_bias_tee_check,
-                        &sdr_no_payload_satcom_check,
-                        &sdr_satcom_denylist_entry,
-                    );
-                    let mut s = state.borrow_mut();
-                    if s.sdr_runtime.is_none() {
-                        s.start_sdr_runtime(config.clone());
-                    }
-                    if let Some(reason) = sdr::decoder_launch_unavailable_reason(
-                        &decoder,
-                        clicked_freq_hz,
-                        config.sample_rate_hz,
-                        config.hardware,
-                        &sdr_plugin_defs,
-                    ) {
-                        s.push_status(format!(
-                            "decoder {} unavailable on {}: {}",
-                            decoder.label(),
-                            config.hardware.label(),
-                            reason
-                        ));
-                        popover.popdown();
-                        return;
-                    }
-                    if let Some(runtime) = s.sdr_runtime.as_ref() {
-                        let decoder_id = decoder.id();
-                        sdr_decoder_combo.set_active_id(Some(decoder_id.as_str()));
-                        runtime.set_center_freq(clicked_freq_hz);
-                        apply_sdr_runtime_controls(runtime, &config);
-                        runtime.start_decode(decoder.clone());
-                    }
-                    popover.popdown();
-                });
-                popover_box.append(&button);
-            }
-            popover.set_child(Some(&popover_box));
-            popover.popup();
-        });
-        sdr_fft_draw.add_controller(right_click);
-    }
-
-    {
-        let state = state.clone();
-        let sdr_satcom_list = sdr_satcom_list.clone();
-        let sdr_satcom_list_for_click = sdr_satcom_list.clone();
-        let sdr_satcom_pagination = sdr_satcom_pagination.clone();
-        let sdr_model = sdr_model.clone();
-        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
-        let sdr_decoder_order = sdr_decoder_order.clone();
-        let sdr_decoder_combo = sdr_decoder_combo.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        let sdr_plugin_defs = sdr_plugin_defs.clone();
-        let right_click = GestureClick::new();
-        right_click.set_button(3);
-        right_click.connect_pressed(move |_, _, x, y| {
-            let Some(clicked_row_widget) = sdr_satcom_list_for_click.row_at_y(y as i32) else {
-                return;
-            };
-            let row_index = clicked_row_widget.index();
-            if row_index < 0 {
-                return;
-            }
-
-            let selected = {
-                let model = sdr_model.borrow();
-                let filters = pagination_filter_terms(&sdr_satcom_pagination);
-                let filtered = model
-                    .satcom_observations
-                    .iter()
-                    .filter(|row| {
-                        row_matches_column_filters(&filters, |column_id| {
-                            sdr_satcom_row_column_value(row, column_id)
-                        })
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let total_items = filtered.len();
-                let page_size = sdr_satcom_pagination.page_size.get();
-                let (_, _, start, end) = paged_indices(
-                    total_items,
-                    sdr_satcom_pagination.current_page.get(),
-                    page_size,
-                );
-                filtered
-                    .into_iter()
-                    .skip(start)
-                    .take(end.saturating_sub(start))
-                    .nth(row_index as usize)
-            };
-            let Some(observation) = selected else {
-                return;
-            };
-            let clicked_freq_hz = observation.freq_hz.max(100_000);
-            sdr_center_freq_entry.set_text(&clicked_freq_hz.to_string());
-
-            let popover = Popover::new();
-            popover.set_has_arrow(true);
-            popover.set_parent(&sdr_satcom_list_for_click);
-            let rect = gdk::Rectangle::new(x as i32, y as i32, 1, 1);
-            popover.set_pointing_to(Some(&rect));
-            let popover_box = GtkBox::new(Orientation::Vertical, 4);
-            let title = Label::new(Some(&format!(
-                "Decode {} Hz ({})",
-                clicked_freq_hz, observation.protocol
-            )));
-            title.set_xalign(0.0);
-            popover_box.append(&title);
-            let menu_config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            let prioritized_decoder_ids = {
-                let lookup = sdr_decoder_lookup.borrow();
-                prioritized_decoder_ids_for_protocol(
-                    sdr_decoder_order.as_slice(),
-                    &lookup,
-                    observation.protocol.as_str(),
-                )
-            };
-            for decoder_id in prioritized_decoder_ids {
-                let Some(decoder) = sdr_decoder_lookup
-                    .borrow()
-                    .get(decoder_id.as_str())
-                    .cloned()
-                else {
-                    continue;
-                };
-                let unavailable_reason = sdr::decoder_launch_unavailable_reason(
-                    &decoder,
-                    clicked_freq_hz,
-                    menu_config.sample_rate_hz,
-                    menu_config.hardware,
-                    &sdr_plugin_defs,
-                );
-                let button = if unavailable_reason.is_some() {
-                    Button::with_label(&format!("Decode -> {} (unavailable)", decoder.label()))
-                } else {
-                    Button::with_label(&format!("Decode -> {}", decoder.label()))
-                };
-                button.set_sensitive(unavailable_reason.is_none());
-                if let Some(reason) = unavailable_reason.as_deref() {
-                    button.set_tooltip_text(Some(reason));
-                }
-                let state = state.clone();
-                let decoder = decoder.clone();
-                let sdr_hardware_combo = sdr_hardware_combo.clone();
-                let sdr_decoder_combo = sdr_decoder_combo.clone();
-                let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-                let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-                let sdr_log_enable_check = sdr_log_enable_check.clone();
-                let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-                let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-                let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-                let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-                let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-                let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-                let sdr_squelch_scale = sdr_squelch_scale.clone();
-                let sdr_autotune_check = sdr_autotune_check.clone();
-                let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-                let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-                let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-                let popover = popover.clone();
-                let sdr_plugin_defs = sdr_plugin_defs.clone();
-                button.connect_clicked(move |_| {
-                    let config = sdr_config_from_inputs(
-                        &sdr_hardware_combo,
-                        &sdr_center_freq_entry,
-                        &sdr_sample_rate_entry,
-                        &sdr_log_enable_check,
-                        &sdr_log_dir_entry,
-                        &sdr_scan_enable_check,
-                        &sdr_scan_start_entry,
-                        &sdr_scan_end_entry,
-                        &sdr_scan_step_entry,
-                        &sdr_scan_speed_entry,
-                        &sdr_squelch_scale,
-                        &sdr_autotune_check,
-                        &sdr_bias_tee_check,
-                        &sdr_no_payload_satcom_check,
-                        &sdr_satcom_denylist_entry,
-                    );
-                    let mut s = state.borrow_mut();
-                    if s.sdr_runtime.is_none() {
-                        s.start_sdr_runtime(config.clone());
-                    }
-                    if let Some(reason) = sdr::decoder_launch_unavailable_reason(
-                        &decoder,
-                        clicked_freq_hz,
-                        config.sample_rate_hz,
-                        config.hardware,
-                        &sdr_plugin_defs,
-                    ) {
-                        s.push_status(format!(
-                            "decoder {} unavailable on {}: {}",
-                            decoder.label(),
-                            config.hardware.label(),
-                            reason
-                        ));
-                        popover.popdown();
-                        return;
-                    }
-                    if let Some(runtime) = s.sdr_runtime.as_ref() {
-                        let decoder_id = decoder.id();
-                        sdr_decoder_combo.set_active_id(Some(decoder_id.as_str()));
-                        runtime.set_center_freq(clicked_freq_hz);
-                        apply_sdr_runtime_controls(runtime, &config);
-                        runtime.start_decode(decoder.clone());
-                    }
-                    popover.popdown();
-                });
-                popover_box.append(&button);
-            }
-            popover.set_child(Some(&popover_box));
-            popover.popup();
-        });
-        sdr_satcom_list.add_controller(right_click);
-    }
-
-    {
-        let state = state.clone();
-        let sdr_decode_list = sdr_decode_list.clone();
-        let sdr_decode_list_for_click = sdr_decode_list.clone();
-        let sdr_decode_pagination = sdr_decode_pagination.clone();
-        let sdr_model = sdr_model.clone();
-        let sdr_decoder_lookup = sdr_decoder_lookup.clone();
-        let sdr_decoder_order = sdr_decoder_order.clone();
-        let sdr_decoder_combo = sdr_decoder_combo.clone();
-        let sdr_hardware_combo = sdr_hardware_combo.clone();
-        let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-        let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-        let sdr_log_enable_check = sdr_log_enable_check.clone();
-        let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-        let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-        let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-        let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-        let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-        let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-        let sdr_squelch_scale = sdr_squelch_scale.clone();
-        let sdr_autotune_check = sdr_autotune_check.clone();
-        let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-        let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-        let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-        let sdr_plugin_defs = sdr_plugin_defs.clone();
-        let right_click = GestureClick::new();
-        right_click.set_button(3);
-        right_click.connect_pressed(move |_, _, x, y| {
-            let Some(clicked_row_widget) = sdr_decode_list_for_click.row_at_y(y as i32) else {
-                return;
-            };
-            let row_index = clicked_row_widget.index();
-            if row_index < 0 {
-                return;
-            }
-
-            let selected = {
-                let model = sdr_model.borrow();
-                let filters = pagination_filter_terms(&sdr_decode_pagination);
-                let filtered = model
-                    .decode_rows
-                    .iter()
-                    .filter(|row| {
-                        row_matches_column_filters(&filters, |column_id| {
-                            sdr_decode_row_column_value(row, column_id)
-                        })
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let total_items = filtered.len();
-                let page_size = sdr_decode_pagination.page_size.get();
-                let (_, _, start, end) = paged_indices(
-                    total_items,
-                    sdr_decode_pagination.current_page.get(),
-                    page_size,
-                );
-                filtered
-                    .into_iter()
-                    .skip(start)
-                    .take(end.saturating_sub(start))
-                    .nth(row_index as usize)
-            };
-            let Some(observation) = selected else {
-                return;
-            };
-            let clicked_freq_hz = observation.freq_hz.max(100_000);
-            sdr_center_freq_entry.set_text(&clicked_freq_hz.to_string());
-
-            let popover = Popover::new();
-            popover.set_has_arrow(true);
-            popover.set_parent(&sdr_decode_list_for_click);
-            let rect = gdk::Rectangle::new(x as i32, y as i32, 1, 1);
-            popover.set_pointing_to(Some(&rect));
-            let popover_box = GtkBox::new(Orientation::Vertical, 4);
-            let title = Label::new(Some(&format!(
-                "Decode {} Hz ({})",
-                clicked_freq_hz, observation.protocol
-            )));
-            title.set_xalign(0.0);
-            popover_box.append(&title);
-            let menu_config = sdr_config_from_inputs(
-                &sdr_hardware_combo,
-                &sdr_center_freq_entry,
-                &sdr_sample_rate_entry,
-                &sdr_log_enable_check,
-                &sdr_log_dir_entry,
-                &sdr_scan_enable_check,
-                &sdr_scan_start_entry,
-                &sdr_scan_end_entry,
-                &sdr_scan_step_entry,
-                &sdr_scan_speed_entry,
-                &sdr_squelch_scale,
-                &sdr_autotune_check,
-                &sdr_bias_tee_check,
-                &sdr_no_payload_satcom_check,
-                &sdr_satcom_denylist_entry,
-            );
-            for decoder_id in sdr_decoder_order.iter() {
-                let Some(decoder) = sdr_decoder_lookup.borrow().get(decoder_id).cloned() else {
-                    continue;
-                };
-                let unavailable_reason = sdr::decoder_launch_unavailable_reason(
-                    &decoder,
-                    clicked_freq_hz,
-                    menu_config.sample_rate_hz,
-                    menu_config.hardware,
-                    &sdr_plugin_defs,
-                );
-                let button = if unavailable_reason.is_some() {
-                    Button::with_label(&format!("Decode -> {} (unavailable)", decoder.label()))
-                } else {
-                    Button::with_label(&format!("Decode -> {}", decoder.label()))
-                };
-                button.set_sensitive(unavailable_reason.is_none());
-                if let Some(reason) = unavailable_reason.as_deref() {
-                    button.set_tooltip_text(Some(reason));
-                }
-                let state = state.clone();
-                let decoder = decoder.clone();
-                let sdr_hardware_combo = sdr_hardware_combo.clone();
-                let sdr_decoder_combo = sdr_decoder_combo.clone();
-                let sdr_center_freq_entry = sdr_center_freq_entry.clone();
-                let sdr_sample_rate_entry = sdr_sample_rate_entry.clone();
-                let sdr_log_enable_check = sdr_log_enable_check.clone();
-                let sdr_log_dir_entry = sdr_log_dir_entry.clone();
-                let sdr_scan_enable_check = sdr_scan_enable_check.clone();
-                let sdr_scan_start_entry = sdr_scan_start_entry.clone();
-                let sdr_scan_end_entry = sdr_scan_end_entry.clone();
-                let sdr_scan_step_entry = sdr_scan_step_entry.clone();
-                let sdr_scan_speed_entry = sdr_scan_speed_entry.clone();
-                let sdr_squelch_scale = sdr_squelch_scale.clone();
-                let sdr_autotune_check = sdr_autotune_check.clone();
-                let sdr_bias_tee_check = sdr_bias_tee_check.clone();
-                let sdr_no_payload_satcom_check = sdr_no_payload_satcom_check.clone();
-                let sdr_satcom_denylist_entry = sdr_satcom_denylist_entry.clone();
-                let popover = popover.clone();
-                let sdr_plugin_defs = sdr_plugin_defs.clone();
-                button.connect_clicked(move |_| {
-                    let config = sdr_config_from_inputs(
-                        &sdr_hardware_combo,
-                        &sdr_center_freq_entry,
-                        &sdr_sample_rate_entry,
-                        &sdr_log_enable_check,
-                        &sdr_log_dir_entry,
-                        &sdr_scan_enable_check,
-                        &sdr_scan_start_entry,
-                        &sdr_scan_end_entry,
-                        &sdr_scan_step_entry,
-                        &sdr_scan_speed_entry,
-                        &sdr_squelch_scale,
-                        &sdr_autotune_check,
-                        &sdr_bias_tee_check,
-                        &sdr_no_payload_satcom_check,
-                        &sdr_satcom_denylist_entry,
-                    );
-                    let mut s = state.borrow_mut();
-                    if s.sdr_runtime.is_none() {
-                        s.start_sdr_runtime(config.clone());
-                    }
-                    if let Some(reason) = sdr::decoder_launch_unavailable_reason(
-                        &decoder,
-                        clicked_freq_hz,
-                        config.sample_rate_hz,
-                        config.hardware,
-                        &sdr_plugin_defs,
-                    ) {
-                        s.push_status(format!(
-                            "decoder {} unavailable on {}: {}",
-                            decoder.label(),
-                            config.hardware.label(),
-                            reason
-                        ));
-                        popover.popdown();
-                        return;
-                    }
-                    if let Some(runtime) = s.sdr_runtime.as_ref() {
-                        let decoder_id = decoder.id();
-                        sdr_decoder_combo.set_active_id(Some(decoder_id.as_str()));
-                        runtime.set_center_freq(clicked_freq_hz);
-                        apply_sdr_runtime_controls(runtime, &config);
-                        runtime.start_decode(decoder.clone());
-                    }
-                    popover.popdown();
-                });
-                popover_box.append(&button);
-            }
-            popover.set_child(Some(&popover_box));
-            popover.popup();
-        });
-        sdr_decode_list.add_controller(right_click);
-    }
-
     (
         notebook,
         UiWidgets {
@@ -11090,7 +3760,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_bottom,
             ap_detail_notebook,
             ap_assoc_box,
-            ap_inline_channel_box,
             ap_header_holder,
             ap_list,
             ap_pagination,
@@ -11142,42 +3811,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             bluetooth_geiger_progress,
             bluetooth_geiger_state,
             channel_draw,
-            ap_inline_channel_draw,
-            sdr_center_freq_entry,
-            sdr_sample_rate_entry,
-            sdr_bookmarks,
-            sdr_bookmark_combo,
-            sdr_decoder_combo,
-            sdr_scan_enable_check,
-            sdr_scan_start_entry,
-            sdr_scan_end_entry,
-            sdr_scan_step_entry,
-            sdr_scan_speed_entry,
-            sdr_frequency_label,
-            sdr_decoder_label,
-            sdr_dependency_label,
-            sdr_health_label,
-            sdr_aircraft_correlation_label,
-            sdr_satcom_summary_label,
-            sdr_center_geiger_rssi_label,
-            sdr_center_geiger_tone_label,
-            sdr_center_geiger_progress,
-            sdr_center_geiger_auto_squelch_check,
-            sdr_center_geiger_margin_spin,
-            sdr_squelch_scale,
-            sdr_fft_draw,
-            sdr_spectrogram_draw,
-            sdr_map_draw,
-            sdr_decode_header_holder,
-            sdr_decode_list,
-            sdr_decode_pagination,
-            sdr_satcom_header_holder,
-            sdr_satcom_list,
-            sdr_satcom_pagination,
-            sdr_model,
             status_label,
             gps_status_label,
-            runtime_activity_label,
         },
     )
 }
@@ -11185,14 +3820,12 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
 fn bind_poll_loop(
     receiver: Receiver<CaptureEvent>,
     bluetooth_receiver: Receiver<BluetoothEvent>,
-    sdr_receiver: Receiver<SdrEvent>,
     state: Rc<RefCell<AppState>>,
     widgets: UiWidgets,
     capture_start_btn: Button,
     capture_stop_btn: Button,
     global_status_label: Label,
     global_gps_status_label: Label,
-    global_interface_status_label: Label,
     notebook: Notebook,
     window: &ApplicationWindow,
 ) {
@@ -11201,7 +3834,6 @@ fn bind_poll_loop(
         ap_bottom: _ap_bottom,
         ap_detail_notebook: _ap_detail_notebook,
         ap_assoc_box: _ap_assoc_box,
-        ap_inline_channel_box: _ap_inline_channel_box,
         ap_header_holder,
         ap_list,
         ap_pagination,
@@ -11253,42 +3885,8 @@ fn bind_poll_loop(
         bluetooth_geiger_progress,
         bluetooth_geiger_state,
         channel_draw,
-        ap_inline_channel_draw,
-        sdr_center_freq_entry: _sdr_center_freq_entry,
-        sdr_sample_rate_entry: _sdr_sample_rate_entry,
-        sdr_bookmarks: _sdr_bookmarks,
-        sdr_bookmark_combo: _sdr_bookmark_combo,
-        sdr_decoder_combo: _sdr_decoder_combo,
-        sdr_scan_enable_check: _sdr_scan_enable_check,
-        sdr_scan_start_entry: _sdr_scan_start_entry,
-        sdr_scan_end_entry: _sdr_scan_end_entry,
-        sdr_scan_step_entry: _sdr_scan_step_entry,
-        sdr_scan_speed_entry: _sdr_scan_speed_entry,
-        sdr_frequency_label,
-        sdr_decoder_label,
-        sdr_dependency_label,
-        sdr_health_label,
-        sdr_aircraft_correlation_label,
-        sdr_satcom_summary_label,
-        sdr_center_geiger_rssi_label,
-        sdr_center_geiger_tone_label,
-        sdr_center_geiger_progress,
-        sdr_center_geiger_auto_squelch_check,
-        sdr_center_geiger_margin_spin,
-        sdr_squelch_scale,
-        sdr_fft_draw,
-        sdr_spectrogram_draw,
-        sdr_map_draw,
-        sdr_decode_header_holder: _sdr_decode_header_holder,
-        sdr_decode_list,
-        sdr_decode_pagination,
-        sdr_satcom_header_holder: _sdr_satcom_header_holder,
-        sdr_satcom_list,
-        sdr_satcom_pagination,
-        sdr_model,
         status_label,
         gps_status_label,
-        runtime_activity_label,
     } = widgets;
     let window = window.clone();
     let last_ap_list_refresh = Rc::new(RefCell::new(None::<Instant>));
@@ -11304,27 +3902,14 @@ fn bind_poll_loop(
     let last_client_detail_signature = Rc::new(RefCell::new(None::<String>));
     let last_bluetooth_selected_key = Rc::new(RefCell::new(None::<String>));
     let last_bluetooth_detail_signature = Rc::new(RefCell::new(None::<String>));
-    let last_sdr_decode_signature = Rc::new(RefCell::new(None::<String>));
-    let last_sdr_satcom_signature = Rc::new(RefCell::new(None::<String>));
     let last_ap_pagination_generation = Cell::new(ap_pagination.generation.get());
     let last_ap_assoc_pagination_generation = Cell::new(ap_assoc_pagination.generation.get());
     let last_client_pagination_generation = Cell::new(client_pagination.generation.get());
     let last_bluetooth_pagination_generation = Cell::new(bluetooth_pagination.generation.get());
-    let last_sdr_pagination_generation = Cell::new(sdr_decode_pagination.generation.get());
-    let last_sdr_satcom_pagination_generation = Cell::new(sdr_satcom_pagination.generation.get());
     let pending_ap_refresh = Cell::new(true);
     let pending_client_refresh = Cell::new(true);
     let pending_bluetooth_refresh = Cell::new(true);
     let pending_channel_refresh = Cell::new(true);
-    let pending_sdr_refresh = Cell::new(true);
-    let sdr_auto_squelch_last_apply = Rc::new(RefCell::new(None::<(Instant, f32)>));
-    let sdr_aircraft_correlation_cache = Rc::new(RefCell::new((
-        String::new(),
-        "Aircraft Correlation: no correlated targets".to_string(),
-    )));
-    let last_runtime_activity_second = Cell::new(-1i64);
-    let last_interface_status_refresh_second = Cell::new(-1i64);
-    let cached_attached_interfaces = RefCell::new(Vec::<capture::InterfaceInfo>::new());
 
     glib::timeout_add_local(Duration::from_millis(UI_POLL_INTERVAL_MS), move || {
         let mut refresh = UiRefreshHint::none();
@@ -11354,133 +3939,6 @@ fn bind_poll_loop(
                 s.apply_bluetooth_event(event).unwrap_or_default()
             };
             refresh.merge(hint);
-        }
-
-        for event in drain_sdr_events_batch(&sdr_receiver, MAX_SDR_EVENTS_PER_TICK) {
-            match event {
-                SdrEvent::Log(text) => {
-                    state.borrow_mut().push_status(format!("SDR: {text}"));
-                    refresh.status = true;
-                }
-                SdrEvent::FrequencyChanged(freq_hz) => {
-                    let mut model = sdr_model.borrow_mut();
-                    model.current_freq_hz = freq_hz;
-                    pending_sdr_refresh.set(true);
-                }
-                SdrEvent::SpectrumFrame(frame) => {
-                    let mut model = sdr_model.borrow_mut();
-                    model.current_freq_hz = frame.center_freq_hz;
-                    model.sample_rate_hz = frame.sample_rate_hz;
-                    model.spectrum_bins = frame.bins_db.clone();
-                    model.spectrogram_rows.push(frame.bins_db);
-                    if model.spectrogram_rows.len() > 160 {
-                        let keep_from = model.spectrogram_rows.len() - 160;
-                        model.spectrogram_rows = model.spectrogram_rows.split_off(keep_from);
-                    }
-                    pending_sdr_refresh.set(true);
-                }
-                SdrEvent::DecodeRow(row) => {
-                    let mut model = sdr_model.borrow_mut();
-                    model.decode_rows.push(row);
-                    if model.decode_rows.len() > 5000 {
-                        let keep_from = model.decode_rows.len() - 5000;
-                        model.decode_rows = model.decode_rows.split_off(keep_from);
-                    }
-                    pending_sdr_refresh.set(true);
-                }
-                SdrEvent::DecoderState { running, decoder } => {
-                    let mut model = sdr_model.borrow_mut();
-                    model.decoder_running = if running { decoder } else { None };
-                    model.sweep_paused = running;
-                    pending_sdr_refresh.set(true);
-                }
-                SdrEvent::DependencyStatus(status) => {
-                    let mut model = sdr_model.borrow_mut();
-                    model.dependency_status = status;
-                    pending_sdr_refresh.set(true);
-                }
-                SdrEvent::MapPoint(point) => {
-                    let mut model = sdr_model.borrow_mut();
-                    model.map_points.push(point);
-                    if model.map_points.len() > 20_000 {
-                        let keep_from = model.map_points.len() - 20_000;
-                        model.map_points = model.map_points.split_off(keep_from);
-                    }
-                    pending_sdr_refresh.set(true);
-                }
-                SdrEvent::SatcomObservation(observation) => {
-                    let mut model = sdr_model.borrow_mut();
-                    model.satcom_observations.push(observation);
-                    if model.satcom_observations.len() > 20_000 {
-                        let keep_from = model.satcom_observations.len() - 20_000;
-                        model.satcom_observations = model.satcom_observations.split_off(keep_from);
-                    }
-                    pending_sdr_refresh.set(true);
-                }
-                SdrEvent::SquelchChanged(squelch_dbm) => {
-                    let mut model = sdr_model.borrow_mut();
-                    model.squelch_dbm = squelch_dbm;
-                    pending_sdr_refresh.set(true);
-                }
-                SdrEvent::DecoderTelemetry(telemetry) => {
-                    let mut model = sdr_model.borrow_mut();
-                    if let Some((
-                        previous_timestamp,
-                        previous_decoded_rows,
-                        previous_map_points,
-                        previous_satcom_rows,
-                        previous_stderr_lines,
-                    )) = model
-                        .decoder_telemetry
-                        .get(&telemetry.decoder)
-                        .map(|previous| {
-                            (
-                                previous.timestamp,
-                                previous.decoded_rows,
-                                previous.map_points,
-                                previous.satcom_rows,
-                                previous.stderr_lines,
-                            )
-                        })
-                    {
-                        let dt_secs = (telemetry
-                            .timestamp
-                            .signed_duration_since(previous_timestamp)
-                            .num_milliseconds() as f64
-                            / 1000.0)
-                            .max(0.001);
-                        model.decoder_telemetry_rates.insert(
-                            telemetry.decoder.clone(),
-                            SdrDecoderTelemetryRate {
-                                decoded_rows_per_sec: telemetry
-                                    .decoded_rows
-                                    .saturating_sub(previous_decoded_rows)
-                                    as f64
-                                    / dt_secs,
-                                map_points_per_sec: telemetry
-                                    .map_points
-                                    .saturating_sub(previous_map_points)
-                                    as f64
-                                    / dt_secs,
-                                satcom_rows_per_sec: telemetry
-                                    .satcom_rows
-                                    .saturating_sub(previous_satcom_rows)
-                                    as f64
-                                    / dt_secs,
-                                stderr_lines_per_sec: telemetry
-                                    .stderr_lines
-                                    .saturating_sub(previous_stderr_lines)
-                                    as f64
-                                    / dt_secs,
-                            },
-                        );
-                    }
-                    model
-                        .decoder_telemetry
-                        .insert(telemetry.decoder.clone(), telemetry);
-                    pending_sdr_refresh.set(true);
-                }
-            }
         }
 
         let privilege_alert = {
@@ -11564,23 +4022,11 @@ fn bind_poll_loop(
 
         if layout_changed {
             let s = state.borrow();
-            ap_pagination.filter_columns.replace(table_filter_columns(
-                &s.settings.ap_table_layout,
-                ap_column_label,
-            ));
-            rebuild_pagination_filter_bar(&ap_pagination);
             rebuild_header_container(
                 &ap_header_holder,
                 &ap_table_header(&s.settings.ap_table_layout, &s.ap_sort, state.clone()),
                 Some(&ap_pagination.filter_bar),
             );
-            client_pagination
-                .filter_columns
-                .replace(table_filter_columns(
-                    &s.settings.client_table_layout,
-                    client_column_label,
-                ));
-            rebuild_pagination_filter_bar(&client_pagination);
             rebuild_header_container(
                 &client_header_holder,
                 &client_table_header(
@@ -11590,13 +4036,6 @@ fn bind_poll_loop(
                 ),
                 Some(&client_pagination.filter_bar),
             );
-            ap_assoc_pagination
-                .filter_columns
-                .replace(table_filter_columns(
-                    &s.settings.assoc_client_table_layout,
-                    assoc_client_column_label,
-                ));
-            rebuild_pagination_filter_bar(&ap_assoc_pagination);
             rebuild_header_container(
                 &ap_assoc_header_holder,
                 &ap_assoc_clients_header(
@@ -11606,13 +4045,6 @@ fn bind_poll_loop(
                 ),
                 Some(&ap_assoc_pagination.filter_bar),
             );
-            bluetooth_pagination
-                .filter_columns
-                .replace(table_filter_columns(
-                    &s.settings.bluetooth_table_layout,
-                    bluetooth_column_label,
-                ));
-            rebuild_pagination_filter_bar(&bluetooth_pagination);
             rebuild_header_container(
                 &bluetooth_header_holder,
                 &bluetooth_table_header(
@@ -11662,23 +4094,12 @@ fn bind_poll_loop(
             *last_bluetooth_list_signature.borrow_mut() = None;
             pending_bluetooth_refresh.set(true);
         }
-        if last_sdr_pagination_generation.get() != sdr_decode_pagination.generation.get() {
-            last_sdr_pagination_generation.set(sdr_decode_pagination.generation.get());
-            *last_sdr_decode_signature.borrow_mut() = None;
-            pending_sdr_refresh.set(true);
-        }
-        if last_sdr_satcom_pagination_generation.get() != sdr_satcom_pagination.generation.get() {
-            last_sdr_satcom_pagination_generation.set(sdr_satcom_pagination.generation.get());
-            *last_sdr_satcom_signature.borrow_mut() = None;
-            pending_sdr_refresh.set(true);
-        }
 
         let active_tab = notebook.current_page().unwrap_or(ACCESS_POINTS_TAB_INDEX);
         let ap_tab_active = active_tab == ACCESS_POINTS_TAB_INDEX;
         let client_tab_active = active_tab == CLIENTS_TAB_INDEX;
         let bluetooth_tab_active = active_tab == BLUETOOTH_TAB_INDEX;
         let channel_tab_active = active_tab == CHANNEL_USAGE_TAB_INDEX;
-        let sdr_tab_active = active_tab == SDR_TAB_INDEX;
 
         let ap_selected_key_now = ap_selected_key.borrow().clone();
         let client_selected_key_now = client_selected_key.borrow().clone();
@@ -11783,7 +4204,12 @@ fn bind_poll_loop(
                         *last_ap_detail_signature.borrow_mut() = Some(detail_signature);
                     }
 
-                    let assoc_clients = clients_currently_on_ap(&s.clients, &ap.bssid);
+                    let assoc_clients = s
+                        .clients
+                        .iter()
+                        .filter(|client| client_seen_on_ap(client, &ap.bssid))
+                        .cloned()
+                        .collect::<Vec<_>>();
                     let assoc_signature = assoc_clients_signature(
                         &assoc_clients,
                         &ap.bssid,
@@ -12108,165 +4534,19 @@ fn bind_poll_loop(
             }
         }
 
-        if pending_channel_refresh.get() {
-            if channel_tab_active {
-                channel_draw.queue_draw();
-            }
-            let show_ap_inline_channel_usage = state.borrow().settings.show_ap_inline_channel_usage;
-            if show_ap_inline_channel_usage {
-                ap_inline_channel_draw.queue_draw();
-            }
-            if channel_tab_active || show_ap_inline_channel_usage {
-                pending_channel_refresh.set(false);
-            }
+        if channel_tab_active && pending_channel_refresh.get() {
+            channel_draw.queue_draw();
+            pending_channel_refresh.set(false);
         }
 
-        if sdr_tab_active && pending_sdr_refresh.get() {
-            let model = sdr_model.borrow();
-            let decode_signature = sdr_decode_signature(
-                &model.decode_rows,
-                sdr_decode_pagination.current_page.get(),
-                sdr_decode_pagination.page_size.get(),
-                &pagination_filter_terms(&sdr_decode_pagination),
-            );
-            let decode_changed =
-                last_sdr_decode_signature.borrow().as_deref() != Some(decode_signature.as_str());
-            if decode_changed {
-                refresh_sdr_decode_list(
-                    &sdr_decode_list,
-                    &model.decode_rows,
-                    &sdr_decode_pagination,
-                );
-                *last_sdr_decode_signature.borrow_mut() = Some(decode_signature);
-            }
-
-            let satcom_signature = sdr_satcom_signature(
-                &model.satcom_observations,
-                sdr_satcom_pagination.current_page.get(),
-                sdr_satcom_pagination.page_size.get(),
-                &pagination_filter_terms(&sdr_satcom_pagination),
-            );
-            let satcom_changed =
-                last_sdr_satcom_signature.borrow().as_deref() != Some(satcom_signature.as_str());
-            if satcom_changed {
-                refresh_sdr_satcom_list(
-                    &sdr_satcom_list,
-                    &model.satcom_observations,
-                    &sdr_satcom_pagination,
-                );
-                *last_sdr_satcom_signature.borrow_mut() = Some(satcom_signature);
-            }
-            sdr_fft_draw.queue_draw();
-            sdr_spectrogram_draw.queue_draw();
-            sdr_map_draw.queue_draw();
-            pending_sdr_refresh.set(false);
-        }
-
-        {
-            let model = sdr_model.borrow();
-            let center_geiger = sdr_center_geiger_reading(&model.spectrum_bins);
-            let sweep_state = if model.sweep_paused {
-                "paused"
-            } else {
-                "active"
-            };
-            sdr_frequency_label.set_text(&format!(
-                "Center: {} Hz | Sample Rate: {} Hz | Sweep: {} | Map Points: {} | Satcom Audit Rows: {}",
-                model.current_freq_hz,
-                model.sample_rate_hz,
-                sweep_state,
-                model.map_points.len(),
-                model.satcom_observations.len()
-            ));
-            sdr_decoder_label.set_text(
-                &model
-                    .decoder_running
-                    .as_ref()
-                    .map(|decoder| format!("Decoder: running {decoder}"))
-                    .unwrap_or_else(|| "Decoder: idle".to_string()),
-            );
-            sdr_dependency_label.set_text(&format_sdr_dependency_status(&model.dependency_status));
-            sdr_health_label.set_text(&format_sdr_decoder_telemetry(
-                model.decoder_running.as_deref(),
-                &model.decoder_telemetry,
-                &model.decoder_telemetry_rates,
-            ));
-            let correlation_signature = model
-                .decode_rows
-                .last()
-                .map(|row| {
-                    format!(
-                        "{}:{}:{}",
-                        model.decode_rows.len(),
-                        row.timestamp.timestamp_micros(),
-                        row.freq_hz
-                    )
-                })
-                .unwrap_or_else(|| "0".to_string());
-            let correlation_text = {
-                let mut cache = sdr_aircraft_correlation_cache.borrow_mut();
-                if cache.0 != correlation_signature {
-                    cache.0 = correlation_signature;
-                    cache.1 = format_sdr_aircraft_correlation_summary(&model.decode_rows);
-                }
-                cache.1.clone()
-            };
-            sdr_aircraft_correlation_label.set_text(&correlation_text);
-            sdr_satcom_summary_label
-                .set_text(&format_sdr_satcom_summary(&model.satcom_observations));
-            if let Some((center_dbm, tone_hz, fraction)) = center_geiger {
-                sdr_center_geiger_rssi_label
-                    .set_text(&format!("Center Geiger RSSI: {:.1} dBm", center_dbm));
-                sdr_center_geiger_tone_label
-                    .set_text(&format!("Center Geiger Tone: {} Hz", tone_hz));
-                sdr_center_geiger_progress.set_fraction(fraction);
-                sdr_center_geiger_progress
-                    .set_text(Some(&format!("Center Activity {:.0}%", fraction * 100.0)));
-            } else {
-                sdr_center_geiger_rssi_label.set_text("Center Geiger RSSI: -- dBm");
-                sdr_center_geiger_tone_label.set_text("Center Geiger Tone: -- Hz");
-                sdr_center_geiger_progress.set_fraction(0.0);
-                sdr_center_geiger_progress.set_text(Some("No spectrum yet"));
-            }
-        }
-        if sdr_center_geiger_auto_squelch_check.is_active() {
-            let model = sdr_model.borrow();
-            if let Some((center_dbm, _, _)) = sdr_center_geiger_reading(&model.spectrum_bins) {
-                let margin_db = sdr_center_geiger_margin_spin.value() as f32;
-                let target = sdr_center_geiger_squelch_target(center_dbm, margin_db);
-                let now = Instant::now();
-                let mut last_apply = sdr_auto_squelch_last_apply.borrow_mut();
-                let previous_target = last_apply.as_ref().map(|(_, value)| *value);
-                let elapsed_ok = last_apply
-                    .as_ref()
-                    .map(|(at, _)| {
-                        now.duration_since(*at).as_millis() as u64
-                            >= SDR_AUTO_SQUELCH_MIN_INTERVAL_MS
-                    })
-                    .unwrap_or(true);
-                if elapsed_ok && should_apply_sdr_auto_squelch(previous_target, target) {
-                    sdr_squelch_scale.set_value(target as f64);
-                    *last_apply = Some((now, target));
-                }
-            }
-        }
-
-        let (
-            status_text,
-            gps_text,
-            wifi_running,
-            bluetooth_running,
-            scan_start_in_progress,
-            scan_stop_in_progress,
-        ) = {
+        let (status_text, gps_text, wifi_running, bluetooth_running, scan_transition_in_progress) = {
             let s = state.borrow();
             (
                 s.status_text(),
                 s.gps_status_text(),
                 s.capture_runtime.is_some(),
                 s.bluetooth_runtime.is_some(),
-                s.scan_start_in_progress,
-                s.scan_stop_in_progress,
+                s.scan_start_in_progress || s.scan_stop_in_progress,
             )
         };
         let wifi_lock_text = state.borrow().wifi_lock_status_text();
@@ -12277,8 +4557,7 @@ fn bind_poll_loop(
             &capture_stop_btn,
             wifi_running,
             bluetooth_running,
-            scan_start_in_progress,
-            scan_stop_in_progress,
+            scan_transition_in_progress,
         );
         let text = status_text;
         status_label.set_text(&text);
@@ -12286,42 +4565,6 @@ fn bind_poll_loop(
 
         gps_status_label.set_text(&gps_text);
         global_gps_status_label.set_text(&gps_text);
-
-        let now = Utc::now();
-        let now_second = now.timestamp();
-        let should_refresh_interface_snapshot =
-            last_interface_status_refresh_second.get() != now_second || refresh.status;
-        if should_refresh_interface_snapshot {
-            if last_interface_status_refresh_second.get() != now_second {
-                *cached_attached_interfaces.borrow_mut() =
-                    capture::list_interfaces().unwrap_or_default();
-                last_interface_status_refresh_second.set(now_second);
-            }
-            let interface_status_text = {
-                let s = state.borrow();
-                format_interface_status_panel_text(
-                    &s,
-                    &cached_attached_interfaces.borrow(),
-                    wifi_running,
-                )
-            };
-            global_interface_status_label.set_text(&interface_status_text);
-        }
-
-        if last_runtime_activity_second.get() != now_second {
-            last_runtime_activity_second.set(now_second);
-            runtime_activity_label.set_text(&format!(
-                "tick {} [{}] | wifi={} bt={}",
-                format_display_time_hms(now),
-                if using_zulu_time_display() {
-                    "ZULU"
-                } else {
-                    "LOCAL"
-                },
-                if wifi_running { "on" } else { "off" },
-                if bluetooth_running { "on" } else { "off" },
-            ));
-        }
 
         glib::ControlFlow::Continue
     });
@@ -12396,22 +4639,46 @@ fn client_detail_signature(client: &ClientRecord) -> String {
 }
 
 fn client_network_intel_signature(intel: &ClientNetworkIntel) -> String {
+    let local_ipv4 = intel.local_ipv4_addresses.join(",");
+    let local_ipv6 = intel.local_ipv6_addresses.join(",");
+    let dhcp_hostnames = intel.dhcp_hostnames.join(",");
+    let dhcp_fqdns = intel.dhcp_fqdns.join(",");
+    let dhcp_vendor_classes = intel.dhcp_vendor_classes.join(",");
+    let dns_names = intel.dns_names.join(",");
     let qos_priorities = intel
         .qos_priorities
         .iter()
         .map(|value| value.to_string())
         .collect::<Vec<_>>()
         .join(",");
+    let endpoints = intel
+        .remote_endpoints
+        .iter()
+        .map(|endpoint| {
+            format!(
+                "{}:{}:{}:{}:{}:{}",
+                endpoint.protocol,
+                endpoint.ip_address,
+                endpoint.port.unwrap_or_default(),
+                endpoint.domain.as_deref().unwrap_or(""),
+                endpoint.geo_city.as_deref().unwrap_or(""),
+                endpoint.packet_count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|");
 
     format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        intel.packet_mix.management,
-        intel.packet_mix.control,
-        intel.packet_mix.data,
-        intel.packet_mix.other,
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        local_ipv4,
+        local_ipv6,
+        dhcp_hostnames,
+        dhcp_fqdns,
+        dhcp_vendor_classes,
+        dns_names,
+        endpoints,
         intel.uplink_bytes,
         intel.downlink_bytes,
-        intel.retry_frame_count,
         intel.power_save_observed,
         qos_priorities,
         intel.eapol_frame_count,
@@ -12463,7 +4730,7 @@ fn assoc_clients_signature(
     filters: &[(String, String)],
     watchlists: &WatchlistSettings,
 ) -> String {
-    let mut sorted = clients_currently_on_ap(clients, ap_bssid);
+    let mut sorted = clients.to_vec();
     sort_assoc_clients(&mut sorted, ap_bssid, aps, sort, watchlists);
     let visible_columns = layout
         .columns
@@ -12494,7 +4761,10 @@ fn assoc_clients_signature(
         .iter()
         .map(|client| client.probes.len())
         .sum::<usize>();
-    let current_count = filtered.len();
+    let current_count = filtered
+        .iter()
+        .filter(|client| client.associated_ap.as_deref() == Some(ap_bssid))
+        .count();
     let total_items = filtered.len();
     let (current_page, _, start, end) = paged_indices(total_items, current_page, page_size);
     let status_signature = filtered[start..end]
@@ -12735,6 +5005,31 @@ fn sort_clients(
                 .network_intel
                 .pmkid_count
                 .cmp(&b.network_intel.pmkid_count),
+            "ipv4_addresses" => a
+                .network_intel
+                .local_ipv4_addresses
+                .join(",")
+                .cmp(&b.network_intel.local_ipv4_addresses.join(",")),
+            "ipv6_addresses" => a
+                .network_intel
+                .local_ipv6_addresses
+                .join(",")
+                .cmp(&b.network_intel.local_ipv6_addresses.join(",")),
+            "dhcp_hostnames" => a
+                .network_intel
+                .dhcp_hostnames
+                .join(",")
+                .cmp(&b.network_intel.dhcp_hostnames.join(",")),
+            "dns_names" => a
+                .network_intel
+                .dns_names
+                .join(",")
+                .cmp(&b.network_intel.dns_names.join(",")),
+            "remote_endpoints" => a
+                .network_intel
+                .remote_endpoints
+                .len()
+                .cmp(&b.network_intel.remote_endpoints.len()),
             "first_location" => cmp_option_ord(
                 observation_highlights(&a.observations)
                     .first
@@ -13061,8 +5356,8 @@ fn update_table_pagination_summary(
 
 fn pagination_filter_terms(pagination: &TablePaginationUi) -> Vec<(String, String)> {
     let entries = pagination.filter_entries.borrow();
-    let filter_order = pagination.filter_order.borrow();
-    let mut filters = filter_order
+    let mut filters = pagination
+        .filter_order
         .iter()
         .filter_map(|column_id| {
             let value = entries.get(column_id)?.text().trim().to_string();
@@ -13075,22 +5370,6 @@ fn pagination_filter_terms(pagination: &TablePaginationUi) -> Vec<(String, Strin
         .collect::<Vec<_>>();
     filters.sort_by(|a, b| a.0.cmp(&b.0));
     filters
-}
-
-fn set_pagination_column_filter(pagination: &TablePaginationUi, column_id: &str, value: &str) {
-    if let Some(entry) = pagination.filter_entries.borrow().get(column_id) {
-        entry.set_text(value);
-        pagination.current_page.set(0);
-        pagination
-            .generation
-            .set(pagination.generation.get().saturating_add(1));
-        let labels = pagination_filter_label_columns(&pagination.filter_columns.borrow().clone());
-        update_filter_summary_label(
-            &pagination.filter_summary_label,
-            &labels,
-            &pagination.filter_entries.borrow(),
-        );
-    }
 }
 
 fn pagination_filter_signature(filters: &[(String, String)]) -> String {
@@ -13106,16 +5385,15 @@ fn row_matches_column_filters(
     value_for: impl Fn(&str) -> Option<String>,
 ) -> bool {
     filters.iter().all(|(column_id, needle)| {
-        let normalized_needle = needle.to_ascii_lowercase();
         value_for(column_id)
-            .map(|value| value.to_ascii_lowercase().contains(&normalized_needle))
+            .map(|value| value.to_ascii_lowercase().contains(needle))
             .unwrap_or(false)
     })
 }
 
 fn focus_first_filter_entry(pagination: &TablePaginationUi) {
     let entries = pagination.filter_entries.borrow();
-    for column_id in pagination.filter_order.borrow().iter() {
+    for column_id in pagination.filter_order.iter() {
         if let Some(entry) = entries.get(column_id) {
             entry.grab_focus();
             entry.select_region(0, -1);
@@ -13164,18 +5442,16 @@ fn refresh_ap_list(
         let row = ListBoxRow::new();
         row.set_widget_name(&ap.bssid);
         attach_row_click_selection(&row, list, selected_key_state.clone());
-        let line = GtkBox::new(Orientation::Horizontal, 14);
-        line.set_hexpand(true);
         let watchlist_match = ap_watchlist_match(&ap, &settings.watchlists);
         set_row_alert_classes(
             &row,
-            &line,
             watchlist_match
                 .as_ref()
                 .map(|matched| matched.css_class.as_str()),
             &watchlist_classes,
             ap.handshake_count > 0,
         );
+        let line = GtkBox::new(Orientation::Horizontal, 14);
         for column in settings
             .ap_table_layout
             .columns
@@ -13265,85 +5541,6 @@ fn drain_capture_events_batch(
     events
 }
 
-fn drain_sdr_events_batch(receiver: &Receiver<SdrEvent>, limit: usize) -> Vec<SdrEvent> {
-    let mut logs: Vec<String> = Vec::new();
-    let mut latest_freq: Option<u64> = None;
-    let mut latest_spectrum: Option<SdrSpectrumFrame> = None;
-    let mut decode_rows: Vec<SdrDecodeRow> = Vec::new();
-    let mut map_points: Vec<SdrMapPoint> = Vec::new();
-    let mut satcom_observations: Vec<SdrSatcomObservation> = Vec::new();
-    let mut latest_decoder_telemetry: HashMap<String, SdrDecoderTelemetry> = HashMap::new();
-    let mut latest_decoder_state: Option<(bool, Option<String>)> = None;
-    let mut latest_dependencies: Option<Vec<SdrDependencyStatus>> = None;
-    let mut latest_squelch: Option<f32> = None;
-
-    for _ in 0..limit {
-        let Ok(event) = receiver.try_recv() else {
-            break;
-        };
-        match event {
-            SdrEvent::Log(text) => logs.push(text),
-            SdrEvent::FrequencyChanged(freq_hz) => latest_freq = Some(freq_hz),
-            SdrEvent::SpectrumFrame(frame) => latest_spectrum = Some(frame),
-            SdrEvent::DecodeRow(row) => decode_rows.push(row),
-            SdrEvent::DecoderState { running, decoder } => {
-                latest_decoder_state = Some((running, decoder));
-            }
-            SdrEvent::DependencyStatus(status) => latest_dependencies = Some(status),
-            SdrEvent::MapPoint(point) => map_points.push(point),
-            SdrEvent::SatcomObservation(observation) => satcom_observations.push(observation),
-            SdrEvent::SquelchChanged(value) => latest_squelch = Some(value),
-            SdrEvent::DecoderTelemetry(telemetry) => {
-                latest_decoder_telemetry.insert(telemetry.decoder.clone(), telemetry);
-            }
-        }
-    }
-
-    let mut events = Vec::with_capacity(
-        logs.len()
-            + decode_rows.len()
-            + map_points.len()
-            + satcom_observations.len()
-            + usize::from(latest_freq.is_some())
-            + usize::from(latest_spectrum.is_some())
-            + usize::from(latest_decoder_state.is_some())
-            + usize::from(latest_dependencies.is_some())
-            + usize::from(latest_squelch.is_some())
-            + latest_decoder_telemetry.len(),
-    );
-
-    events.extend(logs.into_iter().map(SdrEvent::Log));
-    if let Some(freq_hz) = latest_freq {
-        events.push(SdrEvent::FrequencyChanged(freq_hz));
-    }
-    if let Some(frame) = latest_spectrum {
-        events.push(SdrEvent::SpectrumFrame(frame));
-    }
-    events.extend(decode_rows.into_iter().map(SdrEvent::DecodeRow));
-    if let Some((running, decoder)) = latest_decoder_state {
-        events.push(SdrEvent::DecoderState { running, decoder });
-    }
-    if let Some(status) = latest_dependencies {
-        events.push(SdrEvent::DependencyStatus(status));
-    }
-    events.extend(map_points.into_iter().map(SdrEvent::MapPoint));
-    events.extend(
-        satcom_observations
-            .into_iter()
-            .map(SdrEvent::SatcomObservation),
-    );
-    if let Some(value) = latest_squelch {
-        events.push(SdrEvent::SquelchChanged(value));
-    }
-    events.extend(
-        latest_decoder_telemetry
-            .into_values()
-            .map(SdrEvent::DecoderTelemetry),
-    );
-
-    events
-}
-
 fn refresh_client_list(
     list: &ListBox,
     clients: &[ClientRecord],
@@ -13384,18 +5581,16 @@ fn refresh_client_list(
         let row = ListBoxRow::new();
         row.set_widget_name(&client.mac);
         attach_row_click_selection(&row, list, selected_key_state.clone());
-        let line = GtkBox::new(Orientation::Horizontal, 14);
-        line.set_hexpand(true);
         let watchlist_match = client_watchlist_match(&client, aps, &settings.watchlists);
         set_row_alert_classes(
             &row,
-            &line,
             watchlist_match
                 .as_ref()
                 .map(|matched| matched.css_class.as_str()),
             &watchlist_classes,
             false,
         );
+        let line = GtkBox::new(Orientation::Horizontal, 14);
         for column in settings
             .client_table_layout
             .columns
@@ -13460,7 +5655,7 @@ fn refresh_assoc_client_list(
 ) {
     clear_listbox(list);
     let filters = pagination_filter_terms(pagination);
-    let mut sorted = clients_currently_on_ap(clients, ap_bssid);
+    let mut sorted = clients.to_vec();
     sort_assoc_clients(&mut sorted, ap_bssid, aps, sort, watchlists);
     let no_watchlist_classes: Vec<String> = Vec::new();
     let filtered = sorted
@@ -13480,9 +5675,8 @@ fn refresh_assoc_client_list(
     for client in filtered.iter().skip(start).take(end.saturating_sub(start)) {
         let row = ListBoxRow::new();
         attach_row_click_selection(&row, list, None);
+        set_row_alert_classes(&row, None, &no_watchlist_classes, false);
         let line = GtkBox::new(Orientation::Horizontal, 14);
-        line.set_hexpand(true);
-        set_row_alert_classes(&row, &line, None, &no_watchlist_classes, false);
         for column in layout.columns.iter().filter(|c| c.visible) {
             if let Some(value) = assoc_client_column_value_with_watchlist(
                 client, ap_bssid, aps, &column.id, watchlists,
@@ -13543,18 +5737,17 @@ fn refresh_bluetooth_list(
         let row = ListBoxRow::new();
         row.set_widget_name(&device.mac);
         attach_row_click_selection(&row, list, selected_key_state.clone());
-        let line = GtkBox::new(Orientation::Horizontal, 14);
-        line.set_hexpand(true);
         let watchlist_match = bluetooth_watchlist_match(&device, watchlists);
         set_row_alert_classes(
             &row,
-            &line,
             watchlist_match
                 .as_ref()
                 .map(|matched| matched.css_class.as_str()),
             &watchlist_classes,
             false,
         );
+
+        let line = GtkBox::new(Orientation::Horizontal, 14);
         for column in settings
             .bluetooth_table_layout
             .columns
@@ -13669,1085 +5862,6 @@ fn attach_row_click_selection(
         list_ref.select_row(Some(&row_ref));
     });
     row.add_controller(click);
-}
-
-fn sdr_hardware_from_active_id(active_id: Option<glib::GString>) -> SdrHardware {
-    let _ = active_id;
-    SdrHardware::default()
-}
-
-fn sdr_config_from_inputs(
-    hardware_combo: &ComboBoxText,
-    center_freq_entry: &Entry,
-    sample_rate_entry: &Entry,
-    log_enable_check: &CheckButton,
-    log_dir_entry: &Entry,
-    scan_enable_check: &CheckButton,
-    scan_start_entry: &Entry,
-    scan_end_entry: &Entry,
-    scan_step_entry: &Entry,
-    scan_speed_entry: &Entry,
-    squelch_scale: &gtk::Scale,
-    autotune_check: &CheckButton,
-    bias_tee_check: &CheckButton,
-    no_payload_satcom_check: &CheckButton,
-    satcom_parse_denylist_entry: &Entry,
-) -> SdrConfig {
-    let defaults = SdrConfig::default();
-    let center_freq_hz = center_freq_entry
-        .text()
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .filter(|value| *value >= 100_000)
-        .unwrap_or(defaults.center_freq_hz);
-    let sample_rate_hz = sample_rate_entry
-        .text()
-        .trim()
-        .parse::<u32>()
-        .ok()
-        .filter(|value| *value >= 200_000)
-        .unwrap_or(defaults.sample_rate_hz);
-
-    let log_output_dir = {
-        let raw = log_dir_entry.text().trim().to_string();
-        if raw.is_empty() {
-            defaults.log_output_dir.clone()
-        } else {
-            PathBuf::from(raw)
-        }
-    };
-
-    let mut scan_start_hz = scan_start_entry
-        .text()
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .filter(|value| *value >= 100_000)
-        .unwrap_or(defaults.scan_start_hz);
-    let mut scan_end_hz = scan_end_entry
-        .text()
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .filter(|value| *value >= 100_000)
-        .unwrap_or(defaults.scan_end_hz);
-    if scan_start_hz > scan_end_hz {
-        std::mem::swap(&mut scan_start_hz, &mut scan_end_hz);
-    }
-    let scan_step_hz = scan_step_entry
-        .text()
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .unwrap_or(defaults.scan_step_hz);
-    let scan_steps_per_sec = scan_speed_entry
-        .text()
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|value| value.is_finite() && *value > 0.0)
-        .unwrap_or(defaults.scan_steps_per_sec);
-    let squelch_dbm = squelch_scale.value() as f32;
-
-    SdrConfig {
-        hardware: sdr_hardware_from_active_id(hardware_combo.active_id()),
-        center_freq_hz,
-        sample_rate_hz,
-        fft_bins: defaults.fft_bins,
-        refresh_ms: defaults.refresh_ms,
-        log_output_enabled: log_enable_check.is_active(),
-        log_output_dir,
-        plugin_config_path: defaults.plugin_config_path,
-        scan_range_enabled: scan_enable_check.is_active(),
-        scan_start_hz,
-        scan_end_hz,
-        scan_step_hz,
-        scan_steps_per_sec,
-        squelch_dbm,
-        auto_tune_decoders: autotune_check.is_active(),
-        bias_tee_enabled: bias_tee_check.is_active(),
-        no_payload_satcom: !no_payload_satcom_check.is_active(),
-        satcom_parse_denylist: parse_satcom_parse_denylist_input(
-            satcom_parse_denylist_entry.text().as_str(),
-        ),
-        use_zulu_time: using_zulu_time_display(),
-    }
-}
-
-fn apply_sdr_runtime_controls(runtime: &SdrRuntime, config: &SdrConfig) {
-    runtime.set_logging(config.log_output_enabled, config.log_output_dir.clone());
-    runtime.set_scan_range(
-        config.scan_range_enabled,
-        config.scan_start_hz,
-        config.scan_end_hz,
-        config.scan_step_hz,
-        config.scan_steps_per_sec,
-    );
-    runtime.set_squelch(config.squelch_dbm);
-    runtime.set_auto_tune(config.auto_tune_decoders);
-    runtime.set_bias_tee(config.bias_tee_enabled);
-    runtime.set_satcom_payload_capture(!config.no_payload_satcom);
-    runtime.set_satcom_parse_denylist(config.satcom_parse_denylist.clone());
-}
-
-fn parse_satcom_parse_denylist_input(value: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for token in value.split(',') {
-        let normalized = token
-            .chars()
-            .filter(|ch| ch.is_ascii_alphanumeric())
-            .map(|ch| ch.to_ascii_lowercase())
-            .collect::<String>();
-        if normalized.is_empty() || out.iter().any(|existing| existing == &normalized) {
-            continue;
-        }
-        out.push(normalized);
-    }
-    out
-}
-
-fn write_json_pretty<T: serde::Serialize + ?Sized>(
-    path: &std::path::Path,
-    value: &T,
-) -> Result<()> {
-    let encoded = serde_json::to_vec_pretty(value)
-        .with_context(|| format!("serialize json payload for {}", path.display()))?;
-    fs::write(path, encoded).with_context(|| format!("write {}", path.display()))?;
-    Ok(())
-}
-
-fn write_sdr_satcom_csv(path: &std::path::Path, rows: &[SdrSatcomObservation]) -> Result<()> {
-    let mut out = String::from(
-        "timestamp,decoder,protocol,freq_hz,band,encryption_posture,payload_capture_mode,payload_parse_state,has_coordinates,identifier_hints,payload_fields,summary,message,raw\n",
-    );
-    for row in rows {
-        out.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
-            csv_escape(&format_display_timestamp(row.timestamp)),
-            csv_escape(&row.decoder),
-            csv_escape(&row.protocol),
-            row.freq_hz,
-            csv_escape(&row.band),
-            csv_escape(&row.encryption_posture),
-            csv_escape(&row.payload_capture_mode),
-            csv_escape(&row.payload_parse_state),
-            if row.has_coordinates { "true" } else { "false" },
-            csv_escape(&row.identifier_hints.join("|")),
-            csv_escape(&satcom_payload_fields_text(&row.payload_fields)),
-            csv_escape(&row.summary),
-            csv_escape(&row.message),
-            csv_escape(&row.raw),
-        ));
-    }
-    fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
-    Ok(())
-}
-
-fn write_sdr_decode_csv(path: &std::path::Path, rows: &[SdrDecodeRow]) -> Result<()> {
-    let mut out = String::from("timestamp,decoder,freq_hz,protocol,message,raw\n");
-    for row in rows {
-        out.push_str(&format!(
-            "{},{},{},{},{},{}\n",
-            csv_escape(&format_display_timestamp(row.timestamp)),
-            csv_escape(&row.decoder),
-            row.freq_hz,
-            csv_escape(&row.protocol),
-            csv_escape(&row.message),
-            csv_escape(&row.raw),
-        ));
-    }
-    fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
-    Ok(())
-}
-
-fn export_sdr_decode_artifacts(
-    primary_json_path: &std::path::Path,
-    rows: &[SdrDecodeRow],
-) -> Result<(PathBuf, PathBuf)> {
-    write_json_pretty(primary_json_path, rows)?;
-    let mut csv_path = primary_json_path.to_path_buf();
-    csv_path.set_extension("csv");
-    write_sdr_decode_csv(&csv_path, rows)?;
-    Ok((primary_json_path.to_path_buf(), csv_path))
-}
-
-fn build_sdr_health_snapshot(
-    decode_rows: &[SdrDecodeRow],
-    satcom_rows: &[SdrSatcomObservation],
-    telemetry: &HashMap<String, SdrDecoderTelemetry>,
-    telemetry_rates: &HashMap<String, SdrDecoderTelemetryRate>,
-) -> serde_json::Value {
-    let aircraft = sdr::correlate_aircraft(decode_rows);
-    serde_json::json!({
-        "artifact_contract_version": SDR_ARTIFACT_CONTRACT_VERSION,
-        "generated_at": format_display_timestamp(Utc::now()),
-        "counts": {
-            "decode_rows": decode_rows.len(),
-            "satcom_rows": satcom_rows.len(),
-            "aircraft_correlated_targets": aircraft.len(),
-        },
-        "aircraft_correlation_summary": format_sdr_aircraft_correlation_summary(decode_rows),
-        "satcom_summary": format_sdr_satcom_summary(satcom_rows),
-        "decoder_telemetry": telemetry,
-        "decoder_telemetry_rates": telemetry_rates,
-    })
-}
-
-fn write_sdr_aircraft_correlation_csv(
-    path: &std::path::Path,
-    rows: &[SdrAircraftCorrelation],
-) -> Result<()> {
-    let mut out = String::from(
-        "key,icao_hex,callsign,adsb_rows,acars_rows,total_rows,first_seen,last_seen,frequencies_hz,decoders\n",
-    );
-    for row in rows {
-        out.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{}\n",
-            csv_escape(&row.key),
-            csv_escape(row.icao_hex.as_deref().unwrap_or("")),
-            csv_escape(row.callsign.as_deref().unwrap_or("")),
-            row.adsb_rows,
-            row.acars_rows,
-            row.total_rows,
-            csv_escape(&format_display_timestamp(row.first_seen)),
-            csv_escape(&format_display_timestamp(row.last_seen)),
-            csv_escape(
-                &row.frequencies_hz
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("|"),
-            ),
-            csv_escape(&row.decoders.join("|")),
-        ));
-    }
-    fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
-    Ok(())
-}
-
-fn export_sdr_aircraft_correlation_artifacts(
-    primary_json_path: &std::path::Path,
-    rows: &[SdrAircraftCorrelation],
-) -> Result<(PathBuf, PathBuf)> {
-    write_json_pretty(primary_json_path, rows)?;
-    let mut csv_path = primary_json_path.to_path_buf();
-    csv_path.set_extension("csv");
-    write_sdr_aircraft_correlation_csv(&csv_path, rows)?;
-    Ok((primary_json_path.to_path_buf(), csv_path))
-}
-
-fn export_sdr_satcom_artifacts(
-    primary_json_path: &std::path::Path,
-    rows: &[SdrSatcomObservation],
-) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf, PathBuf)> {
-    write_json_pretty(primary_json_path, rows)?;
-
-    let mut csv_path = primary_json_path.to_path_buf();
-    csv_path.set_extension("csv");
-    write_sdr_satcom_csv(&csv_path, rows)?;
-
-    let stem = primary_json_path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("sdr_satcom_export");
-    let extension = primary_json_path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("json");
-    let parent = primary_json_path
-        .parent()
-        .unwrap_or(std::path::Path::new("."));
-
-    let parsed_rows = rows
-        .iter()
-        .filter(|row| row.payload_parse_state == "parsed")
-        .cloned()
-        .collect::<Vec<_>>();
-    let denied_rows = rows
-        .iter()
-        .filter(|row| row.payload_parse_state == "denied_by_policy")
-        .cloned()
-        .collect::<Vec<_>>();
-
-    let parsed_path = parent.join(format!("{stem}_parsed.{extension}"));
-    let denied_path = parent.join(format!("{stem}_denied.{extension}"));
-    let summary_path = parent.join(format!("{stem}_summary.{extension}"));
-    write_json_pretty(&parsed_path, &parsed_rows)?;
-    write_json_pretty(&denied_path, &denied_rows)?;
-    write_json_pretty(&summary_path, &build_sdr_satcom_summary(rows))?;
-
-    Ok((
-        primary_json_path.to_path_buf(),
-        csv_path,
-        parsed_path,
-        denied_path,
-        summary_path,
-    ))
-}
-
-fn build_sdr_satcom_summary(rows: &[SdrSatcomObservation]) -> serde_json::Value {
-    fn bump(map: &mut HashMap<String, u64>, key: &str) {
-        *map.entry(key.to_string()).or_insert(0) += 1;
-    }
-
-    let mut by_protocol = HashMap::<String, u64>::new();
-    let mut by_decoder = HashMap::<String, u64>::new();
-    let mut by_band = HashMap::<String, u64>::new();
-    let mut by_posture = HashMap::<String, u64>::new();
-    let mut by_payload_capture = HashMap::<String, u64>::new();
-    let mut by_payload_parse = HashMap::<String, u64>::new();
-    let mut with_coordinates: u64 = 0;
-    let mut without_coordinates: u64 = 0;
-    let mut identifier_hint_types = HashSet::<String>::new();
-
-    for row in rows {
-        bump(&mut by_protocol, &row.protocol);
-        bump(&mut by_decoder, &row.decoder);
-        bump(&mut by_band, &row.band);
-        bump(&mut by_posture, &row.encryption_posture);
-        bump(&mut by_payload_capture, &row.payload_capture_mode);
-        bump(&mut by_payload_parse, &row.payload_parse_state);
-        if row.has_coordinates {
-            with_coordinates += 1;
-        } else {
-            without_coordinates += 1;
-        }
-        for hint in &row.identifier_hints {
-            identifier_hint_types.insert(hint.clone());
-        }
-    }
-
-    let first_seen = rows.iter().map(|row| row.timestamp).min();
-    let last_seen = rows.iter().map(|row| row.timestamp).max();
-    let mut identifier_hint_types = identifier_hint_types.into_iter().collect::<Vec<_>>();
-    identifier_hint_types.sort();
-
-    serde_json::json!({
-        "artifact_contract_version": SDR_ARTIFACT_CONTRACT_VERSION,
-        "generated_at": format_display_timestamp(Utc::now()),
-        "total_rows": rows.len(),
-        "first_seen": first_seen.map(format_display_timestamp),
-        "last_seen": last_seen.map(format_display_timestamp),
-        "with_coordinates": with_coordinates,
-        "without_coordinates": without_coordinates,
-        "identifier_hint_types": identifier_hint_types,
-        "by_protocol": by_protocol,
-        "by_decoder": by_decoder,
-        "by_band": by_band,
-        "by_encryption_posture": by_posture,
-        "by_payload_capture_mode": by_payload_capture,
-        "by_payload_parse_state": by_payload_parse,
-    })
-}
-
-fn csv_escape(value: &str) -> String {
-    let escaped = value.replace('"', "\"\"");
-    format!("\"{}\"", escaped)
-}
-
-fn sdr_decode_table_header() -> Grid {
-    let grid = Grid::new();
-    grid.set_column_spacing(14);
-    let columns = [
-        ("Time", 20),
-        ("Decoder", 14),
-        ("Freq", 13),
-        ("Protocol", 14),
-        ("Message", 50),
-        ("Raw", 50),
-    ];
-    for (idx, (label, width_chars)) in columns.iter().enumerate() {
-        grid.attach(
-            &static_header_widget(label, *width_chars),
-            idx as i32,
-            0,
-            1,
-            1,
-        );
-    }
-    grid
-}
-
-fn sdr_satcom_table_header() -> Grid {
-    let grid = Grid::new();
-    grid.set_column_spacing(14);
-    let columns = [
-        ("Time", 20),
-        ("Decoder", 14),
-        ("Protocol", 14),
-        ("Freq", 13),
-        ("Band", 14),
-        ("Encryption", 12),
-        ("Payload Capture", 14),
-        ("Payload Parse", 14),
-        ("Payload Fields", 36),
-        ("Coords", 8),
-        ("Identifiers", 20),
-        ("Summary", 40),
-    ];
-    for (idx, (label, width_chars)) in columns.iter().enumerate() {
-        grid.attach(
-            &static_header_widget(label, *width_chars),
-            idx as i32,
-            0,
-            1,
-            1,
-        );
-    }
-    grid
-}
-
-fn static_header_widget(label_text: &str, width_chars: i32) -> Label {
-    let label = Label::new(Some(label_text));
-    label.add_css_class("heading");
-    label.add_css_class("table-cell");
-    label.set_xalign(0.0);
-    let width_chars = width_chars.max(6);
-    label.set_width_chars(width_chars);
-    label.set_max_width_chars(width_chars);
-    label.set_single_line_mode(true);
-    label.set_size_request(width_chars * TABLE_CHAR_WIDTH_PX, -1);
-    label.set_margin_end(6);
-    label
-}
-
-fn sdr_decode_row_column_value(row: &SdrDecodeRow, column_id: &str) -> Option<String> {
-    match column_id {
-        "time" => Some(format_display_timestamp(row.timestamp)),
-        "decoder" => Some(row.decoder.clone()),
-        "freq" => Some(format!("{}", row.freq_hz)),
-        "protocol" => Some(row.protocol.clone()),
-        "message" => Some(row.message.clone()),
-        "raw" => Some(row.raw.clone()),
-        _ => None,
-    }
-}
-
-fn sdr_satcom_row_column_value(row: &SdrSatcomObservation, column_id: &str) -> Option<String> {
-    match column_id {
-        "time" => Some(format_display_timestamp(row.timestamp)),
-        "decoder" => Some(row.decoder.clone()),
-        "protocol" => Some(row.protocol.clone()),
-        "freq" => Some(row.freq_hz.to_string()),
-        "band" => Some(row.band.clone()),
-        "posture" => Some(row.encryption_posture.clone()),
-        "payload_capture" => Some(row.payload_capture_mode.clone()),
-        "payload_parse" => Some(row.payload_parse_state.clone()),
-        "payload_fields" => Some(satcom_payload_fields_text(&row.payload_fields)),
-        "coords" => Some(if row.has_coordinates {
-            "Yes".to_string()
-        } else {
-            "No".to_string()
-        }),
-        "identifiers" => Some(row.identifier_hints.join(", ")),
-        "summary" => Some(row.summary.clone()),
-        _ => None,
-    }
-}
-
-fn refresh_sdr_decode_list(list: &ListBox, rows: &[SdrDecodeRow], pagination: &TablePaginationUi) {
-    clear_listbox(list);
-    let filters = pagination_filter_terms(pagination);
-    let filtered = rows
-        .iter()
-        .filter(|row| {
-            row_matches_column_filters(&filters, |column_id| {
-                sdr_decode_row_column_value(row, column_id)
-            })
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let total_items = filtered.len();
-    let page_size = pagination.page_size.get();
-    let (current_page, total_pages, start, end) =
-        paged_indices(total_items, pagination.current_page.get(), page_size);
-
-    for row in filtered
-        .into_iter()
-        .skip(start)
-        .take(end.saturating_sub(start))
-    {
-        let line = GtkBox::new(Orientation::Horizontal, 14);
-        line.set_hexpand(true);
-        line.append(&label_cell(format_display_timestamp(row.timestamp), 20));
-        line.append(&label_cell(row.decoder, 14));
-        line.append(&label_cell(row.freq_hz.to_string(), 13));
-        line.append(&label_cell(row.protocol, 14));
-        line.append(&label_cell(row.message, 50));
-        line.append(&label_cell(row.raw, 50));
-        let item = ListBoxRow::new();
-        item.set_child(Some(&line));
-        list.append(&item);
-    }
-
-    update_table_pagination_summary(
-        pagination,
-        total_items,
-        current_page,
-        total_pages,
-        start,
-        end,
-    );
-}
-
-fn refresh_sdr_satcom_list(
-    list: &ListBox,
-    rows: &[SdrSatcomObservation],
-    pagination: &TablePaginationUi,
-) {
-    clear_listbox(list);
-    let filters = pagination_filter_terms(pagination);
-    let filtered = rows
-        .iter()
-        .filter(|row| {
-            row_matches_column_filters(&filters, |column_id| {
-                sdr_satcom_row_column_value(row, column_id)
-            })
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let total_items = filtered.len();
-    let page_size = pagination.page_size.get();
-    let (current_page, total_pages, start, end) =
-        paged_indices(total_items, pagination.current_page.get(), page_size);
-
-    for row in filtered
-        .into_iter()
-        .skip(start)
-        .take(end.saturating_sub(start))
-    {
-        let line = GtkBox::new(Orientation::Horizontal, 14);
-        line.set_hexpand(true);
-        line.append(&label_cell(format_display_timestamp(row.timestamp), 20));
-        line.append(&label_cell(row.decoder, 14));
-        line.append(&label_cell(row.protocol, 14));
-        line.append(&label_cell(row.freq_hz.to_string(), 13));
-        line.append(&label_cell(row.band, 14));
-        line.append(&label_cell(row.encryption_posture, 12));
-        line.append(&label_cell(row.payload_capture_mode, 14));
-        line.append(&label_cell(row.payload_parse_state, 14));
-        line.append(&label_cell(
-            satcom_payload_fields_text(&row.payload_fields),
-            36,
-        ));
-        line.append(&label_cell(
-            if row.has_coordinates {
-                "Yes".to_string()
-            } else {
-                "No".to_string()
-            },
-            8,
-        ));
-        line.append(&label_cell(row.identifier_hints.join(", "), 20));
-        line.append(&label_cell(row.summary, 40));
-        let item = ListBoxRow::new();
-        item.set_child(Some(&line));
-        list.append(&item);
-    }
-
-    update_table_pagination_summary(
-        pagination,
-        total_items,
-        current_page,
-        total_pages,
-        start,
-        end,
-    );
-}
-
-fn sdr_decode_signature(
-    rows: &[SdrDecodeRow],
-    current_page: usize,
-    page_size: usize,
-    filters: &[(String, String)],
-) -> String {
-    let latest = rows
-        .last()
-        .map(|row| {
-            format!(
-                "{}|{}|{}|{}|{}",
-                row.timestamp.timestamp_millis(),
-                row.decoder,
-                row.freq_hz,
-                row.protocol,
-                row.message
-            )
-        })
-        .unwrap_or_default();
-    format!(
-        "rows={}|latest={}|page={}|size={}|filters={}",
-        rows.len(),
-        latest,
-        current_page,
-        page_size,
-        pagination_filter_signature(filters)
-    )
-}
-
-fn sdr_satcom_signature(
-    rows: &[SdrSatcomObservation],
-    current_page: usize,
-    page_size: usize,
-    filters: &[(String, String)],
-) -> String {
-    let latest = rows
-        .last()
-        .map(|row| {
-            format!(
-                "{}|{}|{}|{}|{}|{}|{}",
-                row.timestamp.timestamp_millis(),
-                row.decoder,
-                row.protocol,
-                row.freq_hz,
-                row.band,
-                row.encryption_posture,
-                row.summary
-            )
-        })
-        .unwrap_or_default();
-    format!(
-        "rows={}|latest={}|page={}|size={}|filters={}",
-        rows.len(),
-        latest,
-        current_page,
-        page_size,
-        pagination_filter_signature(filters)
-    )
-}
-
-fn satcom_payload_fields_text(fields: &HashMap<String, String>) -> String {
-    if fields.is_empty() {
-        return String::new();
-    }
-    let mut entries = fields
-        .iter()
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect::<Vec<_>>();
-    entries.sort();
-    entries.join(", ")
-}
-
-fn format_sdr_dependency_status(statuses: &[SdrDependencyStatus]) -> String {
-    if statuses.is_empty() {
-        return "Dependencies: no data".to_string();
-    }
-    let missing = statuses
-        .iter()
-        .filter(|status| !status.installed)
-        .map(|status| format!("{} ({})", status.tool, status.package_hint))
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        "Dependencies: all installed".to_string()
-    } else {
-        format!("Missing: {}", missing.join(", "))
-    }
-}
-
-fn format_sdr_decoder_telemetry(
-    active_decoder: Option<&str>,
-    telemetry: &HashMap<String, SdrDecoderTelemetry>,
-    rates: &HashMap<String, SdrDecoderTelemetryRate>,
-) -> String {
-    if telemetry.is_empty() {
-        return "Decoder Health: no telemetry".to_string();
-    }
-    let selected = active_decoder
-        .and_then(|name| telemetry.get(name))
-        .or_else(|| telemetry.values().max_by_key(|entry| entry.timestamp));
-    if let Some(entry) = selected {
-        let rate = rates.get(&entry.decoder);
-        format!(
-            "Decoder Health [{}] rows={} ({:.1}/s) map={} ({:.1}/s) satcom={} ({:.1}/s) stderr={} ({:.1}/s)",
-            entry.decoder,
-            entry.decoded_rows,
-            rate.map(|v| v.decoded_rows_per_sec).unwrap_or(0.0),
-            entry.map_points,
-            rate.map(|v| v.map_points_per_sec).unwrap_or(0.0),
-            entry.satcom_rows,
-            rate.map(|v| v.satcom_rows_per_sec).unwrap_or(0.0),
-            entry.stderr_lines,
-            rate.map(|v| v.stderr_lines_per_sec).unwrap_or(0.0)
-        )
-    } else {
-        "Decoder Health: no telemetry".to_string()
-    }
-}
-
-fn format_sdr_aircraft_correlation_summary(rows: &[SdrDecodeRow]) -> String {
-    let correlations = sdr::correlate_aircraft(rows);
-    if correlations.is_empty() {
-        return "Aircraft Correlation: no correlated targets".to_string();
-    }
-    let mixed = correlations
-        .iter()
-        .filter(|entry| entry.adsb_rows > 0 && entry.acars_rows > 0)
-        .count();
-    let adsb_only = correlations
-        .iter()
-        .filter(|entry| entry.adsb_rows > 0 && entry.acars_rows == 0)
-        .count();
-    let acars_only = correlations
-        .iter()
-        .filter(|entry| entry.acars_rows > 0 && entry.adsb_rows == 0)
-        .count();
-    format!(
-        "Aircraft Correlation: {} targets (mixed={} adsb_only={} acars_only={})",
-        correlations.len(),
-        mixed,
-        adsb_only,
-        acars_only
-    )
-}
-
-fn format_sdr_satcom_summary(rows: &[SdrSatcomObservation]) -> String {
-    if rows.is_empty() {
-        return "Satcom Summary: no satcom observations".to_string();
-    }
-    let mut parsed = 0usize;
-    let mut denied = 0usize;
-    let mut redacted = 0usize;
-    let mut unencrypted = 0usize;
-    let mut encrypted = 0usize;
-    let mut unknown = 0usize;
-
-    for row in rows {
-        match row.payload_parse_state.as_str() {
-            "parsed" => parsed += 1,
-            "denied_by_policy" => denied += 1,
-            "redacted" => redacted += 1,
-            _ => {}
-        }
-        match row.encryption_posture.as_str() {
-            "unencrypted" => unencrypted += 1,
-            "encrypted" => encrypted += 1,
-            _ => unknown += 1,
-        }
-    }
-    format!(
-        "Satcom Summary: rows={} parsed={} denied={} redacted={} posture[unencrypted={} encrypted={} unknown={}]",
-        rows.len(),
-        parsed,
-        denied,
-        redacted,
-        unencrypted,
-        encrypted,
-        unknown
-    )
-}
-
-fn prioritized_decoder_ids_for_protocol(
-    decoder_order: &[String],
-    decoder_lookup: &HashMap<String, SdrDecoderKind>,
-    signal_protocol: &str,
-) -> Vec<String> {
-    let signal_protocol = signal_protocol.trim();
-    if signal_protocol.is_empty() {
-        return decoder_order.to_vec();
-    }
-    let mut ordered = decoder_order.to_vec();
-    ordered.sort_by_key(|decoder_id| {
-        decoder_lookup
-            .get(decoder_id.as_str())
-            .map(|decoder| !decoder_matches_signal_protocol(decoder, signal_protocol))
-            .unwrap_or(true)
-    });
-    ordered
-}
-
-fn decoder_hint_id_for_bookmark_label(label: &str) -> Option<&'static str> {
-    let lower = label.trim().to_ascii_lowercase();
-    if lower.is_empty() {
-        return None;
-    }
-    if lower.contains("public safety") || lower.contains("trunked") || lower.contains("land mobile")
-    {
-        Some("p25")
-    } else if lower.contains("paging") || lower.contains("pager") || lower.contains("pocsag") {
-        Some("pocsag")
-    } else if lower.contains("maritime") || lower.contains("ship") || lower.contains("coast") {
-        Some("ais")
-    } else if lower.contains("aircraft")
-        || lower.contains("aeronautical")
-        || lower.contains("acars")
-    {
-        Some("acars")
-    } else if lower.contains("ads-b") || lower.contains("adsb") || lower.contains("1090") {
-        Some("adsb")
-    } else if lower.contains("aprs") || lower.contains("ax25") || lower.contains("ax.25") {
-        Some("aprs_ax25")
-    } else if lower.contains("dect") {
-        Some("dect")
-    } else if lower.contains("dmr") {
-        Some("dmr")
-    } else if lower.contains("gsm") || lower.contains("lte") {
-        Some("gsm_lte")
-    } else if lower.contains("weather") || lower.contains("apt") || lower.contains("noaa") {
-        Some("weather_noaa_apt")
-    } else if lower.contains("inmarsat") || lower.contains("satellite") || lower.contains("std-c") {
-        Some("inmarsat_stdc")
-    } else if lower.contains("iridium") {
-        Some("iridium")
-    } else if lower.contains("radiosonde") || lower.contains("rs41") {
-        Some("radiosonde_rs41")
-    } else {
-        None
-    }
-}
-
-fn prioritized_decoder_ids_for_bookmark_label(
-    decoder_order: &[String],
-    decoder_lookup: &HashMap<String, SdrDecoderKind>,
-    bookmark_label: &str,
-) -> Vec<String> {
-    let mut out = Vec::<String>::new();
-    if let Some(hint_id) = decoder_hint_id_for_bookmark_label(bookmark_label) {
-        if decoder_lookup.contains_key(hint_id) {
-            out.push(hint_id.to_string());
-        }
-    }
-    for decoder_id in
-        prioritized_decoder_ids_for_protocol(decoder_order, decoder_lookup, bookmark_label)
-    {
-        if !out.contains(&decoder_id) {
-            out.push(decoder_id);
-        }
-    }
-    out
-}
-
-fn decoder_matches_signal_protocol(decoder: &SdrDecoderKind, signal_protocol: &str) -> bool {
-    let normalized_signal = normalize_protocol_token(signal_protocol);
-    match decoder {
-        SdrDecoderKind::Plugin { id, protocol, .. } => {
-            protocol
-                .as_deref()
-                .map(normalize_protocol_token)
-                .map(|candidate| candidate.contains(&normalized_signal))
-                .unwrap_or(false)
-                || normalize_protocol_token(id).contains(&normalized_signal)
-        }
-        _ => {
-            normalize_protocol_token(decoder.default_protocol()).contains(&normalized_signal)
-                || normalize_protocol_token(decoder.id().as_str()).contains(&normalized_signal)
-                || normalize_protocol_token(decoder.label().as_str()).contains(&normalized_signal)
-        }
-    }
-}
-
-fn normalize_protocol_token(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .map(|ch| ch.to_ascii_lowercase())
-        .collect::<String>()
-}
-
-fn draw_sdr_fft(ctx: &cairo::Context, width: f64, height: f64, model: &SdrUiModel) {
-    ctx.set_source_rgb(0.03, 0.05, 0.09);
-    let _ = ctx.paint();
-    if model.spectrum_bins.is_empty() {
-        ctx.set_source_rgb(0.7, 0.7, 0.7);
-        ctx.move_to(14.0, height / 2.0);
-        let _ = ctx.show_text("No SDR spectrum data yet");
-        return;
-    }
-
-    let min_db = -120.0_f64;
-    let max_db = -20.0_f64;
-    let bins = &model.spectrum_bins;
-    let bin_count = bins.len().max(2);
-    ctx.set_source_rgb(0.31, 0.83, 0.95);
-    ctx.set_line_width(1.2);
-
-    for (index, value) in bins.iter().enumerate() {
-        let x = (index as f64 / (bin_count - 1) as f64) * width;
-        let normalized = (((*value as f64) - min_db) / (max_db - min_db)).clamp(0.0, 1.0);
-        let y = height - normalized * (height - 8.0) - 4.0;
-        if index == 0 {
-            ctx.move_to(x, y);
-        } else {
-            ctx.line_to(x, y);
-        }
-    }
-    let _ = ctx.stroke();
-
-    ctx.set_source_rgb(0.88, 0.42, 0.12);
-    ctx.set_line_width(1.0);
-    let center_x = width / 2.0;
-    ctx.move_to(center_x, 0.0);
-    ctx.line_to(center_x, height);
-    let _ = ctx.stroke();
-}
-
-fn draw_sdr_spectrogram(ctx: &cairo::Context, width: f64, height: f64, model: &SdrUiModel) {
-    ctx.set_source_rgb(0.02, 0.03, 0.06);
-    let _ = ctx.paint();
-    if model.spectrogram_rows.is_empty() {
-        ctx.set_source_rgb(0.7, 0.7, 0.7);
-        ctx.move_to(14.0, height / 2.0);
-        let _ = ctx.show_text("No SDR spectrogram data yet");
-        return;
-    }
-
-    let rows = &model.spectrogram_rows;
-    let row_count = rows.len().max(1);
-    let bins = rows.first().map(|entry| entry.len()).unwrap_or(0).max(1);
-    let cell_w = (width / bins as f64).max(1.0);
-    let cell_h = (height / row_count as f64).max(1.0);
-    for (row_idx, row) in rows.iter().enumerate() {
-        let y = height - ((row_idx + 1) as f64 * cell_h);
-        for (bin_idx, power) in row.iter().enumerate() {
-            let x = bin_idx as f64 * cell_w;
-            let normalized = (((*power as f64) + 120.0) / 100.0).clamp(0.0, 1.0);
-            let red = normalized;
-            let green = (normalized * 0.75).min(1.0);
-            let blue = (1.0 - normalized).clamp(0.0, 1.0);
-            ctx.set_source_rgb(red, green, blue);
-            ctx.rectangle(x, y, cell_w + 0.4, cell_h + 0.4);
-            let _ = ctx.fill();
-        }
-    }
-}
-
-fn draw_sdr_map(ctx: &cairo::Context, width: f64, height: f64, model: &SdrUiModel) {
-    ctx.set_source_rgb(0.02, 0.03, 0.05);
-    let _ = ctx.paint();
-    if model.map_points.is_empty() {
-        ctx.set_source_rgb(0.7, 0.7, 0.7);
-        ctx.move_to(14.0, height / 2.0);
-        let _ = ctx.show_text("No decoded coordinate points yet");
-        return;
-    }
-
-    let margin_left = 44.0;
-    let margin_top = 14.0;
-    let margin_right = 18.0;
-    let margin_bottom = 20.0;
-    let plot_width = (width - margin_left - margin_right).max(20.0);
-    let plot_height = (height - margin_top - margin_bottom).max(20.0);
-
-    let mut min_lat = f64::INFINITY;
-    let mut max_lat = f64::NEG_INFINITY;
-    let mut min_lon = f64::INFINITY;
-    let mut max_lon = f64::NEG_INFINITY;
-    for point in &model.map_points {
-        min_lat = min_lat.min(point.latitude);
-        max_lat = max_lat.max(point.latitude);
-        min_lon = min_lon.min(point.longitude);
-        max_lon = max_lon.max(point.longitude);
-    }
-
-    if !min_lat.is_finite() || !max_lat.is_finite() || !min_lon.is_finite() || !max_lon.is_finite()
-    {
-        ctx.set_source_rgb(0.7, 0.7, 0.7);
-        ctx.move_to(14.0, height / 2.0);
-        let _ = ctx.show_text("Coordinate data invalid");
-        return;
-    }
-
-    let mut lat_span = (max_lat - min_lat).abs();
-    let mut lon_span = (max_lon - min_lon).abs();
-    if lat_span < 1e-6 {
-        min_lat -= 0.01;
-        max_lat += 0.01;
-        lat_span = max_lat - min_lat;
-    }
-    if lon_span < 1e-6 {
-        min_lon -= 0.01;
-        max_lon += 0.01;
-        lon_span = max_lon - min_lon;
-    }
-
-    ctx.set_source_rgb(0.14, 0.18, 0.22);
-    ctx.rectangle(margin_left, margin_top, plot_width, plot_height);
-    let _ = ctx.fill();
-    ctx.set_source_rgb(0.34, 0.38, 0.42);
-    ctx.set_line_width(1.0);
-    ctx.rectangle(margin_left, margin_top, plot_width, plot_height);
-    let _ = ctx.stroke();
-
-    let recent_points = model
-        .map_points
-        .iter()
-        .rev()
-        .take(5000)
-        .rev()
-        .collect::<Vec<_>>();
-    let mut trails: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
-    for point in &recent_points {
-        let x_ratio = ((point.longitude - min_lon) / lon_span).clamp(0.0, 1.0);
-        let y_ratio = ((point.latitude - min_lat) / lat_span).clamp(0.0, 1.0);
-        let x = margin_left + x_ratio * plot_width;
-        let y = margin_top + (1.0 - y_ratio) * plot_height;
-        trails
-            .entry(point.protocol.to_ascii_lowercase())
-            .or_default()
-            .push((x, y));
-    }
-
-    for (protocol, points) in &trails {
-        if points.len() < 2 {
-            continue;
-        }
-        let (r, g, b) = match protocol.as_str() {
-            "adsb" => (0.95, 0.74, 0.21),
-            "ais" => (0.22, 0.80, 0.95),
-            "acars" => (0.63, 0.88, 0.38),
-            "iridium" | "inmarsat_c" => (0.86, 0.40, 0.98),
-            _ => (0.34, 0.84, 0.42),
-        };
-        ctx.set_source_rgba(r, g, b, 0.18);
-        ctx.set_line_width(1.1);
-        let (x0, y0) = points[0];
-        ctx.move_to(x0, y0);
-        for (x, y) in points.iter().skip(1) {
-            ctx.line_to(*x, *y);
-        }
-        let _ = ctx.stroke();
-    }
-
-    for point in recent_points {
-        let x_ratio = ((point.longitude - min_lon) / lon_span).clamp(0.0, 1.0);
-        let y_ratio = ((point.latitude - min_lat) / lat_span).clamp(0.0, 1.0);
-        let x = margin_left + x_ratio * plot_width;
-        let y = margin_top + (1.0 - y_ratio) * plot_height;
-        let (r, g, b) = match point.protocol.to_ascii_lowercase().as_str() {
-            "adsb" => (0.95, 0.74, 0.21),
-            "ais" => (0.22, 0.80, 0.95),
-            "acars" => (0.63, 0.88, 0.38),
-            "iridium" => (0.86, 0.40, 0.98),
-            _ => (0.34, 0.84, 0.42),
-        };
-        ctx.set_source_rgba(r, g, b, 0.8);
-        ctx.arc(x, y, 2.2, 0.0, std::f64::consts::TAU);
-        let _ = ctx.fill();
-    }
-
-    if let Some(last) = model.map_points.last() {
-        let x_ratio = ((last.longitude - min_lon) / lon_span).clamp(0.0, 1.0);
-        let y_ratio = ((last.latitude - min_lat) / lat_span).clamp(0.0, 1.0);
-        let x = margin_left + x_ratio * plot_width;
-        let y = margin_top + (1.0 - y_ratio) * plot_height;
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
-        ctx.set_line_width(1.2);
-        ctx.arc(x, y, 5.5, 0.0, std::f64::consts::TAU);
-        let _ = ctx.stroke();
-        ctx.move_to((x + 8.0).min(width - 140.0), (y - 8.0).max(12.0));
-        let _ = ctx.show_text(&format!(
-            "Latest: {} {:.5},{:.5}",
-            last.protocol, last.latitude, last.longitude
-        ));
-    }
-
-    ctx.set_source_rgb(0.84, 0.86, 0.88);
-    ctx.move_to(margin_left, height - 4.0);
-    let _ = ctx.show_text(&format!("Lon {:.4} .. {:.4}", min_lon, max_lon));
-    ctx.move_to(4.0, margin_top + 10.0);
-    let _ = ctx.show_text(&format!("{:.4}", max_lat));
-    ctx.move_to(4.0, margin_top + plot_height);
-    let _ = ctx.show_text(&format!("{:.4}", min_lat));
 }
 
 fn ap_table_header(
@@ -15003,8 +6117,8 @@ fn ap_column_value(ap: &AccessPointRecord, id: &str) -> Option<String> {
             }
         }
         "clients" => ap.number_of_clients.to_string(),
-        "first_seen" => format_display_time_hms(ap.first_seen),
-        "last_seen" => format_display_time_hms(ap.last_seen),
+        "first_seen" => ap.first_seen.format("%H:%M:%S").to_string(),
+        "last_seen" => ap.last_seen.format("%H:%M:%S").to_string(),
         "handshakes" => ap.handshake_count.to_string(),
         "band" => ap.band.label().to_string(),
         "frequency" => ap
@@ -15090,8 +6204,8 @@ fn client_column_value(
             }
         }
         "probes" => client.probes.join(","),
-        "first_heard" => format_display_time_hms(client.first_seen),
-        "last_heard" => format_display_time_hms(client.last_seen),
+        "first_heard" => client.first_seen.format("%H:%M:%S").to_string(),
+        "last_heard" => client.last_seen.format("%H:%M:%S").to_string(),
         "data_transferred" => client.data_transferred_bytes.to_string(),
         "probe_count" => client.probes.len().to_string(),
         "seen_ap_count" => client.seen_access_points.len().to_string(),
@@ -15120,6 +6234,24 @@ fn client_column_value(
         "power_save" => bool_text(client.network_intel.power_save_observed),
         "eapol_frames" => client.network_intel.eapol_frame_count.to_string(),
         "pmkid_count" => client.network_intel.pmkid_count.to_string(),
+        "ipv4_addresses" => client.network_intel.local_ipv4_addresses.join(", "),
+        "ipv6_addresses" => client.network_intel.local_ipv6_addresses.join(", "),
+        "dhcp_hostnames" => client.network_intel.dhcp_hostnames.join(", "),
+        "dns_names" => client.network_intel.dns_names.join(", "),
+        "remote_endpoints" => client
+            .network_intel
+            .remote_endpoints
+            .iter()
+            .take(4)
+            .map(|endpoint| {
+                let port = endpoint
+                    .port
+                    .map(|value| format!(":{value}"))
+                    .unwrap_or_default();
+                format!("{} {}{}", endpoint.protocol, endpoint.ip_address, port)
+            })
+            .collect::<Vec<_>>()
+            .join(" | "),
         "first_location" => highlights
             .first
             .as_ref()
@@ -15182,8 +6314,8 @@ fn assoc_client_column_value(
         "oui" => client.oui_manufacturer.clone().unwrap_or_default(),
         "data_transferred" => client.data_transferred_bytes.to_string(),
         "rssi" => format_dbm(client.rssi_dbm),
-        "first_heard" => format_display_time_hms(client.first_seen),
-        "last_heard" => format_display_time_hms(client.last_seen),
+        "first_heard" => client.first_seen.format("%H:%M:%S").to_string(),
+        "last_heard" => client.last_seen.format("%H:%M:%S").to_string(),
         "wps" => {
             if client.wps.is_some() {
                 "True".to_string()
@@ -15223,8 +6355,8 @@ fn bluetooth_column_value(device: &BluetoothDeviceRecord, id: &str) -> Option<St
             .device_type
             .clone()
             .unwrap_or_else(|| "Unknown".to_string()),
-        "first_seen" => format_display_time_hms(device.first_seen),
-        "last_seen" => format_display_time_hms(device.last_seen),
+        "first_seen" => device.first_seen.format("%H:%M:%S").to_string(),
+        "last_seen" => device.last_seen.format("%H:%M:%S").to_string(),
         "rssi" => format_dbm(device.rssi_dbm),
         "advertised_name" => device.advertised_name.clone().unwrap_or_default(),
         "alias" => device.alias.clone().unwrap_or_default(),
@@ -15232,33 +6364,10 @@ fn bluetooth_column_value(device: &BluetoothDeviceRecord, id: &str) -> Option<St
         "class_of_device" => device.class_of_device.clone().unwrap_or_default(),
         "mfgr_ids" => device.mfgr_ids.join(", "),
         "mfgr_names" => device.mfgr_names.join(", "),
-        "uuids" => bluetooth_uuid_display(device),
+        "uuids" => device.uuid_names.join(", "),
         _ => return None,
     };
     Some(value)
-}
-
-fn bluetooth_uuid_display(device: &BluetoothDeviceRecord) -> String {
-    if device.uuids.is_empty() {
-        return device.uuid_names.join(", ");
-    }
-    if device.uuid_names.is_empty() {
-        return device.uuids.join(", ");
-    }
-    if device.uuids.len() == device.uuid_names.len() {
-        return device
-            .uuids
-            .iter()
-            .zip(device.uuid_names.iter())
-            .map(|(uuid, name)| format!("{} ({})", uuid, name))
-            .collect::<Vec<_>>()
-            .join(", ");
-    }
-    format!(
-        "{} | {}",
-        device.uuids.join(", "),
-        device.uuid_names.join(", ")
-    )
 }
 
 fn bluetooth_watchlist_entry_value(
@@ -15320,7 +6429,6 @@ fn display_dbm(value: Option<i32>) -> String {
 
 fn set_row_alert_classes(
     row: &ListBoxRow,
-    _line: &GtkBox,
     watchlist_class: Option<&str>,
     all_watchlist_classes: &[String],
     handshake: bool,
@@ -15328,11 +6436,13 @@ fn set_row_alert_classes(
     for class_name in all_watchlist_classes {
         row.remove_css_class(class_name);
     }
-    row.remove_css_class("row-handshake");
     if let Some(class_name) = watchlist_class {
         row.add_css_class(class_name);
+        row.remove_css_class("row-handshake");
     } else if handshake {
         row.add_css_class("row-handshake");
+    } else {
+        row.remove_css_class("row-handshake");
     }
 }
 
@@ -15376,12 +6486,11 @@ fn format_ap_detail_text(ap: &AccessPointRecord) -> String {
     let advanced_not_captured = "Not captured yet";
 
     format!(
-        "Identity\nSSID: {}\nHidden SSID: {}\nBSSID: {}\nOUI: {}\nObserved On Adapters: {}\n802.11d Country: {}\n\nSecurity\nEncryption: {}\nFull Encryption: {}\nAKM Suites: {}\nCipher Suites: {}\nPMF: {}\nWPS:\n{}\nHandshake Count (WPA2 4-way full): {}\nPMKID Count: {}\n\nRadio\nBand: {}\nPrimary Channel: {}\nFrequency: {} MHz\nSecondary Channel: {}\nChannel Width: {}\nCenter Segment 0: {}\nCenter Segment 1: {}\nPHY Generation: {}\nHT/VHT/HE/EHT Summary: {}\nSupported Rates: {}\nBasic Rates: {}\nWMM / QoS: {}\n802.11k: {}\n802.11v: {}\n802.11r: {}\nDFS / TPC: {}\nChannel Switch Announcement: {}\nMulti-BSSID: {}\nRNR / Neighbor Report: {}\n802.11u / Hotspot 2.0: {}\nVendor IEs: {}\n\nPresence\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nClients: {}\nFirst Seen: {}\nLast Seen: {}\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}\nUptime (beacon estimate): {}\nBeacon Interval: {}\nDTIM Period: {}\n\nAnalytics\nPacket Totals: total={} mgmt={} control={} data={} other={}\nBSS Load: {}\nObserved Data Rates: {}\nRetry Rate: {}\n\nNotes\n{}",
+        "Identity\nSSID: {}\nHidden SSID: {}\nBSSID: {}\nOUI: {}\n802.11d Country: {}\n\nSecurity\nEncryption: {}\nFull Encryption: {}\nAKM Suites: {}\nCipher Suites: {}\nPMF: {}\nWPS:\n{}\nHandshake Count (WPA2 4-way full): {}\nPMKID Count: {}\n\nRadio\nBand: {}\nPrimary Channel: {}\nFrequency: {} MHz\nSecondary Channel: {}\nChannel Width: {}\nCenter Segment 0: {}\nCenter Segment 1: {}\nPHY Generation: {}\nHT/VHT/HE/EHT Summary: {}\nSupported Rates: {}\nBasic Rates: {}\nWMM / QoS: {}\n802.11k: {}\n802.11v: {}\n802.11r: {}\nDFS / TPC: {}\nChannel Switch Announcement: {}\nMulti-BSSID: {}\nRNR / Neighbor Report: {}\n802.11u / Hotspot 2.0: {}\nVendor IEs: {}\n\nPresence\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nClients: {}\nFirst Seen: {}\nLast Seen: {}\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}\nUptime (beacon estimate): {}\nBeacon Interval: {}\nDTIM Period: {}\n\nAnalytics\nPacket Totals: total={} mgmt={} control={} data={} other={}\nBSS Load: {}\nObserved Data Rates: {}\nRetry Rate: {}\n\nNotes\n{}",
         ap.ssid.clone().unwrap_or_else(|| "<hidden>".to_string()),
         hidden_ssid,
         ap.bssid,
         ap.oui_manufacturer.clone().unwrap_or_else(|| "Unknown".into()),
-        format_source_adapters(&ap.source_adapters),
         ap.country_code_80211d
             .clone()
             .unwrap_or_else(|| "Unknown".into()),
@@ -15523,6 +6632,39 @@ fn retry_rate_text(client: &ClientRecord) -> String {
     format!("{:.1}%", rate)
 }
 
+fn format_endpoint_summary(client: &ClientRecord) -> String {
+    if client.network_intel.remote_endpoints.is_empty() {
+        return "None observed".to_string();
+    }
+
+    client
+        .network_intel
+        .remote_endpoints
+        .iter()
+        .take(16)
+        .map(|endpoint| {
+            let port = endpoint
+                .port
+                .map(|value| format!(":{value}"))
+                .unwrap_or_default();
+            let domain = endpoint.domain.as_deref().unwrap_or("unresolved");
+            let geo = endpoint.geo_city.as_deref().unwrap_or("location unknown");
+            format!(
+                "{} {}{} | domain={} | city={} | packets={} | first={} | last={}",
+                endpoint.protocol,
+                endpoint.ip_address,
+                port,
+                domain,
+                geo,
+                endpoint.packet_count,
+                endpoint.first_seen.format("%H:%M:%S"),
+                endpoint.last_seen.format("%H:%M:%S")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn format_client_detail_text(client: &ClientRecord, aps: &[AccessPointRecord]) -> String {
     let highlights = observation_highlights(&client.observations);
     let (avg_rssi, min_rssi, max_rssi, rssi_samples) =
@@ -15556,16 +6698,47 @@ fn format_client_detail_text(client: &ClientRecord, aps: &[AccessPointRecord]) -
         highlights.strongest.as_ref(),
         !client.observations.is_empty(),
     );
+    let local_ipv4 = if client.network_intel.local_ipv4_addresses.is_empty() {
+        "None observed".to_string()
+    } else {
+        client.network_intel.local_ipv4_addresses.join(", ")
+    };
+    let local_ipv6 = if client.network_intel.local_ipv6_addresses.is_empty() {
+        "None observed".to_string()
+    } else {
+        client.network_intel.local_ipv6_addresses.join(", ")
+    };
+    let dhcp_hostnames = if client.network_intel.dhcp_hostnames.is_empty() {
+        "None observed".to_string()
+    } else {
+        client.network_intel.dhcp_hostnames.join(", ")
+    };
+    let dhcp_fqdns = if client.network_intel.dhcp_fqdns.is_empty() {
+        "None observed".to_string()
+    } else {
+        client.network_intel.dhcp_fqdns.join(", ")
+    };
+    let dhcp_vendor_classes = if client.network_intel.dhcp_vendor_classes.is_empty() {
+        "None observed".to_string()
+    } else {
+        client.network_intel.dhcp_vendor_classes.join(", ")
+    };
+    let dns_names = if client.network_intel.dns_names.is_empty() {
+        "None observed".to_string()
+    } else {
+        client.network_intel.dns_names.join(", ")
+    };
+    let open_network_endpoints = format_endpoint_summary(client);
     let roam_count = client.seen_access_points.len().saturating_sub(1);
     let associated_ssid =
         associated_ssid_for_client(aps, client).unwrap_or_else(|| "Unknown".to_string());
 
     format!(
-        "Identity\nMAC: {}\nOUI: {}\nObserved On Adapters: {}\nRandomized MAC: {}\n\nAssociation\nAssociated AP: {}\nAssociated SSID: {}\nSeen AP Count: {}\nSeen APs: {}\nRoam Count: {}\nProbe Count: {}\nProbes: {}\nFirst Heard: {}\nLast Heard: {}\n\nRadio And Behavior\nBand: {}\nLast Channel: {}\nLast Frequency: {}\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nPacket Mix: mgmt={} control={} data={} other={}\nData Transferred: {} bytes\nUplink Bytes: {}\nDownlink Bytes: {}\nRetry Frames: {}\nRetry Rate: {}\nPower Save Observed: {}\nQoS Priorities: {}\nLast Frame: {}\nListen Interval: {}\n\nSecurity\nWPS: {}\nEAPOL Frames: {}\nPMKID Count: {}\nHandshake Network Count: {}\nHandshake Networks: {}\nLast Status Code: {}\nLast Reason Code: {}\n\nPresence\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}",
+        "Identity\nMAC: {}\nOUI: {}\nRandomized MAC: {}\nDHCP Vendor Class: {}\n\nAssociation\nAssociated AP: {}\nAssociated SSID: {}\nSeen AP Count: {}\nSeen APs: {}\nRoam Count: {}\nProbe Count: {}\nProbes: {}\nFirst Heard: {}\nLast Heard: {}\n\nRadio And Behavior\nBand: {}\nLast Channel: {}\nLast Frequency: {}\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nPacket Mix: mgmt={} control={} data={} other={}\nData Transferred: {} bytes\nUplink Bytes: {}\nDownlink Bytes: {}\nRetry Frames: {}\nRetry Rate: {}\nPower Save Observed: {}\nQoS Priorities: {}\nLast Frame: {}\nListen Interval: {}\n\nSecurity\nWPS: {}\nEAPOL Frames: {}\nPMKID Count: {}\nHandshake Network Count: {}\nHandshake Networks: {}\nLast Status Code: {}\nLast Reason Code: {}\n\nOpen Network Metadata\nLocal IPv4 Addresses: {}\nLocal IPv6 Addresses: {}\nDHCP Hostnames: {}\nDHCP FQDNs: {}\nDNS Names: {}\nRemote Endpoints:\n{}\n\nPresence\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}",
         client.mac,
         client.oui_manufacturer.clone().unwrap_or_else(|| "Unknown".into()),
-        format_source_adapters(&client.source_adapters),
         bool_text(is_randomized_mac(&client.mac)),
+        dhcp_vendor_classes,
         client.associated_ap.clone().unwrap_or_else(|| "Unknown".to_string()),
         associated_ssid,
         client.seen_access_points.len(),
@@ -15626,6 +6799,12 @@ fn format_client_detail_text(client: &ClientRecord, aps: &[AccessPointRecord]) -
             .last_reason_code
             .map(|value| value.to_string())
             .unwrap_or_else(|| "Unknown".to_string()),
+        local_ipv4,
+        local_ipv6,
+        dhcp_hostnames,
+        dhcp_fqdns,
+        dns_names,
+        open_network_endpoints,
         client.observations.len(),
         first_location,
         last_location,
@@ -15651,7 +6830,7 @@ fn format_bluetooth_identity_section(device: &BluetoothDeviceRecord) -> String {
     );
 
     format!(
-        "MAC: {}\nTransport: {}\nAddress Type: {}\nOUI: {}\nObserved On Adapters: {}\nName: {}\nAlias: {}\nDevice Type: {}\nClass: {}\nCurrent RSSI: {}\nFirst Seen: {}\nLast Seen: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}",
+        "MAC: {}\nTransport: {}\nAddress Type: {}\nOUI: {}\nName: {}\nAlias: {}\nDevice Type: {}\nClass: {}\nCurrent RSSI: {}\nFirst Seen: {}\nLast Seen: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}",
         device.mac,
         device.transport,
         device
@@ -15662,7 +6841,6 @@ fn format_bluetooth_identity_section(device: &BluetoothDeviceRecord) -> String {
             .oui_manufacturer
             .clone()
             .unwrap_or_else(|| "Unknown".to_string()),
-        format_source_adapters(&device.source_adapters),
         device
             .advertised_name
             .clone()
@@ -15743,7 +6921,7 @@ fn format_bluetooth_active_summary(device: &BluetoothDeviceRecord) -> String {
         "Last Enumerated: {}\nConnected: {}\nPaired: {}\nTrusted: {}\nBlocked: {}\nServices Resolved: {}\nTx Power: {}\nBattery: {}\nAppearance: {}\nIcon: {}\nModalias: {}\nLast Error: {}",
         active
             .last_enumerated
-            .map(format_display_timestamp)
+            .map(|value| value.format("%Y-%m-%d %H:%M:%S UTC").to_string())
             .unwrap_or_else(|| "Unknown".to_string()),
         bool_text(active.connected),
         bool_text(active.paired),
@@ -15932,7 +7110,7 @@ fn format_observation_location_time(obs: &GeoObservation) -> String {
         "{:.6}, {:.6} at {}",
         obs.latitude,
         obs.longitude,
-        format_display_timestamp(obs.timestamp)
+        obs.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
     )
 }
 
@@ -16214,22 +7392,6 @@ fn install_ui_css() -> gtk::CssProvider {
 .table-cell {
   font-family: monospace;
 }
-.column-filter {
-  padding-left: 4px;
-  padding-right: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  box-shadow: none;
-  background-color: rgba(255, 255, 255, 0.03);
-  border-radius: 2px;
-}
-.column-filter text {
-  padding-left: 0;
-  padding-right: 0;
-}
-.column-filter:focus-within {
-  border-color: rgba(255, 255, 255, 0.28);
-  background-color: rgba(255, 255, 255, 0.06);
-}
 .sort-header {
   text-decoration-line: underline;
 }
@@ -16351,7 +7513,9 @@ fn apply_watchlist_css(provider: &gtk::CssProvider, watchlists: &WatchlistSettin
             let class_name = watchlist_css_class(index);
             let color_hex = normalize_watchlist_color(&entry.color_hex);
             let background = parse_watchlist_color_rgba(&color_hex, 0.30);
-            format!(".{class_name} {{ background-color: {background}; }}")
+            format!(
+                ".{class_name} {{ background-color: {background}; }}"
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -16517,14 +7681,6 @@ fn client_seen_on_ap(client: &ClientRecord, ap_bssid: &str) -> bool {
     client.associated_ap.as_deref() == Some(ap_bssid)
 }
 
-fn clients_currently_on_ap(clients: &[ClientRecord], ap_bssid: &str) -> Vec<ClientRecord> {
-    clients
-        .iter()
-        .filter(|client| client_seen_on_ap(client, ap_bssid))
-        .cloned()
-        .collect()
-}
-
 fn emit_alert_tone(freq_hz: u32, duration_ms: u32) {
     let _ = std::process::Command::new("beep")
         .arg("-f")
@@ -16587,12 +7743,9 @@ fn attach_ap_context_menu(
             if let Some(ap) = selected_ap(&state, &ap_list) {
                 if let Some(channel) = ap.channel {
                     let label = ap.ssid.clone().unwrap_or_else(|| ap.bssid.clone());
-                    let _ = state.borrow_mut().lock_wifi_to_channel(
-                        channel,
-                        "HT20",
-                        label,
-                        ap.source_adapters.first().map(String::as_str),
-                    );
+                    let _ = state
+                        .borrow_mut()
+                        .lock_wifi_to_channel(channel, "HT20", label);
                 }
             }
         });
@@ -16600,11 +7753,8 @@ fn attach_ap_context_menu(
 
     {
         let state = state.clone();
-        let ap_list = ap_list.clone();
         unlock_btn.connect_clicked(move |_| {
-            let preferred =
-                selected_ap(&state, &ap_list).and_then(|ap| ap.source_adapters.first().cloned());
-            let _ = state.borrow_mut().unlock_wifi_card(preferred.as_deref());
+            let _ = state.borrow_mut().unlock_wifi_card();
         });
     }
 
@@ -16706,22 +7856,16 @@ fn attach_client_context_menu(
                 };
                 (channel, ap.ssid.clone().unwrap_or_else(|| ap.bssid.clone()))
             };
-            let _ = state.borrow_mut().lock_wifi_to_channel(
-                channel,
-                "HT20",
-                label,
-                client.source_adapters.first().map(String::as_str),
-            );
+            let _ = state
+                .borrow_mut()
+                .lock_wifi_to_channel(channel, "HT20", label);
         });
     }
 
     {
         let state = state.clone();
-        let client_list = client_list.clone();
         unlock_btn.connect_clicked(move |_| {
-            let preferred = selected_client(&state, &client_list)
-                .and_then(|client| client.source_adapters.first().cloned());
-            let _ = state.borrow_mut().unlock_wifi_card(preferred.as_deref());
+            let _ = state.borrow_mut().unlock_wifi_card();
         });
     }
 
@@ -16763,14 +7907,7 @@ fn attach_bluetooth_context_menu(
         let bluetooth_geiger_state = bluetooth_geiger_state.clone();
         locate_btn.connect_clicked(move |_| {
             if let Some(device) = selected_bluetooth(&state, &bluetooth_list) {
-                if !bluetooth_record_supports_bluez_actions(&device) {
-                    state.borrow_mut().push_status(format!(
-                        "bluetooth geiger tracking requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
-                        device.mac
-                    ));
-                    return;
-                }
-                start_bluetooth_geiger_tracking(&state, &bluetooth_geiger_state, &device);
+                start_bluetooth_geiger_tracking(&state, &bluetooth_geiger_state, &device.mac);
             }
         });
     }
@@ -16788,20 +7925,10 @@ fn attach_bluetooth_context_menu(
             let (controller, sender) = {
                 let s = state.borrow();
                 (
-                    bluetooth_action_controller(
-                        s.settings.bluetooth_controller.as_deref(),
-                        &device,
-                    ),
+                    s.settings.bluetooth_controller.clone(),
                     s.bluetooth_sender.clone(),
                 )
             };
-            if !bluetooth_record_supports_bluez_actions(&device) {
-                state.borrow_mut().push_status(format!(
-                    "bluetooth enumeration requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
-                    device.mac
-                ));
-                return;
-            }
             state.borrow_mut().push_status(format!(
                 "starting active bluetooth enumeration for {}",
                 device.mac
@@ -16848,20 +7975,10 @@ fn attach_bluetooth_context_menu(
             let (controller, sender) = {
                 let s = state.borrow();
                 (
-                    bluetooth_action_controller(
-                        s.settings.bluetooth_controller.as_deref(),
-                        &device,
-                    ),
+                    s.settings.bluetooth_controller.clone(),
                     s.bluetooth_sender.clone(),
                 )
             };
-            if !bluetooth_record_supports_bluez_actions(&device) {
-                state.borrow_mut().push_status(format!(
-                    "bluetooth disconnect requires a BlueZ-visible device; {} was only seen by non-BlueZ adapters",
-                    device.mac
-                ));
-                return;
-            }
             state
                 .borrow_mut()
                 .push_status(format!("disconnecting bluetooth device {}", device.mac));
@@ -16916,7 +8033,6 @@ fn wifi_geiger_target_for_ap(ap: &AccessPointRecord) -> Option<WifiGeigerTarget>
         track_id: ap.bssid.clone(),
         display_name: display_name.clone(),
         channel,
-        preferred_interface: ap.source_adapters.first().cloned(),
     })
 }
 
@@ -16935,11 +8051,6 @@ fn wifi_geiger_target_for_client(
         track_id: client.mac.clone(),
         display_name: format!("{} via {}", client.mac, lock_label),
         channel,
-        preferred_interface: client
-            .source_adapters
-            .first()
-            .cloned()
-            .or_else(|| ap.source_adapters.first().cloned()),
     })
 }
 
@@ -17097,10 +8208,7 @@ fn start_wifi_geiger_tracking_target(
         stop.store(true, Ordering::Relaxed);
     }
 
-    let Some(interface) = state
-        .borrow()
-        .active_wifi_interface_name_for_preferred(target.preferred_interface.as_deref())
-    else {
+    let Some(interface) = state.borrow().active_wifi_interface_name() else {
         state.borrow_mut().push_status(
             "no active Wi-Fi interface available for RSSI geiger tracking".to_string(),
         );
@@ -17232,52 +8340,10 @@ fn selected_bluetooth(
         .cloned()
 }
 
-fn bluetooth_record_bluez_controller(device: &BluetoothDeviceRecord) -> Option<Option<String>> {
-    device.source_adapters.iter().find_map(|adapter| {
-        let trimmed = adapter.trim();
-        if trimmed.eq_ignore_ascii_case("bluez") {
-            Some(None)
-        } else if trimmed.len() > 6 && trimmed[..6].eq_ignore_ascii_case("bluez:") {
-            let controller = trimmed[6..].trim();
-            if controller.is_empty() {
-                Some(None)
-            } else {
-                Some(Some(controller.to_string()))
-            }
-        } else {
-            None
-        }
-    })
-}
-
-fn bluetooth_record_supports_bluez_actions(device: &BluetoothDeviceRecord) -> bool {
-    device.source_adapters.is_empty() || bluetooth_record_bluez_controller(device).is_some()
-}
-
-fn bluetooth_action_controller(
-    configured_controller: Option<&str>,
-    device: &BluetoothDeviceRecord,
-) -> Option<String> {
-    let configured = configured_controller
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    match configured {
-        Some(value)
-            if value != bluetooth::ALL_CONTROLLERS_ID && !value.eq_ignore_ascii_case("default") =>
-        {
-            Some(value.to_string())
-        }
-        _ => match bluetooth_record_bluez_controller(device) {
-            Some(Some(controller)) => Some(controller),
-            Some(None) | None => None,
-        },
-    }
-}
-
 fn start_bluetooth_geiger_tracking(
     state: &Rc<RefCell<AppState>>,
     geiger_state: &Rc<RefCell<BluetoothGeigerUiState>>,
-    device: &BluetoothDeviceRecord,
+    target_mac: &str,
 ) {
     if let Some(stop) = geiger_state.borrow_mut().stop.take() {
         stop.store(true, Ordering::Relaxed);
@@ -17286,20 +8352,17 @@ fn start_bluetooth_geiger_tracking(
     let (tx, rx) = unbounded::<GeigerUpdate>();
     let stop = Arc::new(AtomicBool::new(false));
 
-    let controller = {
-        let configured = state.borrow().settings.bluetooth_controller.clone();
-        bluetooth_action_controller(configured.as_deref(), device)
-    };
-    let _ = bluetooth::start_geiger_mode(controller.as_deref(), &device.mac, tx, stop.clone());
+    let controller = state.borrow().settings.bluetooth_controller.clone();
+    let _ = bluetooth::start_geiger_mode(controller.as_deref(), target_mac, tx, stop.clone());
 
     let mut gs = geiger_state.borrow_mut();
     gs.receiver = Some(rx);
     gs.stop = Some(stop);
-    gs.target_mac = Some(device.mac.clone());
+    gs.target_mac = Some(target_mac.to_string());
 
     state
         .borrow_mut()
-        .push_status(format!("bluetooth geiger tracking {}", device.mac));
+        .push_status(format!("bluetooth geiger tracking {}", target_mac));
 }
 
 fn open_layout_dialog(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) {
@@ -17737,16 +8800,6 @@ fn sanitize_table_layout(layout: &mut TableLayout, defaults: &TableLayout) {
     }
 }
 
-fn ensure_column_visible(layout: &mut TableLayout, column_id: &str) {
-    if let Some(column) = layout
-        .columns
-        .iter_mut()
-        .find(|column| column.id == column_id)
-    {
-        column.visible = true;
-    }
-}
-
 #[derive(Debug, Clone)]
 struct WifiInterfaceCapability {
     interface_name: String,
@@ -17897,90 +8950,7 @@ fn lock_ht_mode_choices_from_capability(ht_modes: &[String]) -> Vec<String> {
     if !out.iter().any(|m| m == "HT20") {
         out.push("HT20".to_string());
     }
-    out.sort_by_key(|mode| ht_mode_sort_rank(mode));
-    out.dedup();
-    out
-}
-
-fn ht_mode_sort_rank(mode: &str) -> usize {
-    match mode.to_ascii_uppercase().as_str() {
-        "NOHT" => 0,
-        "HT20" => 1,
-        "HT40+" => 2,
-        "HT40-" => 3,
-        "VHT80" => 4,
-        "VHT160" => 5,
-        "HE20" => 6,
-        "HE40" => 7,
-        "HE80" => 8,
-        "HE160" => 9,
-        "EHT320" => 10,
-        _ => 100,
-    }
-}
-
-fn channel_width_modes(channel: &capture::SupportedChannel, ht_modes: &[String]) -> Vec<String> {
-    let mut out = lock_ht_mode_choices_from_capability(ht_modes);
-    let ht_upper = ht_modes
-        .iter()
-        .map(|mode| mode.to_ascii_uppercase())
-        .collect::<Vec<_>>();
-    let band = channel_capability_band(channel);
-
-    let has_vht = ht_upper
-        .iter()
-        .any(|mode| mode.contains("VHT") || mode.contains("80MHZ") || mode.contains("160MHZ"));
-    let has_he = ht_upper
-        .iter()
-        .any(|mode| mode.contains("HE ") || mode.contains("HE-") || mode.contains("HE("));
-    let has_eht = ht_upper
-        .iter()
-        .any(|mode| mode.contains("320MHZ") || mode.contains("EHT"));
-
-    if channel.channel == 14 || channel.frequency_mhz == Some(2484) {
-        if out.iter().any(|mode| mode == "NOHT") {
-            return vec!["NOHT".to_string()];
-        }
-        return vec!["HT20".to_string()];
-    }
-
-    if band == SpectrumBand::Ghz2_4 {
-        if channel.channel <= 4 {
-            out.retain(|mode| mode != "HT40-");
-        } else if channel.channel >= 8 {
-            out.retain(|mode| mode != "HT40+");
-        }
-        if has_he {
-            out.push("HE20".to_string());
-            out.push("HE40".to_string());
-        }
-    } else if band == SpectrumBand::Ghz5 {
-        if has_vht {
-            out.push("VHT80".to_string());
-            out.push("VHT160".to_string());
-        }
-        if has_he {
-            out.push("HE20".to_string());
-            out.push("HE40".to_string());
-            out.push("HE80".to_string());
-            out.push("HE160".to_string());
-        }
-    } else if band == SpectrumBand::Ghz6 {
-        if has_he {
-            out.push("HE20".to_string());
-            out.push("HE40".to_string());
-            out.push("HE80".to_string());
-            out.push("HE160".to_string());
-        }
-        if has_eht {
-            out.push("EHT320".to_string());
-        }
-    }
-
-    if out.is_empty() {
-        out.push("HT20".to_string());
-    }
-    out.sort_by_key(|mode| ht_mode_sort_rank(mode));
+    out.sort();
     out.dedup();
     out
 }
@@ -17990,130 +8960,53 @@ fn open_interface_channel_capabilities_dialog(
     iface_name: &str,
     channels: &[capture::SupportedChannel],
     ht_modes: &[String],
-    selected_channels: &[u16],
-    selected_ht_modes: &[String],
-    on_apply: Rc<dyn Fn(Vec<u16>, Vec<String>)>,
 ) {
     let dialog = Dialog::builder()
         .transient_for(window)
         .modal(true)
-        .title(format!("{} Channel & Bandwidth Selection", iface_name))
-        .default_width(760)
-        .default_height(520)
+        .title(format!("{} Channel Capabilities", iface_name))
+        .default_width(700)
+        .default_height(420)
         .build();
-    dialog.add_button("Cancel", ResponseType::Cancel);
-    dialog.add_button("Apply Selection", ResponseType::Apply);
+    dialog.add_button("Close", ResponseType::Close);
 
     let area = dialog.content_area();
     let wrapper = GtkBox::new(Orientation::Vertical, 6);
 
-    let summary = Label::new(Some(
-        "Enable channels and choose one or more bandwidths per channel.",
-    ));
+    let summary = Label::new(Some(&format!(
+        "Device bandwidth modes: {}",
+        ht_modes.join(", ")
+    )));
     summary.set_xalign(0.0);
     summary.set_wrap(true);
     wrapper.append(&summary);
 
-    let selected_ht_set = selected_ht_modes
-        .iter()
-        .map(|m| m.to_ascii_uppercase())
-        .collect::<HashSet<_>>();
+    let rows = GtkBox::new(Orientation::Vertical, 4);
+    let header = GtkBox::new(Orientation::Horizontal, 10);
+    header.append(&label_cell("Channel".to_string(), 10));
+    header.append(&label_cell("Freq MHz".to_string(), 10));
+    header.append(&label_cell("Band".to_string(), 10));
+    header.append(&label_cell("Bandwidth / Modes".to_string(), 40));
+    rows.append(&header);
 
-    let selected_channel_set = selected_channels.iter().copied().collect::<HashSet<_>>();
-    let rows = Grid::new();
-    rows.set_column_spacing(12);
-    rows.set_row_spacing(6);
-    rows.set_hexpand(true);
-    rows.attach(&static_header_widget("Use", 6), 0, 0, 1, 1);
-    rows.attach(&static_header_widget("Channel", 10), 1, 0, 1, 1);
-    rows.attach(&static_header_widget("Freq MHz", 12), 2, 0, 1, 1);
-    rows.attach(&static_header_widget("Band", 10), 3, 0, 1, 1);
-    rows.attach(&static_header_widget("Widths", 56), 4, 0, 1, 1);
-
-    let mut channel_rows = Vec::<(u16, CheckButton, Vec<(String, ToggleButton)>)>::new();
     if channels.is_empty() {
         let empty = Label::new(Some(
             "No channel capability data available for this device.",
         ));
         empty.set_xalign(0.0);
-        rows.attach(&empty, 0, 1, 5, 1);
+        rows.append(&empty);
     } else {
-        for (row_index, ch) in channels.iter().enumerate() {
-            let y = (row_index + 1) as i32;
-            let use_check = CheckButton::new();
-            use_check.set_active(selected_channel_set.contains(&ch.channel));
-            rows.attach(&use_check, 0, y, 1, 1);
-            rows.attach(&label_cell(ch.channel.to_string(), 10), 1, y, 1, 1);
-            rows.attach(
-                &label_cell(
-                    ch.frequency_mhz.map(|f| f.to_string()).unwrap_or_default(),
-                    12,
-                ),
-                2,
-                y,
-                1,
-                1,
-            );
-            rows.attach(
-                &label_cell(channel_capability_band_label(ch), 10),
-                3,
-                y,
-                1,
-                1,
-            );
-
-            let widths_box = GtkBox::new(Orientation::Horizontal, 4);
-            widths_box.set_hexpand(true);
-            let supported_widths = channel_width_modes(ch, ht_modes);
-            let mut width_buttons = Vec::<(String, ToggleButton)>::new();
-            for (idx, width_mode) in supported_widths.iter().enumerate() {
-                let btn = ToggleButton::with_label(width_mode);
-                let should_select = if selected_ht_set.is_empty() {
-                    idx == 0
-                } else {
-                    selected_ht_set.contains(&width_mode.to_ascii_uppercase())
-                };
-                btn.set_active(should_select);
-                widths_box.append(&btn);
-                width_buttons.push((width_mode.clone(), btn));
-            }
-            if !width_buttons.iter().any(|(_, btn)| btn.is_active()) {
-                if let Some((_, first)) = width_buttons.first() {
-                    first.set_active(true);
-                }
-            }
-            for (_, btn) in &width_buttons {
-                btn.set_sensitive(use_check.is_active());
-            }
-            {
-                let width_buttons = width_buttons.clone();
-                use_check.connect_toggled(move |check| {
-                    let enabled = check.is_active();
-                    if enabled && !width_buttons.iter().any(|(_, btn)| btn.is_active()) {
-                        if let Some((_, first)) = width_buttons.first() {
-                            first.set_active(true);
-                        }
-                    }
-                    for (_, btn) in &width_buttons {
-                        btn.set_sensitive(enabled);
-                    }
-                });
-            }
-            for (_, button) in &width_buttons {
-                let channel_check = use_check.clone();
-                let width_buttons = width_buttons.clone();
-                let button_ref = button.clone();
-                button.connect_toggled(move |btn| {
-                    if !channel_check.is_active() || btn.is_active() {
-                        return;
-                    }
-                    if !width_buttons.iter().any(|(_, other)| other.is_active()) {
-                        button_ref.set_active(true);
-                    }
-                });
-            }
-            rows.attach(&widths_box, 4, y, 1, 1);
-            channel_rows.push((ch.channel, use_check, width_buttons));
+        let widths = ht_modes.join(", ");
+        for ch in channels {
+            let row = GtkBox::new(Orientation::Horizontal, 10);
+            row.append(&label_cell(ch.channel.to_string(), 10));
+            row.append(&label_cell(
+                ch.frequency_mhz.map(|f| f.to_string()).unwrap_or_default(),
+                10,
+            ));
+            row.append(&label_cell(channel_capability_band_label(ch), 10));
+            row.append(&label_cell(widths.clone(), 40));
+            rows.append(&row);
         }
     }
 
@@ -18125,32 +9018,7 @@ fn open_interface_channel_capabilities_dialog(
     wrapper.append(&scrolled);
     area.append(&wrapper);
 
-    dialog.connect_response(move |d, response| {
-        if response == ResponseType::Apply {
-            let mut selected_channels = Vec::<u16>::new();
-            let mut selected_mode_set = HashSet::<String>::new();
-            for (channel, check, width_buttons) in &channel_rows {
-                if !check.is_active() {
-                    continue;
-                }
-                selected_channels.push(*channel);
-                for (mode, btn) in width_buttons {
-                    if btn.is_active() {
-                        selected_mode_set.insert(mode.clone());
-                    }
-                }
-            }
-            selected_channels.sort_unstable();
-            selected_channels.dedup();
-
-            let mut selected_modes = selected_mode_set.into_iter().collect::<Vec<_>>();
-            selected_modes.sort_by_key(|mode| ht_mode_sort_rank(mode));
-            selected_modes.dedup();
-
-            on_apply(selected_channels, selected_modes);
-        }
-        d.close();
-    });
+    dialog.connect_response(|d, _| d.close());
     dialog.present();
 }
 
@@ -18169,14 +9037,10 @@ fn open_interface_settings_dialog_for_start(
 
 fn apply_interface_selection(
     state: Rc<RefCell<AppState>>,
-    interfaces: Vec<InterfaceSettings>,
+    iface_name: String,
     mode: ChannelSelectionMode,
-    wifi_packet_header_mode: WifiPacketHeaderMode,
-    enable_wifi_frame_parsing: bool,
     bluetooth_enabled: bool,
-    bluetooth_scan_source: BluetoothScanSource,
     bluetooth_controller: Option<String>,
-    ubertooth_device: Option<String>,
     output_to_files: bool,
     start_after_apply: bool,
     selected_output_root: Option<PathBuf>,
@@ -18184,56 +9048,27 @@ fn apply_interface_selection(
     stop_btn: Option<Button>,
 ) {
     let mut s = state.borrow_mut();
-    let previous_output_to_files = s.settings.output_to_files;
-    let previous_output_root = s.settings.output_root.clone();
-    if interfaces.is_empty() {
-        s.push_status("no Wi-Fi interfaces selected".to_string());
-        return;
-    }
-    s.settings.interfaces = interfaces
-        .into_iter()
-        .map(|mut iface| {
-            iface.channel_mode = mode.clone();
-            iface.enabled = true;
-            iface
-        })
-        .collect();
+    s.settings.interfaces = vec![InterfaceSettings {
+        interface_name: iface_name,
+        monitor_interface_name: None,
+        channel_mode: mode,
+        enabled: true,
+    }];
     s.settings.bluetooth_enabled = bluetooth_enabled;
-    s.settings.bluetooth_scan_source = bluetooth_scan_source;
     s.settings.bluetooth_controller = bluetooth_controller;
-    s.settings.ubertooth_device = ubertooth_device;
-    s.settings.wifi_packet_header_mode = wifi_packet_header_mode;
-    s.settings.enable_wifi_frame_parsing = enable_wifi_frame_parsing;
     s.settings.output_to_files = output_to_files;
 
-    let requested_output_root = if output_to_files {
-        Some(selected_output_root.unwrap_or_else(|| previous_output_root.clone()))
-    } else {
-        None
-    };
-    let output_mode_changed = previous_output_to_files != output_to_files;
-    let output_root_changed = requested_output_root
-        .as_ref()
-        .map(|requested| requested != &previous_output_root)
-        .unwrap_or(false);
-
-    if output_mode_changed || output_root_changed {
-        if output_to_files {
-            let output_root = requested_output_root
-                .clone()
-                .unwrap_or_else(|| previous_output_root.clone());
-            if let Err(err) = s.reset_output_session(output_root, true, true) {
-                s.push_status(format!("failed to initialize output session: {err}"));
-                return;
-            }
-        } else if let Err(err) = s.switch_to_internal_output_session() {
-            s.push_status(format!(
-                "failed to initialize internal runtime session: {err}"
-            ));
+    if output_to_files {
+        let output_root = selected_output_root.unwrap_or_else(|| s.settings.output_root.clone());
+        if let Err(err) = s.reset_output_session(output_root, true, true) {
+            s.push_status(format!("failed to initialize output session: {err}"));
             return;
         }
-    } else if let Some(path) = requested_output_root {
-        s.settings.output_root = path;
+    } else if let Err(err) = s.switch_to_internal_output_session() {
+        s.push_status(format!(
+            "failed to initialize internal runtime session: {err}"
+        ));
+        return;
     }
 
     if start_after_apply {
@@ -18253,8 +9088,7 @@ fn apply_interface_selection(
             stop_btn,
             s.capture_runtime.is_some(),
             s.bluetooth_runtime.is_some(),
-            s.scan_start_in_progress,
-            s.scan_stop_in_progress,
+            s.scan_start_in_progress || s.scan_stop_in_progress,
         );
     }
 }
@@ -18321,18 +9155,6 @@ fn open_interface_settings_dialog_inner(
     mode_combo.append(Some("locked"), "Lock Channel");
     mode_combo.set_active_id(Some("hop_specific"));
 
-    let packet_header_combo = ComboBoxText::new();
-    packet_header_combo.append(Some("radiotap"), "Radiotap");
-    packet_header_combo.append(Some("ppi"), "PPI");
-    packet_header_combo.set_active_id(Some("radiotap"));
-    let wifi_parse_check =
-        CheckButton::with_label("Enable Wi-Fi frame parsing (slower, higher resource use)");
-    let wifi_parse_warning = Label::new(Some(
-        "Warning: Wi-Fi frame parsing can be CPU/memory intensive on busy channels.",
-    ));
-    wifi_parse_warning.set_xalign(0.0);
-    wifi_parse_warning.set_wrap(true);
-
     let dwell_entry = Entry::new();
     dwell_entry.set_placeholder_text(Some("Dwell ms (200 = 5 ch/sec)"));
     dwell_entry.set_text("200");
@@ -18354,18 +9176,10 @@ fn open_interface_settings_dialog_inner(
     lock_ht_combo.append(Some("HT40+"), "HT40+");
     lock_ht_combo.append(Some("HT40-"), "HT40-");
     lock_ht_combo.set_active_id(Some("HT20"));
-    let selected_ht_modes = Rc::new(RefCell::new(vec!["HT20".to_string()]));
 
     let bluetooth_scan_check = CheckButton::with_label("Scan Bluetooth");
-    let bluetooth_source_combo = ComboBoxText::new();
-    bluetooth_source_combo.append(Some("bluez"), "BlueZ");
-    bluetooth_source_combo.append(Some("ubertooth"), "Ubertooth");
-    bluetooth_source_combo.append(Some("both"), "BlueZ + Ubertooth");
-    bluetooth_source_combo.set_active_id(Some("bluez"));
-
     let bluetooth_controller_combo = ComboBoxText::new();
     bluetooth_controller_combo.append(Some("default"), "Default Controller");
-    bluetooth_controller_combo.append(Some(bluetooth::ALL_CONTROLLERS_ID), "All Controllers");
     for ctrl in bluetooth::list_controllers().unwrap_or_default() {
         bluetooth_controller_combo.append(
             Some(&ctrl.id),
@@ -18382,17 +9196,6 @@ fn open_interface_settings_dialog_inner(
         );
     }
     bluetooth_controller_combo.set_active_id(Some("default"));
-
-    let ubertooth_combo = ComboBoxText::new();
-    ubertooth_combo.append(Some("default"), "Default Ubertooth Device");
-    ubertooth_combo.append(
-        Some(bluetooth::ALL_UBERTOOTH_DEVICES_ID),
-        "All Ubertooth Devices",
-    );
-    for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
-        ubertooth_combo.append(Some(&device.id), &device.name);
-    }
-    ubertooth_combo.set_active_id(Some("default"));
 
     let output_to_files_check = CheckButton::with_label("Output to Files");
     let output_dir_entry = Entry::new();
@@ -18413,19 +9216,6 @@ fn open_interface_settings_dialog_inner(
     mode_label.set_width_chars(18);
     mode_row.append(&mode_label);
     mode_row.append(&mode_combo);
-
-    let packet_header_row = GtkBox::new(Orientation::Horizontal, 8);
-    let packet_header_label = Label::new(Some("Packet Headers"));
-    packet_header_label.set_xalign(0.0);
-    packet_header_label.set_width_chars(18);
-    packet_header_row.append(&packet_header_label);
-    packet_header_row.append(&packet_header_combo);
-    let wifi_parse_row = GtkBox::new(Orientation::Horizontal, 8);
-    let wifi_parse_label = Label::new(Some("Wi-Fi Parsing"));
-    wifi_parse_label.set_xalign(0.0);
-    wifi_parse_label.set_width_chars(18);
-    wifi_parse_row.append(&wifi_parse_label);
-    wifi_parse_row.append(&wifi_parse_check);
 
     let channels_row = GtkBox::new(Orientation::Horizontal, 8);
     let channels_label = Label::new(Some("Specific Channels"));
@@ -18470,26 +9260,12 @@ fn open_interface_settings_dialog_inner(
     bluetooth_row.append(&bluetooth_label);
     bluetooth_row.append(&bluetooth_scan_check);
 
-    let bluetooth_source_row = GtkBox::new(Orientation::Horizontal, 8);
-    let bluetooth_source_label = Label::new(Some("Bluetooth Source"));
-    bluetooth_source_label.set_xalign(0.0);
-    bluetooth_source_label.set_width_chars(18);
-    bluetooth_source_row.append(&bluetooth_source_label);
-    bluetooth_source_row.append(&bluetooth_source_combo);
-
     let bluetooth_controller_row = GtkBox::new(Orientation::Horizontal, 8);
     let bluetooth_controller_label = Label::new(Some("Bluetooth Radio"));
     bluetooth_controller_label.set_xalign(0.0);
     bluetooth_controller_label.set_width_chars(18);
     bluetooth_controller_row.append(&bluetooth_controller_label);
     bluetooth_controller_row.append(&bluetooth_controller_combo);
-
-    let ubertooth_row = GtkBox::new(Orientation::Horizontal, 8);
-    let ubertooth_label = Label::new(Some("Ubertooth Device"));
-    ubertooth_label.set_xalign(0.0);
-    ubertooth_label.set_width_chars(18);
-    ubertooth_row.append(&ubertooth_label);
-    ubertooth_row.append(&ubertooth_combo);
 
     let output_toggle_row = GtkBox::new(Orientation::Horizontal, 8);
     let output_toggle_label = Label::new(Some("Output"));
@@ -18516,18 +9292,13 @@ fn open_interface_settings_dialog_inner(
     root.append(&iface_row);
     root.append(&interface_status);
     root.append(&mode_row);
-    root.append(&packet_header_row);
-    root.append(&wifi_parse_row);
-    root.append(&wifi_parse_warning);
     root.append(&channels_row);
     root.append(&dwell_row);
     root.append(&band_row);
     root.append(&lock_row);
     root.append(&ht_row);
     root.append(&bluetooth_row);
-    root.append(&bluetooth_source_row);
     root.append(&bluetooth_controller_row);
-    root.append(&ubertooth_row);
     root.append(&output_toggle_row);
     root.append(&output_dir_row);
     root.append(&action_row);
@@ -18539,7 +9310,6 @@ fn open_interface_settings_dialog_inner(
         let channels_entry = channels_entry.clone();
         let interface_status = interface_status.clone();
         let lock_ht_combo = lock_ht_combo.clone();
-        let selected_ht_modes = selected_ht_modes.clone();
         let band_combo = band_combo.clone();
         let apply = apply_interface_capability.clone();
         *apply.borrow_mut() = Some(Box::new(move || {
@@ -18599,28 +9369,12 @@ fn open_interface_settings_dialog_inner(
                     .unwrap_or_else(|| "HT20".to_string());
                 lock_ht_combo.remove_all();
                 let ht_choices = lock_ht_mode_choices_from_capability(&cap.ht_modes);
-                {
-                    let mut selected_modes = selected_ht_modes.borrow_mut();
-                    selected_modes.retain(|mode| ht_choices.iter().any(|choice| choice == mode));
-                    if selected_modes.is_empty() {
-                        if ht_choices.iter().any(|choice| choice == &current_ht) {
-                            selected_modes.push(current_ht.clone());
-                        } else if let Some(first_mode) = ht_choices.first() {
-                            selected_modes.push(first_mode.clone());
-                        } else {
-                            selected_modes.push("HT20".to_string());
-                        }
-                    }
-                }
                 for mode in &ht_choices {
                     lock_ht_combo.append(Some(mode), mode);
                 }
-                let selected_mode = selected_ht_modes
-                    .borrow()
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "HT20".to_string());
-                if !lock_ht_combo.set_active_id(Some(&selected_mode)) {
+                if ht_choices.iter().any(|m| m == &current_ht) {
+                    lock_ht_combo.set_active_id(Some(&current_ht));
+                } else {
                     lock_ht_combo.set_active_id(Some("HT20"));
                 }
             } else {
@@ -18671,12 +9425,7 @@ fn open_interface_settings_dialog_inner(
 
     {
         let caps = capabilities_rc.clone();
-        let state = state.clone();
         let interface_combo = interface_combo.clone();
-        let channels_entry_for_dialog = channels_entry.clone();
-        let channels_entry_for_click = channels_entry.clone();
-        let lock_ht_combo = lock_ht_combo.clone();
-        let selected_ht_modes = selected_ht_modes.clone();
         let window = window.clone();
         let open_cap_dialog = move || {
             let selected = interface_combo
@@ -18689,73 +9438,11 @@ fn open_interface_settings_dialog_inner(
                 .find(|c| c.interface_name == selected)
                 .cloned()
             {
-                let historical_channels = {
-                    let s = state.borrow();
-                    s.access_points
-                        .iter()
-                        .filter_map(|ap| {
-                            ap.channel.map(|channel| capture::SupportedChannel {
-                                channel,
-                                frequency_mhz: ap.frequency_mhz,
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                };
-                let mut chooser_channels = cap.channels.clone();
-                for channel in historical_channels {
-                    if !chooser_channels.iter().any(|existing| {
-                        existing.channel == channel.channel
-                            && existing.frequency_mhz == channel.frequency_mhz
-                    }) {
-                        chooser_channels.push(channel);
-                    }
-                }
-                chooser_channels
-                    .sort_by_key(|channel| (channel.frequency_mhz.unwrap_or(0), channel.channel));
-                chooser_channels
-                    .dedup_by(|a, b| a.channel == b.channel && a.frequency_mhz == b.frequency_mhz);
-
-                let selected_channels = channels_entry_for_dialog
-                    .text()
-                    .split(',')
-                    .filter_map(|value| value.trim().parse::<u16>().ok())
-                    .collect::<Vec<_>>();
-                let selected_modes = selected_ht_modes.borrow().clone();
-                let channels_entry_for_apply = channels_entry_for_dialog.clone();
-                let lock_ht_combo_for_apply = lock_ht_combo.clone();
-                let selected_ht_modes_for_apply = selected_ht_modes.clone();
                 open_interface_channel_capabilities_dialog(
                     &window,
                     &cap.interface_name,
-                    &chooser_channels,
+                    &cap.channels,
                     &cap.ht_modes,
-                    &selected_channels,
-                    &selected_modes,
-                    Rc::new(move |selected_channels, selected_modes| {
-                        channels_entry_for_apply.set_text(
-                            &selected_channels
-                                .iter()
-                                .map(|channel| channel.to_string())
-                                .collect::<Vec<_>>()
-                                .join(","),
-                        );
-
-                        {
-                            let mut state_modes = selected_ht_modes_for_apply.borrow_mut();
-                            *state_modes = selected_modes.clone();
-                        }
-
-                        let mut lock_mode_applied = false;
-                        for mode in &selected_modes {
-                            if lock_ht_combo_for_apply.set_active_id(Some(mode)) {
-                                lock_mode_applied = true;
-                                break;
-                            }
-                        }
-                        if !lock_mode_applied {
-                            let _ = lock_ht_combo_for_apply.set_active_id(Some("HT20"));
-                        }
-                    }),
                 );
             } else {
                 open_interface_channel_capabilities_dialog(
@@ -18763,9 +9450,6 @@ fn open_interface_settings_dialog_inner(
                     &selected,
                     &[],
                     &["HT20".into()],
-                    &[],
-                    &["HT20".to_string()],
-                    Rc::new(|_, _| {}),
                 );
             }
         };
@@ -18785,7 +9469,7 @@ fn open_interface_settings_dialog_inner(
             click.connect_pressed(move |_, _, _, _| {
                 (click_handler)();
             });
-            channels_entry_for_click.add_controller(click);
+            channels_entry.add_controller(click);
         }
     }
 
@@ -18808,50 +9492,9 @@ fn open_interface_settings_dialog_inner(
     }
 
     {
-        let selected_ht_modes = selected_ht_modes.clone();
-        lock_ht_combo.connect_changed(move |combo| {
-            if let Some(mode) = combo.active_id().map(|value| value.to_string()) {
-                *selected_ht_modes.borrow_mut() = vec![mode];
-            }
-        });
-    }
-
-    let update_bluetooth_control_visibility = Rc::new(RefCell::new(None::<Box<dyn Fn()>>));
-    {
-        let bluetooth_scan_check = bluetooth_scan_check.clone();
-        let bluetooth_source_combo = bluetooth_source_combo.clone();
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
-        let ubertooth_combo = ubertooth_combo.clone();
-        let update = update_bluetooth_control_visibility.clone();
-        *update.borrow_mut() = Some(Box::new(move || {
-            let enabled = bluetooth_scan_check.is_active();
-            let source = bluetooth_source_combo
-                .active_id()
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "bluez".to_string());
-            let needs_bluez = matches!(source.as_str(), "bluez" | "both");
-            let needs_ubertooth = matches!(source.as_str(), "ubertooth" | "both");
-            bluetooth_source_combo.set_sensitive(enabled);
-            bluetooth_controller_combo.set_sensitive(enabled && needs_bluez);
-            ubertooth_combo.set_sensitive(enabled && needs_ubertooth);
-        }));
-    }
-
-    {
-        let update = update_bluetooth_control_visibility.clone();
-        bluetooth_scan_check.connect_toggled(move |_| {
-            if let Some(cb) = update.borrow().as_ref() {
-                cb();
-            }
-        });
-    }
-
-    {
-        let update = update_bluetooth_control_visibility.clone();
-        bluetooth_source_combo.connect_changed(move |_| {
-            if let Some(cb) = update.borrow().as_ref() {
-                cb();
-            }
+        bluetooth_scan_check.connect_toggled(move |check| {
+            bluetooth_controller_combo.set_sensitive(check.is_active());
         });
     }
 
@@ -18869,12 +9512,8 @@ fn open_interface_settings_dialog_inner(
         let s = state.borrow();
         (
             s.settings.interfaces.first().cloned(),
-            s.settings.wifi_packet_header_mode,
             s.settings.bluetooth_enabled,
-            s.settings.bluetooth_scan_source,
             s.settings.bluetooth_controller.clone(),
-            s.settings.ubertooth_device.clone(),
-            s.settings.enable_wifi_frame_parsing,
             s.settings.output_to_files,
             s.settings.output_root.clone(),
         )
@@ -18919,22 +9558,9 @@ fn open_interface_settings_dialog_inner(
         interface_combo.set_active(Some(0));
     }
 
-    if let Some(mode) = lock_ht_combo.active_id().map(|value| value.to_string()) {
-        *selected_ht_modes.borrow_mut() = vec![mode];
-    }
-
-    packet_header_combo.set_active_id(Some(match current_interface.1 {
-        WifiPacketHeaderMode::Radiotap => "radiotap",
-        WifiPacketHeaderMode::Ppi => "ppi",
-    }));
-
-    bluetooth_scan_check.set_active(current_interface.2);
-    bluetooth_source_combo.set_active_id(Some(match current_interface.3 {
-        BluetoothScanSource::Bluez => "bluez",
-        BluetoothScanSource::Ubertooth => "ubertooth",
-        BluetoothScanSource::Both => "both",
-    }));
-    match current_interface.4.as_deref() {
+    bluetooth_scan_check.set_active(current_interface.1);
+    bluetooth_controller_combo.set_sensitive(current_interface.1);
+    match current_interface.2.as_deref() {
         Some(ctrl) => {
             if !bluetooth_controller_combo.set_active_id(Some(ctrl)) {
                 bluetooth_controller_combo.set_active_id(Some("default"));
@@ -18944,29 +9570,15 @@ fn open_interface_settings_dialog_inner(
             bluetooth_controller_combo.set_active_id(Some("default"));
         }
     }
-    match current_interface.5.as_deref() {
-        Some(device) => {
-            if !ubertooth_combo.set_active_id(Some(device)) {
-                ubertooth_combo.set_active_id(Some("default"));
-            }
-        }
-        None => {
-            ubertooth_combo.set_active_id(Some("default"));
-        }
-    }
-    wifi_parse_check.set_active(current_interface.6);
-    output_to_files_check.set_active(current_interface.7);
-    output_dir_entry.set_text(&current_interface.8.display().to_string());
-    output_dir_entry.set_sensitive(current_interface.7);
-    browse_output_btn.set_sensitive(current_interface.7);
+    output_to_files_check.set_active(current_interface.3);
+    output_dir_entry.set_text(&current_interface.4.display().to_string());
+    output_dir_entry.set_sensitive(current_interface.3);
+    browse_output_btn.set_sensitive(current_interface.3);
 
     if let Some(cb) = apply_interface_capability.borrow().as_ref() {
         cb();
     }
     if let Some(cb) = update_mode_visibility.borrow().as_ref() {
-        cb();
-    }
-    if let Some(cb) = update_bluetooth_control_visibility.borrow().as_ref() {
         cb();
     }
 
@@ -19007,17 +9619,13 @@ fn open_interface_settings_dialog_inner(
         let capabilities_rc = capabilities_rc.clone();
         let interface_combo = interface_combo.clone();
         let mode_combo = mode_combo.clone();
-        let packet_header_combo = packet_header_combo.clone();
         let channels_entry = channels_entry.clone();
         let dwell_entry = dwell_entry.clone();
         let band_combo = band_combo.clone();
         let lock_channel_entry = lock_channel_entry.clone();
         let lock_ht_combo = lock_ht_combo.clone();
-        let wifi_parse_check = wifi_parse_check.clone();
         let bluetooth_scan_check = bluetooth_scan_check.clone();
-        let bluetooth_source_combo = bluetooth_source_combo.clone();
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
-        let ubertooth_combo = ubertooth_combo.clone();
         let output_to_files_check = output_to_files_check.clone();
         let output_dir_entry = output_dir_entry.clone();
         let start_btn = start_btn.clone();
@@ -19039,11 +9647,6 @@ fn open_interface_settings_dialog_inner(
                 .split(',')
                 .filter_map(|v| v.trim().parse::<u16>().ok())
                 .collect::<Vec<_>>();
-            let wifi_packet_header_mode = match packet_header_combo.active_id().as_deref() {
-                Some("ppi") => WifiPacketHeaderMode::Ppi,
-                _ => WifiPacketHeaderMode::Radiotap,
-            };
-            let enable_wifi_frame_parsing = wifi_parse_check.is_active();
             let dwell_ms = dwell_entry
                 .text()
                 .parse::<u64>()
@@ -19055,27 +9658,10 @@ fn open_interface_settings_dialog_inner(
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "HT20".to_string());
             let bluetooth_enabled = bluetooth_scan_check.is_active();
-            let bluetooth_scan_source = match bluetooth_source_combo.active_id().as_deref() {
-                Some("ubertooth") => BluetoothScanSource::Ubertooth,
-                Some("both") => BluetoothScanSource::Both,
-                _ => BluetoothScanSource::Bluez,
-            };
             let bluetooth_controller = if !bluetooth_enabled {
                 None
             } else {
                 match bluetooth_controller_combo.active_id().as_deref() {
-                    Some("default") | None => None,
-                    Some(id) => Some(id.to_string()),
-                }
-            };
-            let ubertooth_device = if !bluetooth_enabled
-                || !matches!(
-                    bluetooth_scan_source,
-                    BluetoothScanSource::Ubertooth | BluetoothScanSource::Both
-                ) {
-                None
-            } else {
-                match ubertooth_combo.active_id().as_deref() {
                     Some("default") | None => None,
                     Some(id) => Some(id.to_string()),
                 }
@@ -19153,13 +9739,6 @@ fn open_interface_settings_dialog_inner(
                 },
             };
 
-            let selected_interfaces = vec![InterfaceSettings {
-                interface_name: iface_name.clone(),
-                monitor_interface_name: None,
-                channel_mode: mode.clone(),
-                enabled: true,
-            }];
-
             {
                 let mut s = state.borrow_mut();
                 if dropped_requested_channels {
@@ -19168,25 +9747,16 @@ fn open_interface_settings_dialog_inner(
                             .to_string(),
                     );
                 }
-                let summary = selected_interfaces
-                    .iter()
-                    .map(|iface| iface.interface_name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                s.push_status(format!("preparing scan setup on {}", summary));
+                s.push_status(format!("preparing scan setup on {}", iface_name));
             }
 
             settings_window.close();
             apply_interface_selection(
                 state.clone(),
-                selected_interfaces,
+                iface_name,
                 mode,
-                wifi_packet_header_mode,
-                enable_wifi_frame_parsing,
                 bluetooth_enabled,
-                bluetooth_scan_source,
                 bluetooth_controller,
-                ubertooth_device,
                 output_to_files,
                 start_after_apply,
                 output_root,
@@ -19257,6 +9827,7 @@ fn open_preferences_window(
     };
 
     let settings_snapshot = state.borrow().settings.clone();
+    let default_geoip_path = settings_snapshot.geoip_city_db_path.clone();
     let default_oui_path = settings_snapshot.oui_source_path.clone();
     let show_status_bar_check = CheckButton::with_label("Status Pane");
     show_status_bar_check.set_active(settings_snapshot.show_status_bar);
@@ -19264,10 +9835,6 @@ fn open_preferences_window(
     show_detail_pane_check.set_active(settings_snapshot.show_detail_pane);
     let show_device_pane_check = CheckButton::with_label("Device Pane");
     show_device_pane_check.set_active(settings_snapshot.show_device_pane);
-    let show_column_filters_check = CheckButton::with_label("Column Filters");
-    show_column_filters_check.set_active(settings_snapshot.show_column_filters);
-    let show_ap_inline_channel_usage_check = CheckButton::with_label("AP Inline Channel Usage");
-    show_ap_inline_channel_usage_check.set_active(settings_snapshot.show_ap_inline_channel_usage);
 
     let ap_columns = Rc::new(RefCell::new(
         settings_snapshot.ap_table_layout.columns.clone(),
@@ -19290,8 +9857,6 @@ fn open_preferences_window(
     view_page.append(&show_status_bar_check);
     view_page.append(&show_detail_pane_check);
     view_page.append(&show_device_pane_check);
-    view_page.append(&show_column_filters_check);
-    view_page.append(&show_ap_inline_channel_usage_check);
 
     let general_page = page(&stack, "general", "General");
     general_page.append(&section_heading("General"));
@@ -19307,37 +9872,9 @@ fn open_preferences_window(
     rows_row.append(&rows_label);
     rows_row.append(&rows_combo);
     general_page.append(&rows_row);
-    let use_zulu_time_check = CheckButton::with_label("Use Zulu (UTC) time display");
-    use_zulu_time_check.set_active(settings_snapshot.use_zulu_time);
-    general_page.append(&use_zulu_time_check);
 
     let wifi_page = page(&stack, "wifi_capture", "Wi-Fi / Capture");
     wifi_page.append(&section_heading("Wi-Fi / Capture"));
-    let packet_header_row = GtkBox::new(Orientation::Horizontal, 8);
-    let packet_header_label = Label::new(Some("Packet Headers"));
-    packet_header_label.set_width_chars(24);
-    packet_header_label.set_xalign(0.0);
-    let packet_header_combo = ComboBoxText::new();
-    packet_header_combo.append(Some("radiotap"), "Radiotap");
-    packet_header_combo.append(Some("ppi"), "PPI");
-    packet_header_combo.set_active_id(Some(match settings_snapshot.wifi_packet_header_mode {
-        WifiPacketHeaderMode::Radiotap => "radiotap",
-        WifiPacketHeaderMode::Ppi => "ppi",
-    }));
-    packet_header_row.append(&packet_header_label);
-    packet_header_row.append(&packet_header_combo);
-    wifi_page.append(&packet_header_row);
-    let wifi_parse_check =
-        CheckButton::with_label("Enable Wi-Fi frame parsing (slower, higher resource use)");
-    wifi_parse_check.set_active(settings_snapshot.enable_wifi_frame_parsing);
-    let wifi_parse_warning = Label::new(Some(
-        "Warning: enabling Wi-Fi parsing can significantly increase CPU and memory usage.",
-    ));
-    wifi_parse_warning.set_xalign(0.0);
-    wifi_parse_warning.set_wrap(true);
-    wifi_page.append(&wifi_parse_check);
-    wifi_page.append(&wifi_parse_warning);
-
     let wifi_summary = Label::new(None);
     wifi_summary.set_xalign(0.0);
     wifi_summary.set_wrap(true);
@@ -19470,7 +10007,6 @@ fn open_preferences_window(
 
     let bluetooth_controller_combo = ComboBoxText::new();
     bluetooth_controller_combo.append(Some("default"), "Default Controller");
-    bluetooth_controller_combo.append(Some(bluetooth::ALL_CONTROLLERS_ID), "All Controllers");
     for ctrl in bluetooth::list_controllers().unwrap_or_default() {
         bluetooth_controller_combo.append(
             Some(&ctrl.id),
@@ -19492,31 +10028,7 @@ fn open_preferences_window(
             .as_deref()
             .or(Some("default")),
     );
-    let bluetooth_source_combo = ComboBoxText::new();
-    bluetooth_source_combo.append(Some("bluez"), "BlueZ");
-    bluetooth_source_combo.append(Some("ubertooth"), "Ubertooth");
-    bluetooth_source_combo.append(Some("both"), "BlueZ + Ubertooth");
-    bluetooth_source_combo.set_active_id(Some(match settings_snapshot.bluetooth_scan_source {
-        BluetoothScanSource::Bluez => "bluez",
-        BluetoothScanSource::Ubertooth => "ubertooth",
-        BluetoothScanSource::Both => "both",
-    }));
-
-    let ubertooth_device_combo = ComboBoxText::new();
-    ubertooth_device_combo.append(Some("default"), "Default Ubertooth Device");
-    ubertooth_device_combo.append(
-        Some(bluetooth::ALL_UBERTOOTH_DEVICES_ID),
-        "All Ubertooth Devices",
-    );
-    for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
-        ubertooth_device_combo.append(Some(&device.id), &device.name);
-    }
-    ubertooth_device_combo.set_active_id(
-        settings_snapshot
-            .ubertooth_device
-            .as_deref()
-            .or(Some("default")),
-    );
+    bluetooth_controller_combo.set_sensitive(settings_snapshot.bluetooth_enabled);
 
     let bluetooth_timeout_entry = Entry::new();
     bluetooth_timeout_entry.set_text(&settings_snapshot.bluetooth_scan_timeout_secs.to_string());
@@ -19525,16 +10037,8 @@ fn open_preferences_window(
 
     for (label_text, widget) in [
         (
-            "Bluetooth Source",
-            bluetooth_source_combo.upcast_ref::<gtk::Widget>(),
-        ),
-        (
             "Bluetooth Radio",
             bluetooth_controller_combo.upcast_ref::<gtk::Widget>(),
-        ),
-        (
-            "Ubertooth Device",
-            ubertooth_device_combo.upcast_ref::<gtk::Widget>(),
         ),
         (
             "Scan Timeout Seconds",
@@ -19555,88 +10059,27 @@ fn open_preferences_window(
     }
 
     {
-        let bluetooth_enabled_check = bluetooth_enabled_check.clone();
-        let bluetooth_source_combo = bluetooth_source_combo.clone();
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
-        let ubertooth_device_combo = ubertooth_device_combo.clone();
-        let enabled_for_update = bluetooth_enabled_check.clone();
-        let source_for_update = bluetooth_source_combo.clone();
-        let controller_for_update = bluetooth_controller_combo.clone();
-        let ubertooth_for_update = ubertooth_device_combo.clone();
-        let update_controls = move || {
-            let enabled = enabled_for_update.is_active();
-            let source = source_for_update
-                .active_id()
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "bluez".to_string());
-            let uses_bluez = matches!(source.as_str(), "bluez" | "both");
-            let uses_ubertooth = matches!(source.as_str(), "ubertooth" | "both");
-            source_for_update.set_sensitive(enabled);
-            controller_for_update.set_sensitive(enabled && uses_bluez);
-            ubertooth_for_update.set_sensitive(enabled && uses_ubertooth);
-        };
-        update_controls();
-
-        let update_controls = Rc::new(update_controls);
-
-        {
-            let update_controls = update_controls.clone();
-            let bluetooth_enabled_check = bluetooth_enabled_check.clone();
-            bluetooth_enabled_check.connect_toggled(move |_| {
-                (update_controls)();
-            });
-        }
-
-        {
-            let update_controls = update_controls.clone();
-            let bluetooth_source_combo = bluetooth_source_combo.clone();
-            bluetooth_source_combo.connect_changed(move |_| {
-                (update_controls)();
-            });
-        }
-    }
-
-    {
-        let bluetooth_source_combo = bluetooth_source_combo.clone();
-        let ubertooth_device_combo = ubertooth_device_combo.clone();
-        let bluetooth_enabled_check = bluetooth_enabled_check.clone();
-        let refresh_button = Button::with_label("Refresh Ubertooth List");
-        let refresh_row = GtkBox::new(Orientation::Horizontal, 8);
-        let refresh_label = Label::new(Some(""));
-        refresh_label.set_width_chars(24);
-        refresh_row.append(&refresh_label);
-        refresh_row.append(&refresh_button);
-        bluetooth_page.append(&refresh_row);
-
-        refresh_button.connect_clicked(move |_| {
-            let current = ubertooth_device_combo.active_id().map(|v| v.to_string());
-            ubertooth_device_combo.remove_all();
-            ubertooth_device_combo.append(Some("default"), "Default Ubertooth Device");
-            for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
-                ubertooth_device_combo.append(Some(&device.id), &device.name);
-            }
-            if let Some(current) = current {
-                if !ubertooth_device_combo.set_active_id(Some(&current)) {
-                    ubertooth_device_combo.set_active_id(Some("default"));
-                }
-            } else {
-                ubertooth_device_combo.set_active_id(Some("default"));
-            }
-
-            if !bluetooth_enabled_check.is_active() {
-                ubertooth_device_combo.set_sensitive(false);
-            } else {
-                let uses_ubertooth = matches!(
-                    bluetooth_source_combo.active_id().as_deref(),
-                    Some("ubertooth") | Some("both")
-                );
-                ubertooth_device_combo.set_sensitive(uses_ubertooth);
-            }
+        bluetooth_enabled_check.connect_toggled(move |check| {
+            bluetooth_controller_combo.set_sensitive(check.is_active());
         });
     }
 
     let data_sources_page = page(&stack, "data_sources", "Data Sources");
     data_sources_page.append(&section_heading("Data Sources"));
+    let geoip_row = GtkBox::new(Orientation::Horizontal, 8);
+    let geoip_label = Label::new(Some("GeoIP Lookup File"));
+    geoip_label.set_width_chars(24);
+    geoip_label.set_xalign(0.0);
+    let geoip_entry = Entry::new();
+    geoip_entry.set_hexpand(true);
+    geoip_entry.set_text(&settings_snapshot.geoip_city_db_path.display().to_string());
+    let geoip_browse_btn = Button::with_label("Browse");
+    geoip_row.append(&geoip_label);
+    geoip_row.append(&geoip_entry);
+    geoip_row.append(&geoip_browse_btn);
+    data_sources_page.append(&geoip_row);
+
     let oui_row = GtkBox::new(Orientation::Horizontal, 8);
     let oui_label = Label::new(Some("OUI File"));
     oui_label.set_width_chars(24);
@@ -19695,6 +10138,30 @@ fn open_preferences_window(
 
     {
         let dialog = dialog.clone();
+        let geoip_entry = geoip_entry.clone();
+        geoip_browse_btn.connect_clicked(move |_| {
+            let current = geoip_entry.text().to_string();
+            let initial = if current.trim().is_empty() {
+                PathBuf::from(".")
+            } else {
+                PathBuf::from(current)
+            };
+            let geoip_entry = geoip_entry.clone();
+            choose_file_path(
+                &dialog,
+                "Select GeoIP Lookup File",
+                initial,
+                move |selected| {
+                    if let Some(path) = selected {
+                        geoip_entry.set_text(&path.display().to_string());
+                    }
+                },
+            );
+        });
+    }
+
+    {
+        let dialog = dialog.clone();
         let oui_entry = oui_entry.clone();
         oui_browse_btn.connect_clicked(move |_| {
             let current = oui_entry.text().to_string();
@@ -19719,6 +10186,7 @@ fn open_preferences_window(
         let global_status_box = global_status_box.clone();
         let pagination_defaults = pagination_defaults.clone();
         let widgets = widgets.clone();
+        let default_geoip_path = default_geoip_path.clone();
         let default_oui_path = default_oui_path.clone();
         dialog.connect_response(move |d, resp| {
             if resp == ResponseType::Apply {
@@ -19751,34 +10219,12 @@ fn open_preferences_window(
                     },
                     _ => GpsSettings::Disabled,
                 };
-                let wifi_packet_header_mode = match packet_header_combo.active_id().as_deref() {
-                    Some("ppi") => WifiPacketHeaderMode::Ppi,
-                    _ => WifiPacketHeaderMode::Radiotap,
-                };
-                let enable_wifi_frame_parsing = wifi_parse_check.is_active();
 
                 let bluetooth_enabled = bluetooth_enabled_check.is_active();
-                let bluetooth_scan_source = match bluetooth_source_combo.active_id().as_deref() {
-                    Some("ubertooth") => BluetoothScanSource::Ubertooth,
-                    Some("both") => BluetoothScanSource::Both,
-                    _ => BluetoothScanSource::Bluez,
-                };
                 let bluetooth_controller = if !bluetooth_enabled {
                     None
                 } else {
                     match bluetooth_controller_combo.active_id().as_deref() {
-                        Some("default") | None => None,
-                        Some(id) => Some(id.to_string()),
-                    }
-                };
-                let ubertooth_device = if !bluetooth_enabled
-                    || !matches!(
-                        bluetooth_scan_source,
-                        BluetoothScanSource::Ubertooth | BluetoothScanSource::Both
-                    ) {
-                    None
-                } else {
-                    match ubertooth_device_combo.active_id().as_deref() {
                         Some("default") | None => None,
                         Some(id) => Some(id.to_string()),
                     }
@@ -19794,6 +10240,12 @@ fn open_preferences_window(
                     .unwrap_or(500)
                     .clamp(100, 5_000);
 
+                let geoip_path_text = geoip_entry.text().to_string();
+                let geoip_path = if geoip_path_text.trim().is_empty() {
+                    default_geoip_path.clone()
+                } else {
+                    PathBuf::from(geoip_path_text.trim())
+                };
                 let oui_path_text = oui_entry.text().to_string();
                 let oui_path = if oui_path_text.trim().is_empty() {
                     default_oui_path.clone()
@@ -19810,10 +10262,7 @@ fn open_preferences_window(
                     let view_changed = s.settings.show_status_bar
                         != show_status_bar_check.is_active()
                         || s.settings.show_detail_pane != show_detail_pane_check.is_active()
-                        || s.settings.show_device_pane != show_device_pane_check.is_active()
-                        || s.settings.show_column_filters != show_column_filters_check.is_active()
-                        || s.settings.show_ap_inline_channel_usage
-                            != show_ap_inline_channel_usage_check.is_active();
+                        || s.settings.show_device_pane != show_device_pane_check.is_active();
 
                     if s.settings.default_rows_per_page != requested_rows {
                         s.settings.default_rows_per_page = requested_rows;
@@ -19835,40 +10284,29 @@ fn open_preferences_window(
                             .push(format!("default rows per page set to {}", requested_rows));
                     }
 
-                    if s.settings.use_zulu_time != use_zulu_time_check.is_active() {
-                        s.settings.use_zulu_time = use_zulu_time_check.is_active();
-                        set_use_zulu_time_display(s.settings.use_zulu_time);
-                        s.layout_dirty = true;
-                        applied_messages.push(format!(
-                            "time display set to {}",
-                            if s.settings.use_zulu_time {
-                                "Zulu (UTC)"
-                            } else {
-                                "local"
-                            }
-                        ));
-                    }
-
                     if s.settings.gps != gps_settings {
                         s.update_gps_provider(gps_settings);
                         applied_messages.push("gps settings applied".to_string());
                     }
 
                     let bluetooth_changed = s.settings.bluetooth_enabled != bluetooth_enabled
-                        || s.settings.bluetooth_scan_source != bluetooth_scan_source
                         || s.settings.bluetooth_controller != bluetooth_controller
-                        || s.settings.ubertooth_device != ubertooth_device
                         || s.settings.bluetooth_scan_timeout_secs != bluetooth_timeout
                         || s.settings.bluetooth_scan_pause_ms != bluetooth_pause;
                     if bluetooth_changed {
                         s.settings.bluetooth_enabled = bluetooth_enabled;
-                        s.settings.bluetooth_scan_source = bluetooth_scan_source;
                         s.settings.bluetooth_controller = bluetooth_controller;
-                        s.settings.ubertooth_device = ubertooth_device;
                         s.settings.bluetooth_scan_timeout_secs = bluetooth_timeout;
                         s.settings.bluetooth_scan_pause_ms = bluetooth_pause;
                         bluetooth_restart_needed = s.bluetooth_runtime.is_some();
                         applied_messages.push("bluetooth settings applied".to_string());
+                    }
+
+                    if s.settings.geoip_city_db_path != geoip_path {
+                        s.settings.geoip_city_db_path = geoip_path.clone();
+                        full_restart_needed = s.capture_runtime.is_some();
+                        applied_messages
+                            .push(format!("GeoIP lookup file set to {}", geoip_path.display()));
                     }
 
                     if s.settings.oui_source_path != oui_path {
@@ -19891,30 +10329,6 @@ fn open_preferences_window(
                             }
                         }
                         s.layout_dirty = true;
-                    }
-
-                    if s.settings.wifi_packet_header_mode != wifi_packet_header_mode {
-                        s.settings.wifi_packet_header_mode = wifi_packet_header_mode;
-                        full_restart_needed |= s.capture_runtime.is_some();
-                        applied_messages.push(format!(
-                            "wifi packet headers set to {}",
-                            match wifi_packet_header_mode {
-                                WifiPacketHeaderMode::Radiotap => "Radiotap",
-                                WifiPacketHeaderMode::Ppi => "PPI",
-                            }
-                        ));
-                    }
-                    if s.settings.enable_wifi_frame_parsing != enable_wifi_frame_parsing {
-                        s.settings.enable_wifi_frame_parsing = enable_wifi_frame_parsing;
-                        full_restart_needed |= s.capture_runtime.is_some();
-                        applied_messages.push(format!(
-                            "wifi parsing {}",
-                            if enable_wifi_frame_parsing {
-                                "enabled (higher resource use)"
-                            } else {
-                                "disabled (capture-only mode)"
-                            }
-                        ));
                     }
 
                     let ap_previous = s.settings.ap_table_layout.columns.clone();
@@ -19975,12 +10389,6 @@ fn open_preferences_window(
                     for message in applied_messages {
                         s.push_status(message);
                     }
-                    let time_mode_label = if s.settings.use_zulu_time {
-                        "ZULU (UTC)"
-                    } else {
-                        "LOCAL"
-                    };
-                    s.push_status(format!("current time mode: {}", time_mode_label));
 
                     if full_restart_needed {
                         let _ = s.begin_async_scan_shutdown(Some(
@@ -20002,8 +10410,6 @@ fn open_preferences_window(
                     Some(show_status_bar_check.is_active()),
                     Some(show_detail_pane_check.is_active()),
                     Some(show_device_pane_check.is_active()),
-                    Some(show_column_filters_check.is_active()),
-                    Some(show_ap_inline_channel_usage_check.is_active()),
                 );
                 state.borrow_mut().save_settings_to_disk();
                 if view_changed {
@@ -20022,16 +10428,6 @@ fn open_preferences_window(
                             &app,
                             "settings_show_device_pane",
                             show_device_pane_check.is_active(),
-                        );
-                        sync_view_menu_action_state(
-                            &app,
-                            "settings_show_column_filters",
-                            show_column_filters_check.is_active(),
-                        );
-                        sync_view_menu_action_state(
-                            &app,
-                            "settings_show_ap_inline_channel_usage",
-                            show_ap_inline_channel_usage_check.is_active(),
                         );
                     }
                 }
@@ -20159,7 +10555,6 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
 
     let controller_combo = ComboBoxText::new();
     controller_combo.append(Some("default"), "Default Controller");
-    controller_combo.append(Some(bluetooth::ALL_CONTROLLERS_ID), "All Controllers");
     let controllers = bluetooth::list_controllers().unwrap_or_default();
     for ctrl in &controllers {
         controller_combo.append(
@@ -20177,21 +10572,6 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
         );
     }
 
-    let source_combo = ComboBoxText::new();
-    source_combo.append(Some("bluez"), "BlueZ");
-    source_combo.append(Some("ubertooth"), "Ubertooth");
-    source_combo.append(Some("both"), "BlueZ + Ubertooth");
-
-    let ubertooth_combo = ComboBoxText::new();
-    ubertooth_combo.append(Some("default"), "Default Ubertooth Device");
-    ubertooth_combo.append(
-        Some(bluetooth::ALL_UBERTOOTH_DEVICES_ID),
-        "All Ubertooth Devices",
-    );
-    for device in bluetooth::list_ubertooth_devices().unwrap_or_default() {
-        ubertooth_combo.append(Some(&device.id), &device.name);
-    }
-
     let scan_timeout_entry = Entry::new();
     scan_timeout_entry.set_placeholder_text(Some("Scan timeout seconds"));
     let scan_pause_entry = Entry::new();
@@ -20205,67 +10585,22 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
                 .as_deref()
                 .or(Some("default")),
         );
-        source_combo.set_active_id(Some(match s.settings.bluetooth_scan_source {
-            BluetoothScanSource::Bluez => "bluez",
-            BluetoothScanSource::Ubertooth => "ubertooth",
-            BluetoothScanSource::Both => "both",
-        }));
-        ubertooth_combo.set_active_id(s.settings.ubertooth_device.as_deref().or(Some("default")));
         scan_timeout_entry.set_text(&s.settings.bluetooth_scan_timeout_secs.to_string());
         scan_pause_entry.set_text(&s.settings.bluetooth_scan_pause_ms.to_string());
     }
 
-    area.append(&Label::new(Some("Bluetooth Source")));
-    area.append(&source_combo);
     area.append(&Label::new(Some("Bluetooth Radio")));
     area.append(&controller_combo);
-    area.append(&Label::new(Some("Ubertooth Device")));
-    area.append(&ubertooth_combo);
     area.append(&Label::new(Some("Scan Timeout Seconds")));
     area.append(&scan_timeout_entry);
     area.append(&Label::new(Some("Scan Pause Milliseconds")));
     area.append(&scan_pause_entry);
 
     {
-        let source_combo = source_combo.clone();
-        let controller_combo = controller_combo.clone();
-        let ubertooth_combo = ubertooth_combo.clone();
-        let source_for_update = source_combo.clone();
-        let controller_for_update = controller_combo.clone();
-        let ubertooth_for_update = ubertooth_combo.clone();
-        let update_visibility = move || {
-            let source = source_for_update
-                .active_id()
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "bluez".to_string());
-            controller_for_update.set_sensitive(matches!(source.as_str(), "bluez" | "both"));
-            ubertooth_for_update.set_sensitive(matches!(source.as_str(), "ubertooth" | "both"));
-        };
-        update_visibility();
-        let update_visibility = Rc::new(update_visibility);
-        {
-            let update_visibility = update_visibility.clone();
-            let source_combo = source_combo.clone();
-            source_combo.connect_changed(move |_| {
-                (update_visibility)();
-            });
-        }
-    }
-
-    {
         let state = state.clone();
         dialog.connect_response(move |d, resp| {
             if resp == ResponseType::Apply {
-                let source = match source_combo.active_id().as_deref() {
-                    Some("ubertooth") => BluetoothScanSource::Ubertooth,
-                    Some("both") => BluetoothScanSource::Both,
-                    _ => BluetoothScanSource::Bluez,
-                };
                 let controller = match controller_combo.active_id().as_deref() {
-                    Some("default") | None => None,
-                    Some(v) => Some(v.to_string()),
-                };
-                let ubertooth_device = match ubertooth_combo.active_id().as_deref() {
                     Some("default") | None => None,
                     Some(v) => Some(v.to_string()),
                 };
@@ -20281,9 +10616,7 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
                     .clamp(100, 5_000);
 
                 let mut s = state.borrow_mut();
-                s.settings.bluetooth_scan_source = source;
                 s.settings.bluetooth_controller = controller;
-                s.settings.ubertooth_device = ubertooth_device;
                 s.settings.bluetooth_scan_timeout_secs = timeout;
                 s.settings.bluetooth_scan_pause_ms = pause;
                 s.save_settings_to_disk();
@@ -20406,7 +10739,6 @@ fn merge_ap(aps: &mut Vec<AccessPointRecord>, incoming: AccessPointRecord) {
         if incoming.country_code_80211d.is_some() {
             existing.country_code_80211d = incoming.country_code_80211d;
         }
-        merge_unique_strings(&mut existing.source_adapters, incoming.source_adapters);
         existing.channel = incoming.channel.or(existing.channel);
         existing.frequency_mhz = incoming.frequency_mhz.or(existing.frequency_mhz);
         existing.band = incoming.band;
@@ -20459,7 +10791,6 @@ fn merge_client(clients: &mut Vec<ClientRecord>, incoming: ClientRecord) {
         if incoming.oui_manufacturer.is_some() {
             existing.oui_manufacturer = incoming.oui_manufacturer;
         }
-        merge_unique_strings(&mut existing.source_adapters, incoming.source_adapters);
         if incoming.associated_ap.is_some() {
             existing.associated_ap = incoming.associated_ap;
         }
@@ -20495,6 +10826,81 @@ fn merge_client_network_intel(
     existing: &mut ClientRecord,
     incoming: &crate::model::ClientNetworkIntel,
 ) {
+    for value in &incoming.local_ipv4_addresses {
+        if !existing.network_intel.local_ipv4_addresses.contains(value) {
+            existing
+                .network_intel
+                .local_ipv4_addresses
+                .push(value.clone());
+        }
+    }
+    for value in &incoming.local_ipv6_addresses {
+        if !existing.network_intel.local_ipv6_addresses.contains(value) {
+            existing
+                .network_intel
+                .local_ipv6_addresses
+                .push(value.clone());
+        }
+    }
+    for value in &incoming.dhcp_hostnames {
+        if !existing.network_intel.dhcp_hostnames.contains(value) {
+            existing.network_intel.dhcp_hostnames.push(value.clone());
+        }
+    }
+    for value in &incoming.dhcp_fqdns {
+        if !existing.network_intel.dhcp_fqdns.contains(value) {
+            existing.network_intel.dhcp_fqdns.push(value.clone());
+        }
+    }
+    for value in &incoming.dhcp_vendor_classes {
+        if !existing.network_intel.dhcp_vendor_classes.contains(value) {
+            existing
+                .network_intel
+                .dhcp_vendor_classes
+                .push(value.clone());
+        }
+    }
+    for value in &incoming.dns_names {
+        if !existing.network_intel.dns_names.contains(value) {
+            existing.network_intel.dns_names.push(value.clone());
+        }
+    }
+    for endpoint in &incoming.remote_endpoints {
+        if let Some(current) =
+            existing
+                .network_intel
+                .remote_endpoints
+                .iter_mut()
+                .find(|candidate| {
+                    candidate.ip_address == endpoint.ip_address
+                        && candidate.port == endpoint.port
+                        && candidate.protocol == endpoint.protocol
+                })
+        {
+            current.first_seen = current.first_seen.min(endpoint.first_seen);
+            current.last_seen = current.last_seen.max(endpoint.last_seen);
+            current.packet_count = current.packet_count.max(endpoint.packet_count);
+            if current.domain.is_none() && endpoint.domain.is_some() {
+                current.domain = endpoint.domain.clone();
+            }
+            if current.geo_city.is_none() && endpoint.geo_city.is_some() {
+                current.geo_city = endpoint.geo_city.clone();
+            }
+        } else {
+            existing
+                .network_intel
+                .remote_endpoints
+                .push(endpoint.clone());
+        }
+    }
+    existing.network_intel.remote_endpoints.sort_by(|a, b| {
+        b.last_seen
+            .cmp(&a.last_seen)
+            .then_with(|| b.packet_count.cmp(&a.packet_count))
+    });
+    if existing.network_intel.remote_endpoints.len() > 64 {
+        existing.network_intel.remote_endpoints.truncate(64);
+    }
     existing.network_intel.uplink_bytes = existing
         .network_intel
         .uplink_bytes
@@ -20605,7 +11011,6 @@ fn merge_bluetooth_device(
         if incoming.oui_manufacturer.is_some() {
             existing.oui_manufacturer = incoming.oui_manufacturer;
         }
-        merge_unique_strings(&mut existing.source_adapters, incoming.source_adapters);
         if incoming.advertised_name.is_some() {
             existing.advertised_name = incoming.advertised_name;
         }
@@ -20658,137 +11063,6 @@ fn sanitize_name(value: &str) -> String {
         .collect()
 }
 
-fn merge_unique_strings(existing: &mut Vec<String>, incoming: Vec<String>) {
-    for value in incoming {
-        if !existing
-            .iter()
-            .any(|current| current.eq_ignore_ascii_case(&value))
-        {
-            existing.push(value);
-        }
-    }
-}
-
-fn format_source_adapters(adapters: &[String]) -> String {
-    if adapters.is_empty() {
-        "Unknown".to_string()
-    } else {
-        adapters.join(", ")
-    }
-}
-
-fn active_interface_name_for_settings(iface: &InterfaceSettings) -> String {
-    iface
-        .monitor_interface_name
-        .clone()
-        .unwrap_or_else(|| iface.interface_name.clone())
-}
-
-fn format_interface_work_mode(mode: &ChannelSelectionMode) -> String {
-    match mode {
-        ChannelSelectionMode::HopAll { channels, dwell_ms } => {
-            format!("hop specific ({} ch @ {}ms)", channels.len(), dwell_ms)
-        }
-        ChannelSelectionMode::HopBand {
-            band,
-            channels,
-            dwell_ms,
-        } => format!(
-            "hop {} ({} ch @ {}ms)",
-            band.label(),
-            channels.len(),
-            dwell_ms
-        ),
-        ChannelSelectionMode::Locked { channel, ht_mode } => {
-            format!("locked ch {} ({})", channel, ht_mode)
-        }
-    }
-}
-
-fn format_interface_status_panel_text(
-    state: &AppState,
-    attached_interfaces: &[capture::InterfaceInfo],
-    wifi_running: bool,
-) -> String {
-    let attached = if attached_interfaces.is_empty() {
-        "none".to_string()
-    } else {
-        attached_interfaces
-            .iter()
-            .map(|iface| format!("{} ({})", iface.name, iface.if_type))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-
-    let attached_names = attached_interfaces
-        .iter()
-        .map(|iface| iface.name.to_ascii_lowercase())
-        .collect::<HashSet<_>>();
-
-    let configured_enabled = state
-        .settings
-        .interfaces
-        .iter()
-        .filter(|iface| iface.enabled)
-        .collect::<Vec<_>>();
-
-    let active = if configured_enabled.is_empty() {
-        "none".to_string()
-    } else {
-        configured_enabled
-            .iter()
-            .map(|iface| active_interface_name_for_settings(iface))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-
-    let work = if configured_enabled.is_empty() {
-        "none".to_string()
-    } else {
-        configured_enabled
-            .iter()
-            .map(|iface| {
-                let configured_name = iface.interface_name.clone();
-                let active_name = active_interface_name_for_settings(iface);
-                let attached_active = attached_names.contains(&active_name.to_ascii_lowercase());
-                let activity = if wifi_running {
-                    if attached_active {
-                        "capturing"
-                    } else {
-                        "not attached"
-                    }
-                } else if attached_active {
-                    "ready"
-                } else {
-                    "not attached"
-                };
-                format!(
-                    "{} -> {} | {} | {}",
-                    configured_name,
-                    active_name,
-                    format_interface_work_mode(&iface.channel_mode),
-                    activity
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
-    format!(
-        "Attached: {}\nActive: {}\nWork:\n{}",
-        attached, active, work
-    )
-}
-
-fn interface_matches_name(iface: &InterfaceSettings, name: &str) -> bool {
-    iface.interface_name.eq_ignore_ascii_case(name)
-        || iface
-            .monitor_interface_name
-            .as_deref()
-            .map(|active| active.eq_ignore_ascii_case(name))
-            .unwrap_or(false)
-}
-
 fn should_record_observation(
     map: &mut HashMap<String, chrono::DateTime<Utc>>,
     key: &str,
@@ -20822,9 +11096,10 @@ fn should_persist_device_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{ClientEndpointRecord, ClientNetworkIntel};
 
     #[test]
-    fn client_detail_text_excludes_ip_metadata_sections() {
+    fn client_detail_text_includes_network_intel_sections() {
         let now = Utc::now();
         let mut client = ClientRecord::new("AA:BB:CC:DD:EE:FF", now);
         client.oui_manufacturer = Some("Example Vendor".to_string());
@@ -20833,76 +11108,73 @@ mod tests {
         client.probes = vec!["ExampleWiFi".to_string()];
         client.seen_access_points = vec!["11:22:33:44:55:66".to_string()];
         client.handshake_networks = vec!["11:22:33:44:55:66".to_string()];
-        client.network_intel.uplink_bytes = 512;
-        client.network_intel.downlink_bytes = 1024;
-        client.network_intel.retry_frame_count = 2;
-        client.network_intel.power_save_observed = true;
-        client.network_intel.qos_priorities = vec![0, 5];
-        client.network_intel.eapol_frame_count = 1;
-        client.network_intel.pmkid_count = 1;
-        client.network_intel.last_frame_type = Some(2);
-        client.network_intel.last_frame_subtype = Some(8);
-        client.network_intel.last_channel = Some(6);
-        client.network_intel.last_frequency_mhz = Some(2437);
-        client.network_intel.band = SpectrumBand::Ghz2_4;
-        client.network_intel.last_reason_code = Some(7);
-        client.network_intel.last_status_code = Some(0);
-        client.network_intel.listen_interval = Some(10);
-        client.network_intel.packet_mix.data = 12;
+        client.network_intel = ClientNetworkIntel {
+            local_ipv4_addresses: vec!["192.168.1.25".to_string()],
+            local_ipv6_addresses: vec!["fe80::1234".to_string()],
+            dhcp_hostnames: vec!["phone".to_string()],
+            dhcp_fqdns: vec!["phone.lan".to_string()],
+            dhcp_vendor_classes: vec!["android-dhcp-13".to_string()],
+            dns_names: vec!["example.com".to_string()],
+            remote_endpoints: vec![ClientEndpointRecord {
+                ip_address: "93.184.216.34".to_string(),
+                protocol: "TCP".to_string(),
+                port: Some(443),
+                domain: Some("example.com".to_string()),
+                geo_city: Some("Los Angeles, US".to_string()),
+                first_seen: now,
+                last_seen: now,
+                packet_count: 4,
+            }],
+            uplink_bytes: 512,
+            downlink_bytes: 1024,
+            retry_frame_count: 2,
+            power_save_observed: true,
+            qos_priorities: vec![0, 5],
+            eapol_frame_count: 1,
+            pmkid_count: 1,
+            last_frame_type: Some(2),
+            last_frame_subtype: Some(8),
+            last_channel: Some(6),
+            last_frequency_mhz: Some(2437),
+            band: SpectrumBand::Ghz2_4,
+            last_reason_code: Some(7),
+            last_status_code: Some(0),
+            listen_interval: Some(10),
+            ..ClientNetworkIntel::default()
+        };
 
         let rendered = format_client_detail_text(&client, &[]);
+        assert!(rendered.contains("Open Network Metadata"));
+        assert!(rendered.contains("192.168.1.25"));
+        assert!(rendered.contains("example.com"));
+        assert!(rendered.contains("93.184.216.34:443"));
         assert!(rendered.contains("Radio And Behavior"));
         assert!(rendered.contains("Security"));
-        assert!(!rendered.contains("Open Network Metadata"));
-        assert!(!rendered.contains("HTTP"));
-        assert!(!rendered.contains("DNS"));
     }
 
     #[test]
-    fn client_detail_signature_changes_when_packet_mix_changes() {
+    fn client_detail_signature_changes_when_endpoint_content_changes() {
         let now = Utc::now();
         let mut client = ClientRecord::new("AA:BB:CC:DD:EE:FF", now);
+        client.network_intel.remote_endpoints = vec![ClientEndpointRecord {
+            ip_address: "93.184.216.34".to_string(),
+            protocol: "TCP".to_string(),
+            port: Some(443),
+            domain: Some("example.com".to_string()),
+            geo_city: Some("Los Angeles, US".to_string()),
+            first_seen: now,
+            last_seen: now,
+            packet_count: 1,
+        }];
+
         let before = client_detail_signature(&client);
-        client.network_intel.packet_mix.data = 2;
-        client.network_intel.retry_frame_count = 1;
-        let after = client_detail_signature(&client);
-        assert_ne!(before, after);
-    }
+        client.network_intel.remote_endpoints[0].packet_count = 2;
+        let after_packets = client_detail_signature(&client);
+        assert_ne!(before, after_packets);
 
-    #[test]
-    fn bluetooth_action_controller_prefers_observed_bluez_source_when_unset() {
-        let now = Utc::now();
-        let mut device = BluetoothDeviceRecord::new("AA:BB:CC:DD:EE:FF", now);
-        device.source_adapters = vec![
-            "ubertooth:usb0".to_string(),
-            "bluez:D0:C6:37:4D:3E:05".to_string(),
-        ];
-
-        assert_eq!(
-            bluetooth_action_controller(None, &device),
-            Some("D0:C6:37:4D:3E:05".to_string())
-        );
-    }
-
-    #[test]
-    fn bluetooth_action_controller_respects_explicit_controller_setting() {
-        let now = Utc::now();
-        let mut device = BluetoothDeviceRecord::new("AA:BB:CC:DD:EE:FF", now);
-        device.source_adapters = vec!["bluez:D0:C6:37:4D:3E:05".to_string()];
-
-        assert_eq!(
-            bluetooth_action_controller(Some("11:22:33:44:55:66"), &device),
-            Some("11:22:33:44:55:66".to_string())
-        );
-    }
-
-    #[test]
-    fn bluetooth_record_supports_bluez_actions_rejects_ubertooth_only_device() {
-        let now = Utc::now();
-        let mut device = BluetoothDeviceRecord::new("AA:BB:CC:DD:EE:FF", now);
-        device.source_adapters = vec!["ubertooth:usb0".to_string()];
-
-        assert!(!bluetooth_record_supports_bluez_actions(&device));
+        client.network_intel.remote_endpoints[0].domain = Some("www.example.com".to_string());
+        let after_domain = client_detail_signature(&client);
+        assert_ne!(after_packets, after_domain);
     }
 
     #[test]
@@ -20917,9 +11189,7 @@ mod tests {
         }
 
         let columns = table_filter_columns(&layout, ap_column_label);
-        assert!(columns
-            .iter()
-            .any(|(id, _, width)| id == "ssid" && *width == 23));
+        assert!(columns.iter().any(|(id, _, width)| id == "ssid" && *width == 23));
         assert!(!columns.iter().any(|(id, _, _)| id == "bssid"));
     }
 
@@ -20932,1471 +11202,5 @@ mod tests {
 
         assert!(client_seen_on_ap(&client, "11:22:33:44:55:66"));
         assert!(!client_seen_on_ap(&client, "77:88:99:AA:BB:CC"));
-    }
-
-    #[test]
-    fn clients_currently_on_ap_excludes_historical_entries() {
-        let now = Utc::now();
-        let mut current = ClientRecord::new("AA:BB:CC:DD:EE:01", now);
-        current.associated_ap = Some("11:22:33:44:55:66".to_string());
-
-        let mut historical = ClientRecord::new("AA:BB:CC:DD:EE:02", now);
-        historical.associated_ap = Some("77:88:99:AA:BB:CC".to_string());
-        historical.seen_access_points = vec!["11:22:33:44:55:66".to_string()];
-
-        let unassociated = ClientRecord::new("AA:BB:CC:DD:EE:03", now);
-        let clients = vec![current.clone(), historical, unassociated];
-
-        let filtered = clients_currently_on_ap(&clients, "11:22:33:44:55:66");
-        let macs = filtered
-            .iter()
-            .map(|client| client.mac.as_str())
-            .collect::<Vec<_>>();
-
-        assert_eq!(macs, vec![current.mac.as_str()]);
-    }
-
-    #[test]
-    fn assoc_clients_signature_ignores_non_current_clients() {
-        let now = Utc::now();
-        let mut current = ClientRecord::new("AA:BB:CC:DD:EE:01", now);
-        current.associated_ap = Some("11:22:33:44:55:66".to_string());
-
-        let mut other_ap = ClientRecord::new("AA:BB:CC:DD:EE:02", now);
-        other_ap.associated_ap = Some("77:88:99:AA:BB:CC".to_string());
-
-        let layout = default_assoc_client_table_layout();
-
-        let sig = assoc_clients_signature(
-            &[current, other_ap],
-            "11:22:33:44:55:66",
-            &[],
-            &layout,
-            &TableSortState::new("last_heard", true),
-            1,
-            50,
-            &[],
-            &WatchlistSettings::default(),
-        );
-
-        assert!(sig.starts_with("1|"));
-    }
-
-    #[test]
-    fn row_matches_column_filters_supports_partial_case_insensitive_matching() {
-        let filters = vec![
-            ("ssid".to_string(), "homenet".to_string()),
-            ("encryption".to_string(), "wPa2".to_string()),
-        ];
-        let values = std::collections::HashMap::from([
-            ("ssid".to_string(), "HomeNetwork".to_string()),
-            ("encryption".to_string(), "WPA2-PSK".to_string()),
-        ]);
-
-        assert!(row_matches_column_filters(&filters, |column| values
-            .get(column)
-            .cloned()));
-    }
-
-    #[test]
-    fn row_matches_column_filters_requires_all_active_columns_to_match() {
-        let filters = vec![
-            ("ssid".to_string(), "home".to_string()),
-            ("channel".to_string(), "11".to_string()),
-        ];
-        let values = std::collections::HashMap::from([
-            ("ssid".to_string(), "HomeNetwork".to_string()),
-            ("channel".to_string(), "6".to_string()),
-        ]);
-
-        assert!(!row_matches_column_filters(&filters, |column| values
-            .get(column)
-            .cloned()));
-    }
-
-    #[test]
-    fn sdr_center_geiger_reading_uses_center_window() {
-        let mut bins = vec![-100.0_f32; 64];
-        bins[31] = -55.0;
-        bins[32] = -50.0;
-        bins[33] = -53.0;
-        let (dbm, tone_hz, fraction) =
-            sdr_center_geiger_reading(&bins).expect("expected geiger reading");
-        assert!(dbm > -90.0);
-        assert!(tone_hz >= 250);
-        assert!(fraction > 0.0);
-    }
-
-    #[test]
-    fn sdr_center_geiger_reading_none_for_empty_bins() {
-        assert!(sdr_center_geiger_reading(&[]).is_none());
-    }
-
-    #[test]
-    fn sdr_center_geiger_squelch_target_applies_margin_and_clamps() {
-        assert!((sdr_center_geiger_squelch_target(-55.0, 8.0) - (-63.0)).abs() < f32::EPSILON);
-        assert!((sdr_center_geiger_squelch_target(-120.0, 30.0) - (-130.0)).abs() < f32::EPSILON);
-        assert!((sdr_center_geiger_squelch_target(-4.0, 2.0) - (-10.0)).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn should_apply_sdr_auto_squelch_requires_minimum_delta() {
-        assert!(should_apply_sdr_auto_squelch(None, -70.0));
-        assert!(!should_apply_sdr_auto_squelch(Some(-70.4), -70.0));
-        assert!(should_apply_sdr_auto_squelch(Some(-72.0), -70.0));
-    }
-
-    #[test]
-    fn sdr_operator_presets_have_unique_ids() {
-        let presets = sdr_operator_presets();
-        let unique = presets
-            .iter()
-            .map(|preset| preset.id.as_str())
-            .collect::<std::collections::HashSet<_>>();
-        assert_eq!(presets.len(), unique.len());
-        assert!(presets
-            .iter()
-            .all(|preset| preset.center_freq_hz >= 100_000));
-    }
-
-    #[test]
-    fn user_sdr_preset_id_round_trip() {
-        let id = user_sdr_preset_id(7);
-        assert_eq!(parse_user_sdr_preset_id(&id), Some(7));
-        assert_eq!(parse_user_sdr_preset_id("wide_433"), None);
-    }
-
-    #[test]
-    fn sdr_preset_exchange_path_uses_expected_filename() {
-        let path = sdr_preset_exchange_path();
-        assert_eq!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some("easywifi-sdr-presets.json")
-        );
-    }
-
-    #[test]
-    fn merge_sdr_operator_presets_skips_invalid_and_duplicates() {
-        let base = SdrOperatorPresetSetting {
-            label: "Airband".to_string(),
-            center_freq_hz: 127_500_000,
-            sample_rate_hz: 2_400_000,
-            scan_enabled: true,
-            scan_start_hz: 118_000_000,
-            scan_end_hz: 137_000_000,
-            scan_step_hz: 25_000,
-            scan_steps_per_sec: 8.0,
-            squelch_dbm: -72.0,
-        };
-        let mut existing = vec![base.clone()];
-        let imported = vec![
-            base,
-            SdrOperatorPresetSetting {
-                label: "invalid".to_string(),
-                center_freq_hz: 0,
-                sample_rate_hz: 2_400_000,
-                scan_enabled: false,
-                scan_start_hz: 0,
-                scan_end_hz: 0,
-                scan_step_hz: 0,
-                scan_steps_per_sec: 0.0,
-                squelch_dbm: -80.0,
-            },
-            SdrOperatorPresetSetting {
-                label: "AIS".to_string(),
-                center_freq_hz: 162_000_000,
-                sample_rate_hz: 2_400_000,
-                scan_enabled: true,
-                scan_start_hz: 161_950_000,
-                scan_end_hz: 162_050_000,
-                scan_step_hz: 25_000,
-                scan_steps_per_sec: 6.0,
-                squelch_dbm: -76.0,
-            },
-        ];
-
-        let added = merge_sdr_operator_presets(&mut existing, imported);
-        assert_eq!(added, 1);
-        assert_eq!(existing.len(), 2);
-    }
-
-    #[test]
-    fn frequency_presets_include_requested_common_targets() {
-        let groups = default_frequency_preset_groups();
-        let ids = groups
-            .iter()
-            .flat_map(|group| group.entries.iter().map(|entry| entry.id.as_str()))
-            .collect::<std::collections::HashSet<_>>();
-        assert!(ids.contains("dect_1886400"));
-        assert!(ids.contains("dmr_446075"));
-        assert!(ids.contains("ism_915000"));
-        assert!(ids.contains("ism_433920"));
-        assert!(ids.contains("ism_315000"));
-        assert!(ids.contains("sonde_403500"));
-        assert!(ids.contains("drone_rid_2437000"));
-        assert!(ids.contains("drone_rid_5745000"));
-        assert!(ids.contains("ble_data_ch00"));
-        assert!(ids.contains("ble_data_ch36"));
-        assert!(ids.contains("ble_adv_ch37"));
-        assert!(ids.contains("thread_ch11"));
-        assert!(ids.contains("thread_ch26"));
-    }
-
-    #[test]
-    fn cellular_arfcn_playlist_groups_include_uplink_and_downlink_frequencies() {
-        let uplink_groups = cellular_arfcn_frequency_groups(true);
-        let downlink_groups = cellular_arfcn_frequency_groups(false);
-        assert_eq!(uplink_groups.len(), 19);
-        assert_eq!(downlink_groups.len(), 19);
-
-        let uplink_entries = uplink_groups
-            .iter()
-            .flat_map(|group| group.entries.iter())
-            .collect::<Vec<_>>();
-        let downlink_entries = downlink_groups
-            .iter()
-            .flat_map(|group| group.entries.iter())
-            .collect::<Vec<_>>();
-
-        assert!(uplink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_ul_gsm850_128" && entry.freq_hz == 824_200_000));
-        assert!(downlink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_dl_gsm850_128" && entry.freq_hz == 869_200_000));
-        assert!(uplink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_ul_egsm900_975" && entry.freq_hz == 880_200_000));
-        assert!(downlink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_dl_dcs1800_512" && entry.freq_hz == 1_805_200_000));
-        assert!(uplink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_ul_pcs1900_512" && entry.freq_hz == 1_850_200_000));
-        assert!(downlink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_dl_pcs1900_512" && entry.freq_hz == 1_930_200_000));
-        assert!(uplink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_ul_umts_b1_9612" && entry.freq_hz == 1_922_400_000));
-        assert!(downlink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_dl_umts_b1_9612" && entry.freq_hz == 2_112_400_000));
-        assert!(uplink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_ul_lte_b2_18600" && entry.freq_hz == 1_850_000_000));
-        assert!(downlink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_dl_lte_b2_600" && entry.freq_hz == 1_930_000_000));
-        assert!(downlink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_dl_lte_b66_66436" && entry.freq_hz == 2_110_000_000));
-        assert!(uplink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_ul_lte_b66_131972" && entry.freq_hz == 1_710_000_000));
-        assert!(downlink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_dl_lte_b71_68586" && entry.freq_hz == 617_000_000));
-        assert!(uplink_entries
-            .iter()
-            .any(|entry| entry.id == "arfcn_ul_lte_b71_133122" && entry.freq_hz == 663_000_000));
-    }
-
-    #[test]
-    fn cellular_arfcn_playlist_groups_are_sorted_and_unique_per_group() {
-        for uplink in [true, false] {
-            let groups = cellular_arfcn_frequency_groups(uplink);
-            assert!(groups.len() >= 19);
-            for group in groups {
-                assert!(
-                    !group.entries.is_empty(),
-                    "group `{}` had no entries",
-                    group.label
-                );
-                let mut prev = 0u64;
-                let mut ids = std::collections::HashSet::<String>::new();
-                for entry in group.entries {
-                    assert!(
-                        ids.insert(entry.id.clone()),
-                        "duplicate entry id `{}` in group `{}`",
-                        entry.id,
-                        group.label
-                    );
-                    assert!(
-                        entry.freq_hz >= prev,
-                        "group `{}` is not sorted by frequency",
-                        group.label
-                    );
-                    prev = entry.freq_hz;
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn bluetooth_presets_include_expected_ble_channel_centers() {
-        let entries = bluetooth_frequency_presets();
-        let map = entries
-            .iter()
-            .map(|entry| (entry.id.as_str(), entry.freq_hz))
-            .collect::<HashMap<_, _>>();
-        assert_eq!(map.get("ble_data_ch00"), Some(&2_404_000_000));
-        assert_eq!(map.get("ble_data_ch10"), Some(&2_424_000_000));
-        assert_eq!(map.get("ble_data_ch11"), Some(&2_428_000_000));
-        assert_eq!(map.get("ble_data_ch36"), Some(&2_478_000_000));
-        assert_eq!(map.get("ble_adv_ch37"), Some(&2_402_000_000));
-        assert_eq!(map.get("ble_adv_ch38"), Some(&2_426_000_000));
-        assert_eq!(map.get("ble_adv_ch39"), Some(&2_480_000_000));
-    }
-
-    #[test]
-    fn scanner_presets_include_24ghz_and_configurable_ranges() {
-        let groups = default_scanner_preset_groups();
-        let entries = groups
-            .iter()
-            .flat_map(|group| group.entries.iter())
-            .collect::<Vec<_>>();
-        assert!(entries.iter().any(|entry| entry.id == "scan_2400_24835"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == "scan_drone_rid_2400_24835"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_ble_data"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_zigbee24"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_thread24"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == "scan_drone_rid_5725_5850"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == "scan_p25_700_769_775"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == "scan_p25_800_851_869"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == "scan_gsm_lte_935_960"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == "scan_iridium_1616_16265"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == "scan_dect_1880_1900"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == "scan_radiosonde_400_406"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == "scan_weather_apt_137_138"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_863_870"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_gsm850_ul"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_gsm850_dl"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_umts_b2_ul"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_umts_b8_dl"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b2_ul"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b2_dl"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b66_ul"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b66_dl"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b71_ul"));
-        assert!(entries.iter().any(|entry| entry.id == "scan_lte_b71_dl"));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == "scan_sat_lband_1525_1660"));
-        assert!(entries
-            .iter()
-            .all(|entry| entry.start_hz < entry.end_hz && entry.step_hz > 0));
-    }
-
-    #[test]
-    fn scanner_presets_include_saved_operator_scan_profiles() {
-        let settings = AppSettings {
-            sdr_operator_presets: vec![
-                SdrOperatorPresetSetting {
-                    label: "Custom IoT".to_string(),
-                    center_freq_hz: 915_000_000,
-                    sample_rate_hz: 2_400_000,
-                    scan_enabled: true,
-                    scan_start_hz: 902_000_000,
-                    scan_end_hz: 928_000_000,
-                    scan_step_hz: 250_000,
-                    scan_steps_per_sec: 6.0,
-                    squelch_dbm: -79.0,
-                },
-                SdrOperatorPresetSetting {
-                    label: "Not Scanner".to_string(),
-                    center_freq_hz: 433_920_000,
-                    sample_rate_hz: 2_400_000,
-                    scan_enabled: false,
-                    scan_start_hz: 433_000_000,
-                    scan_end_hz: 435_000_000,
-                    scan_step_hz: 25_000,
-                    scan_steps_per_sec: 8.0,
-                    squelch_dbm: -82.0,
-                },
-            ],
-            ..AppSettings::default()
-        };
-        let group = scanner_presets_from_settings(&settings).expect("saved scanner group");
-        assert_eq!(group.label, "Saved Scanner Presets");
-        assert_eq!(group.entries.len(), 1);
-        assert_eq!(group.entries[0].label, "Custom IoT");
-        assert_eq!(group.entries[0].sample_rate_hz, Some(2_400_000));
-    }
-
-    #[test]
-    fn protocol_scan_macros_cover_requested_protocol_targets() {
-        let macros = protocol_scan_macros();
-        let ids = macros
-            .iter()
-            .map(|entry| entry.id.as_str())
-            .collect::<std::collections::HashSet<_>>();
-        assert!(ids.contains("macro_pager_us"));
-        assert!(ids.contains("macro_dmr_uhf"));
-        assert!(ids.contains("macro_p25_800"));
-        assert!(ids.contains("macro_dect"));
-        assert!(ids.contains("macro_satcom_lband"));
-        assert!(ids.contains("macro_iridium_lband"));
-        assert!(ids.contains("macro_gsm_lte_meta"));
-        assert!(ids.contains("macro_adsb_1090"));
-        assert!(ids.contains("macro_acars_vhf"));
-        assert!(ids.contains("macro_ais_marine"));
-        assert!(ids.contains("macro_aprs_144390"));
-        assert!(ids.contains("macro_radiosonde_400_406"));
-        assert!(ids.contains("macro_drone_dji_24"));
-        assert!(ids.contains("macro_drone_rid_58"));
-        assert!(ids.contains("macro_weather_apt"));
-        assert!(ids.contains("macro_iot_915"));
-    }
-
-    #[test]
-    fn protocol_scan_macros_use_valid_ranges_and_decoder_ids() {
-        let macros = protocol_scan_macros();
-        assert!(macros.iter().all(|entry| {
-            !entry.decoder_id.trim().is_empty()
-                && entry.start_hz < entry.end_hz
-                && entry.step_hz > 0
-                && entry.steps_per_sec > 0.0
-        }));
-    }
-
-    #[test]
-    fn fcc_area_scan_preset_builder_filters_rows_by_area() {
-        let path = std::env::temp_dir().join(format!("fcc-area-{}.csv", Uuid::new_v4()));
-        let csv = "city,state,frequency_assigned,radio_service_desc\nRaleigh,NC,155.340,Public Safety\nRaleigh,NC,460.125,Public Safety\nAustin,TX,453.500,Business\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh", "")
-            .expect("parse ok")
-            .expect("preset");
-        let preset = scan.preset;
-        assert!(preset.scan_enabled);
-        assert!(preset.scan_start_hz <= 155_340_000);
-        assert!(preset.scan_end_hz >= 460_125_000);
-        assert!(preset.label.contains("Public Safety"));
-        assert_eq!(scan.signal_type.as_deref(), Some("Public Safety"));
-        assert_eq!(scan.matched_rows, 2);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn fcc_area_scan_preset_builder_returns_none_when_no_rows_match() {
-        let path = std::env::temp_dir().join(format!("fcc-area-empty-{}.csv", Uuid::new_v4()));
-        let csv = "city,state,frequency_assigned\nAustin,TX,453.500\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh", "").expect("parse ok");
-        assert!(scan.is_none());
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn fcc_area_scan_preset_builder_applies_signal_type_filter() {
-        let path = std::env::temp_dir().join(format!("fcc-area-type-{}.csv", Uuid::new_v4()));
-        let csv = "city,state,frequency_assigned,radio_service_desc\nRaleigh,NC,155.340,Public Safety\nRaleigh,NC,460.125,Business\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh", "public")
-            .expect("parse ok")
-            .expect("preset");
-        assert!(scan.preset.scan_start_hz <= 155_340_000);
-        assert!(scan.preset.scan_end_hz >= 155_340_000);
-        assert_eq!(scan.matched_rows, 1);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn fcc_area_scan_preset_builder_accepts_tx_rx_hz_aliases() {
-        let path = std::env::temp_dir().join(format!("fcc-area-txrx-hz-{}.csv", Uuid::new_v4()));
-        let csv = "city,state,tx_frequency_hz,rx_frequency_hz,radio_service_desc\nRaleigh,NC,451000000,451050000,Business\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let scan = build_fcc_area_scan_preset_from_csv(&path, "Raleigh", "")
-            .expect("parse ok")
-            .expect("preset");
-        assert!(scan.preset.scan_start_hz <= 451_000_000);
-        assert!(scan.preset.scan_end_hz >= 451_050_000);
-        assert_eq!(scan.matched_rows, 1);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn fcc_frequency_bookmark_builder_emits_signal_typed_labels() {
-        let path = std::env::temp_dir().join(format!("fcc-freq-{}.csv", Uuid::new_v4()));
-        let csv = "city,state,callsign,frequency_assigned,radio_service_desc\nRaleigh,NC,WQAB123,155.340,Public Safety\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let out =
-            build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", "", 10).expect("parse ok");
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].frequency_hz, 155_340_000);
-        assert!(out[0].label.contains("Public Safety"));
-        assert!(out[0].label.contains("WQAB123"));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn fcc_frequency_bookmark_builder_respects_area_filter_and_limit() {
-        let path = std::env::temp_dir().join(format!("fcc-freq-limit-{}.csv", Uuid::new_v4()));
-        let csv = "city,state,frequency_assigned,radio_service_desc\nRaleigh,NC,155.340,Public Safety\nRaleigh,NC,460.125,Public Safety\nAustin,TX,453.500,Business\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let out =
-            build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", "", 1).expect("parse ok");
-        assert_eq!(out.len(), 1);
-        assert!(out[0].frequency_hz == 155_340_000 || out[0].frequency_hz == 460_125_000);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn fcc_frequency_bookmark_builder_uses_lower_upper_midpoint_when_assigned_missing() {
-        let path = std::env::temp_dir().join(format!("fcc-freq-mid-{}.csv", Uuid::new_v4()));
-        let csv = "city,state,lower_frequency,upper_frequency,radio_service_desc\nRaleigh,NC,451.000,451.050,Business\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let out =
-            build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", "", 10).expect("parse ok");
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].frequency_hz, 451_025_000);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn fcc_frequency_bookmark_builder_returns_sorted_frequencies() {
-        let path = std::env::temp_dir().join(format!("fcc-freq-sort-{}.csv", Uuid::new_v4()));
-        let csv = "city,state,frequency_assigned,radio_service_desc\nRaleigh,NC,460.125,Public Safety\nRaleigh,NC,155.340,Public Safety\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let out =
-            build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", "", 10).expect("parse ok");
-        assert_eq!(out.len(), 2);
-        assert!(out[0].frequency_hz < out[1].frequency_hz);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn fcc_frequency_bookmark_builder_applies_signal_type_filter() {
-        let path = std::env::temp_dir().join(format!("fcc-freq-type-{}.csv", Uuid::new_v4()));
-        let csv = "city,state,frequency_assigned,radio_service_desc\nRaleigh,NC,155.340,Public Safety\nRaleigh,NC,460.125,Business\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let out = build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", "public", 10)
-            .expect("parse ok");
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].frequency_hz, 155_340_000);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn fcc_frequency_bookmark_builder_accepts_hz_and_tx_rx_aliases() {
-        let path = std::env::temp_dir().join(format!("fcc-freq-hz-alias-{}.csv", Uuid::new_v4()));
-        let csv = "city,state,frequency_assigned_hz,tx_frequency_hz,rx_frequency_hz,radio_service_desc\nRaleigh,NC,155340000,,,Public Safety\nRaleigh,NC,,451000000,451050000,Business\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let out =
-            build_fcc_frequency_bookmarks_from_csv(&path, "Raleigh", "", 10).expect("parse ok");
-        assert_eq!(out.len(), 2);
-        assert!(out.iter().any(|row| row.frequency_hz == 155_340_000));
-        assert!(out.iter().any(|row| row.frequency_hz == 451_025_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn normalize_bookmark_label_truncates_and_compacts_whitespace() {
-        let raw = "FCC   Public    Safety    Extremely Long Label Text";
-        let normalized = normalize_bookmark_label(raw, 20);
-        assert!(!normalized.contains("  "));
-        assert!(normalized.chars().count() <= 20);
-    }
-
-    #[test]
-    fn normalize_sdr_bookmark_settings_sorts_and_deduplicates() {
-        let mut bookmarks = vec![
-            SdrBookmarkSetting {
-                label: "B".to_string(),
-                frequency_hz: 460_125_000,
-            },
-            SdrBookmarkSetting {
-                label: "A".to_string(),
-                frequency_hz: 155_340_000,
-            },
-            SdrBookmarkSetting {
-                label: "Dup".to_string(),
-                frequency_hz: 460_125_000,
-            },
-            SdrBookmarkSetting {
-                label: "Invalid".to_string(),
-                frequency_hz: 0,
-            },
-        ];
-        normalize_sdr_bookmark_settings(&mut bookmarks);
-        assert_eq!(bookmarks.len(), 2);
-        assert!(bookmarks[0].frequency_hz < bookmarks[1].frequency_hz);
-        assert_eq!(bookmarks[0].frequency_hz, 155_340_000);
-        assert_eq!(bookmarks[1].frequency_hz, 460_125_000);
-    }
-
-    #[test]
-    fn normalize_imported_bookmark_label_compacts_whitespace_and_defaults() {
-        assert_eq!(
-            normalize_imported_bookmark_label(Some("  NOAA   19    APT ")),
-            "NOAA 19 APT"
-        );
-        assert_eq!(
-            normalize_imported_bookmark_label(Some("   ")),
-            "Imported Bookmark"
-        );
-        assert_eq!(normalize_imported_bookmark_label(None), "Imported Bookmark");
-    }
-
-    #[test]
-    fn should_upgrade_bookmark_label_only_for_placeholder_to_richer_labels() {
-        assert!(should_upgrade_bookmark_label(
-            "Imported Bookmark",
-            "NOAA-19 APT"
-        ));
-        assert!(should_upgrade_bookmark_label("  ", "AIS Ch A"));
-        assert!(!should_upgrade_bookmark_label(
-            "APRS 144.390",
-            "Imported Bookmark"
-        ));
-        assert!(!should_upgrade_bookmark_label(
-            "APRS 144.390",
-            "APRS 144.390"
-        ));
-        assert!(!should_upgrade_bookmark_label(
-            "Imported Bookmark",
-            "Imported Bookmark"
-        ));
-    }
-
-    #[test]
-    fn export_sdr_bookmarks_csv_writes_rows_and_source_tag() {
-        let path = std::env::temp_dir().join(format!("sdr-bookmarks-{}.csv", Uuid::new_v4()));
-        let rows = vec![
-            ("FCC | Public Safety | WQAB123".to_string(), 155_340_000u64),
-            ("APRS 144.390".to_string(), 144_390_000u64),
-        ];
-        export_sdr_bookmarks_csv(&path, &rows).expect("export csv");
-        let content = std::fs::read_to_string(&path).expect("read csv");
-        assert!(content.contains("label,frequency_hz,frequency_mhz,source"));
-        assert!(content.contains("fcc_imported"));
-        assert!(content.contains("manual_or_default"));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn export_sdr_bookmarks_json_writes_rows_and_source_tag() {
-        let path = std::env::temp_dir().join(format!("sdr-bookmarks-{}.json", Uuid::new_v4()));
-        let rows = vec![
-            ("FCC | Public Safety | WQAB123".to_string(), 155_340_000u64),
-            ("APRS 144.390".to_string(), 144_390_000u64),
-        ];
-        export_sdr_bookmarks_json(&path, &rows).expect("export json");
-        let content = std::fs::read_to_string(&path).expect("read json");
-        assert!(content.contains("\"source\": \"fcc_imported\""));
-        assert!(content.contains("\"source\": \"manual_or_default\""));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn export_cellular_arfcn_playlist_csv_writes_rows() {
-        let path = std::env::temp_dir().join(format!("cellular-arfcn-{}.csv", Uuid::new_v4()));
-        let rows = export_cellular_arfcn_playlist_csv(&path).expect("export csv");
-        assert!(rows > 1000);
-        let content = std::fs::read_to_string(&path).expect("read csv");
-        assert!(content.contains("link,band,channel_type,channel,frequency_hz,frequency_mhz"));
-        assert!(content.contains("uplink,GSM 850,ARFCN,128,824200000,824.200000"));
-        assert!(content.contains("download,LTE Band 2,EARFCN,600,1930000000,1930.000000"));
-        assert!(content.contains("download,LTE Band 66,EARFCN,66436,2110000000,2110.000000"));
-        assert!(content.contains("uplink,LTE Band 66,EARFCN,131972,1710000000,1710.000000"));
-        assert!(content.contains("download,LTE Band 71,EARFCN,68586,617000000,617.000000"));
-        assert!(content.contains("uplink,LTE Band 71,EARFCN,133122,663000000,663.000000"));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn export_cellular_arfcn_playlist_json_writes_rows() {
-        let path = std::env::temp_dir().join(format!("cellular-arfcn-{}.json", Uuid::new_v4()));
-        let rows = export_cellular_arfcn_playlist_json(&path).expect("export json");
-        assert!(rows > 1000);
-        let content = std::fs::read_to_string(&path).expect("read json");
-        assert!(content.contains("\"link\": \"uplink\""));
-        assert!(content.contains("\"band\": \"LTE Band 66\""));
-        assert!(content.contains("\"channel_type\": \"EARFCN\""));
-        assert!(content.contains("\"channel\": \"133122\""));
-        assert!(content.contains("\"frequency_hz\": 663000000"));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_csv_reads_hz_and_mhz_columns() {
-        let path =
-            std::env::temp_dir().join(format!("sdr-bookmarks-import-{}.csv", Uuid::new_v4()));
-        let csv = "label,frequency_hz,frequency_mhz,freq,frequency\nAPRS,144390000,,,\nACARS,,131.550,,\nAIS,,,162025000,\nMETEOR,,,,137.900\nGOES,,,,1694100000\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 5);
-        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 137_900_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 1_694_100_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_csv_accepts_semicolon_delimiter() {
-        let path = std::env::temp_dir().join(format!(
-            "sdr-bookmarks-import-semicolon-{}.csv",
-            Uuid::new_v4()
-        ));
-        let csv = "label;frequency_hz;frequency\nAPRS;144390000;\nAIS;;162.025\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_csv_accepts_name_as_frequency_alias() {
-        let path =
-            std::env::temp_dir().join(format!("sdr-bookmarks-import-name-{}.csv", Uuid::new_v4()));
-        let csv = "bookmark,name\nThread Ch 15,2425\nGOES,1694100000\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|row| row.frequency_hz == 2_425_000_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 1_694_100_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_csv_parses_unit_suffixed_frequency_values() {
-        let path =
-            std::env::temp_dir().join(format!("sdr-bookmarks-import-units-{}.csv", Uuid::new_v4()));
-        let csv = "label,frequency_hz,frequency_mhz,frequency\nACARS,131550000 Hz,,\nAIS,,162025 kHz,\nInmarsat,,,1.54145 GHz\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 3);
-        assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 1_541_450_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_csv_deduplicates_and_skips_invalid_rows() {
-        let path =
-            std::env::temp_dir().join(format!("sdr-bookmarks-import-dup-{}.csv", Uuid::new_v4()));
-        let csv = "label,frequency_hz\nOne,155340000\nDup,155340000\nBad,0\nTooHigh,9000000001\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let rows = import_sdr_bookmarks_csv(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].frequency_hz, 155_340_000);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_json_reads_export_array_schema() {
-        let path =
-            std::env::temp_dir().join(format!("sdr-bookmarks-import-{}.json", Uuid::new_v4()));
-        let json = r#"
-[
-  {"label":"APRS","frequency_hz":144390000,"frequency_mhz":144.390000,"source":"manual_or_default"},
-  {"label":"ACARS","frequency_hz":131550000,"frequency_mhz":131.550000,"source":"manual_or_default"}
-]
-"#;
-        std::fs::write(&path, json).expect("write json");
-        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_json_accepts_json_lines_rows() {
-        let path = std::env::temp_dir().join(format!(
-            "sdr-bookmarks-import-jsonl-{}.jsonl",
-            Uuid::new_v4()
-        ));
-        let jsonl = r#"{"label":"APRS","frequency_hz":"144390000"}
-{"label":"AIS","frequency":"162.025 MHz"}
-"#;
-        std::fs::write(&path, jsonl).expect("write jsonl");
-        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_json_reads_bookmarks_key_and_string_numbers() {
-        let path =
-            std::env::temp_dir().join(format!("sdr-bookmarks-import-key-{}.json", Uuid::new_v4()));
-        let json = r#"
-{
-  "bookmarks": [
-    {"name":"One","frequency_mhz":"155.340"},
-    {"label":"Dup","frequency_hz":"155340000"},
-    {"label":"AIS","freq":"162025000"},
-    {"label":"METEOR","frequency":"137.900"},
-    {"label":"GOES","frequency":"1694100000"},
-    {"label":"TooHigh","frequency_hz":"9000000001"},
-    {"label":"Skip","frequency_hz":"0"}
-  ]
-}
-"#;
-        std::fs::write(&path, json).expect("write json");
-        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 4);
-        assert!(rows.iter().any(|row| row.frequency_hz == 137_900_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 155_340_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 1_694_100_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_json_accepts_rows_envelope_key() {
-        let path = std::env::temp_dir().join(format!(
-            "sdr-bookmarks-import-rows-key-{}.json",
-            Uuid::new_v4()
-        ));
-        let json = r#"
-{
-  "rows": [
-    {"label":"APRS","frequency_hz":"144390000"},
-    {"label":"AIS","frequency":"162.025"}
-  ]
-}
-"#;
-        std::fs::write(&path, json).expect("write json");
-        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_json_accepts_records_envelope_key() {
-        let path = std::env::temp_dir().join(format!(
-            "sdr-bookmarks-import-records-key-{}.json",
-            Uuid::new_v4()
-        ));
-        let json = r#"
-{
-  "records": [
-    {"label":"ACARS","frequency_hz":"131550000"},
-    {"label":"AIS","frequency":"162.025"}
-  ]
-}
-"#;
-        std::fs::write(&path, json).expect("write json");
-        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_json_accepts_nested_data_bookmarks_envelope() {
-        let path = std::env::temp_dir().join(format!(
-            "sdr-bookmarks-import-nested-key-{}.json",
-            Uuid::new_v4()
-        ));
-        let json = r#"
-{
-  "data": {
-    "bookmarks": [
-      {"label":"APRS","frequency_hz":"144390000"},
-      {"label":"AIS","frequency":"162025000"}
-    ]
-  }
-}
-"#;
-        std::fs::write(&path, json).expect("write json");
-        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_json_accepts_deep_nested_envelope_keys() {
-        let path = std::env::temp_dir().join(format!(
-            "sdr-bookmarks-import-deep-nested-key-{}.json",
-            Uuid::new_v4()
-        ));
-        let json = r#"
-{
-  "payload": {
-    "result": {
-      "items": [
-        {"label":"Thread Ch 15","frequency":"2425"},
-        {"label":"APRS","frequency_hz":"144390000"}
-      ]
-    }
-  }
-}
-"#;
-        std::fs::write(&path, json).expect("write json");
-        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|row| row.frequency_hz == 2_425_000_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_json_parses_unit_suffixed_frequency_values() {
-        let path = std::env::temp_dir().join(format!(
-            "sdr-bookmarks-import-json-units-{}.json",
-            Uuid::new_v4()
-        ));
-        let json = r#"
-{
-  "bookmarks": [
-    {"label":"AIS","frequency_hz":"162025000 Hz"},
-    {"label":"ACARS","frequency_mhz":"131550 kHz"},
-    {"label":"Inmarsat","frequency":"1.54145 GHz"}
-  ]
-}
-"#;
-        std::fs::write(&path, json).expect("write json");
-        let rows = import_sdr_bookmarks_json(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 3);
-        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 131_550_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 1_541_450_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn parse_fcc_frequency_hz_accepts_unit_suffixes() {
-        assert_eq!(parse_fcc_frequency_hz("155.340"), Some(155_340_000));
-        assert_eq!(parse_fcc_frequency_hz("155.340 MHz"), Some(155_340_000));
-        assert_eq!(parse_fcc_frequency_hz("162025 kHz"), Some(162_025_000));
-        assert_eq!(parse_fcc_frequency_hz("1.54145 GHz"), Some(1_541_450_000));
-        assert_eq!(parse_fcc_frequency_hz("131550000 hz"), Some(131_550_000));
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_path_autodetects_json_without_json_extension() {
-        let path =
-            std::env::temp_dir().join(format!("sdr-bookmarks-import-auto-{}.txt", Uuid::new_v4()));
-        let json = r#"[{"label":"APRS","frequency_hz":"144390000"}]"#;
-        std::fs::write(&path, json).expect("write json");
-        let rows = import_sdr_bookmarks_path(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].frequency_hz, 144_390_000);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_path_autodetects_csv_without_csv_extension() {
-        let path = std::env::temp_dir().join(format!(
-            "sdr-bookmarks-import-auto-csv-{}.dat",
-            Uuid::new_v4()
-        ));
-        let csv = "label,frequency_hz\nACARS,131550000\n";
-        std::fs::write(&path, csv).expect("write csv");
-        let rows = import_sdr_bookmarks_path(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].frequency_hz, 131_550_000);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn import_sdr_bookmarks_path_reads_jsonl_extension_as_json() {
-        let path =
-            std::env::temp_dir().join(format!("sdr-bookmarks-import-ext-{}.jsonl", Uuid::new_v4()));
-        let jsonl = r#"{"label":"APRS","frequency_hz":"144390000"}
-{"label":"AIS","frequency":"162.025 MHz"}
-"#;
-        std::fs::write(&path, jsonl).expect("write jsonl");
-        let rows = import_sdr_bookmarks_path(&path).expect("import bookmarks");
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|row| row.frequency_hz == 144_390_000));
-        assert!(rows.iter().any(|row| row.frequency_hz == 162_025_000));
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn detect_csv_delimiter_prefers_semicolon_when_present() {
-        assert_eq!(
-            detect_csv_delimiter("label;frequency_hz\nA;144390000\n"),
-            b';'
-        );
-        assert_eq!(
-            detect_csv_delimiter("label,frequency_hz\nA,144390000\n"),
-            b','
-        );
-    }
-
-    #[test]
-    fn bookmark_data_extension_from_url_detects_csv_json_or_fallback() {
-        assert_eq!(
-            bookmark_data_extension_from_url("https://example.com/a/bookmarks.csv"),
-            "csv"
-        );
-        assert_eq!(
-            bookmark_data_extension_from_url("https://example.com/a/bookmarks.JSON?sig=123"),
-            "json"
-        );
-        assert_eq!(
-            bookmark_data_extension_from_url("https://example.com/a/bookmarks.jsonl"),
-            "json"
-        );
-        assert_eq!(
-            bookmark_data_extension_from_url("https://example.com/a/bookmarks.ndjson"),
-            "json"
-        );
-        assert_eq!(
-            bookmark_data_extension_from_url("https://example.com/a/bookmarks.csv.gz"),
-            "csv"
-        );
-        assert_eq!(
-            bookmark_data_extension_from_url("https://example.com/a/bookmarks.json.gz"),
-            "json"
-        );
-        assert_eq!(
-            bookmark_data_extension_from_url("https://example.com/a/bookmarks.jsonl.gz"),
-            "json"
-        );
-        assert_eq!(
-            bookmark_data_extension_from_url("https://example.com/bookmarks"),
-            "dat"
-        );
-    }
-
-    #[test]
-    fn export_sdr_aircraft_correlation_artifacts_writes_json_and_csv() {
-        let path = std::env::temp_dir().join(format!("sdr-aircraft-{}.json", Uuid::new_v4()));
-        let rows = vec![SdrAircraftCorrelation {
-            key: "icao:ABC123".to_string(),
-            icao_hex: Some("ABC123".to_string()),
-            callsign: Some("UAL123".to_string()),
-            adsb_rows: 3,
-            acars_rows: 1,
-            total_rows: 4,
-            first_seen: Utc::now(),
-            last_seen: Utc::now(),
-            frequencies_hz: vec![131_550_000, 1_090_000_000],
-            decoders: vec!["ACARS".to_string(), "ADS-B".to_string()],
-        }];
-
-        let (json_path, csv_path) =
-            export_sdr_aircraft_correlation_artifacts(&path, &rows).expect("export artifacts");
-        assert!(json_path.exists());
-        assert!(csv_path.exists());
-        let csv = std::fs::read_to_string(csv_path).expect("read csv");
-        assert!(csv.contains("key,icao_hex,callsign,adsb_rows,acars_rows,total_rows"));
-        assert!(csv.contains("icao:ABC123"));
-        assert!(csv.contains("131550000|1090000000"));
-        let _ = std::fs::remove_file(json_path);
-        let _ = std::fs::remove_file(path.with_extension("csv"));
-    }
-
-    #[test]
-    fn export_sdr_decode_artifacts_writes_json_and_csv() {
-        let path = std::env::temp_dir().join(format!("sdr-decode-{}.json", Uuid::new_v4()));
-        let rows = vec![SdrDecodeRow {
-            timestamp: Utc::now(),
-            decoder: "ACARS".to_string(),
-            freq_hz: 131_550_000,
-            protocol: "acars".to_string(),
-            message: "flight=UAL123".to_string(),
-            raw: "flight=UAL123".to_string(),
-        }];
-        let (json_path, csv_path) = export_sdr_decode_artifacts(&path, &rows).expect("export");
-        assert!(json_path.exists());
-        assert!(csv_path.exists());
-        let csv = std::fs::read_to_string(csv_path).expect("read csv");
-        assert!(csv.contains("timestamp,decoder,freq_hz,protocol,message,raw"));
-        assert!(csv.contains("ACARS"));
-        let _ = std::fs::remove_file(json_path);
-        let _ = std::fs::remove_file(path.with_extension("csv"));
-    }
-
-    #[test]
-    fn export_sdr_satcom_artifacts_writes_summary_counts() {
-        let path = std::env::temp_dir().join(format!("sdr-satcom-{}.json", Uuid::new_v4()));
-        let rows = vec![
-            SdrSatcomObservation {
-                timestamp: Utc::now(),
-                decoder: "inmarsat_stdc".to_string(),
-                protocol: "inmarsat_c".to_string(),
-                freq_hz: 1_541_450_000,
-                band: "L-Band".to_string(),
-                encryption_posture: "unencrypted".to_string(),
-                payload_capture_mode: "enabled".to_string(),
-                has_coordinates: true,
-                identifier_hints: vec!["mmsi".to_string()],
-                payload_parse_state: "parsed".to_string(),
-                payload_fields: HashMap::new(),
-                summary: "sample".to_string(),
-                message: "clear mmsi=123456789".to_string(),
-                raw: "clear mmsi=123456789".to_string(),
-            },
-            SdrSatcomObservation {
-                timestamp: Utc::now(),
-                decoder: "iridium".to_string(),
-                protocol: "iridium".to_string(),
-                freq_hz: 1_626_000_000,
-                band: "L-Band".to_string(),
-                encryption_posture: "unknown".to_string(),
-                payload_capture_mode: "enabled".to_string(),
-                has_coordinates: false,
-                identifier_hints: vec!["icao_hex".to_string()],
-                payload_parse_state: "denied_by_policy".to_string(),
-                payload_fields: HashMap::new(),
-                summary: "sample2".to_string(),
-                message: "payload".to_string(),
-                raw: "payload".to_string(),
-            },
-        ];
-        let (_, _, _, _, summary_path) =
-            export_sdr_satcom_artifacts(&path, &rows).expect("export satcom artifacts");
-        let summary_raw = std::fs::read_to_string(&summary_path).expect("read summary");
-        let summary: serde_json::Value =
-            serde_json::from_str(&summary_raw).expect("parse summary json");
-        assert_eq!(summary["total_rows"], 2);
-        assert_eq!(summary["by_band"]["L-Band"], 2);
-        assert_eq!(summary["by_payload_parse_state"]["parsed"], 1);
-        assert_eq!(summary["by_payload_parse_state"]["denied_by_policy"], 1);
-        assert_eq!(summary["with_coordinates"], 1);
-        assert_eq!(summary["without_coordinates"], 1);
-        let _ = std::fs::remove_file(path.with_extension("csv"));
-        let _ = std::fs::remove_file(path.clone());
-        let _ = std::fs::remove_file(path.with_file_name(format!(
-            "{}_parsed.json",
-            path.file_stem().and_then(|s| s.to_str()).unwrap_or_default()
-        )));
-        let _ = std::fs::remove_file(path.with_file_name(format!(
-            "{}_denied.json",
-            path.file_stem().and_then(|s| s.to_str()).unwrap_or_default()
-        )));
-        let _ = std::fs::remove_file(summary_path);
-    }
-
-    #[test]
-    fn sdr_aircraft_correlation_summary_reports_mixed_counts() {
-        let rows = vec![
-            SdrDecodeRow {
-                timestamp: Utc::now(),
-                decoder: "ADS-B".to_string(),
-                freq_hz: 1_090_000_000,
-                protocol: "adsb".to_string(),
-                message: "icao=abc123 callsign=UAL123".to_string(),
-                raw: "icao=abc123 callsign=UAL123".to_string(),
-            },
-            SdrDecodeRow {
-                timestamp: Utc::now(),
-                decoder: "ACARS".to_string(),
-                freq_hz: 131_550_000,
-                protocol: "acars".to_string(),
-                message: "flight=UAL123".to_string(),
-                raw: "flight=UAL123".to_string(),
-            },
-        ];
-        let summary = format_sdr_aircraft_correlation_summary(&rows);
-        assert_eq!(summary, "Aircraft Correlation: no correlated targets");
-    }
-
-    #[test]
-    fn sdr_satcom_summary_reports_parse_and_posture_counts() {
-        let rows = vec![
-            SdrSatcomObservation {
-                timestamp: Utc::now(),
-                decoder: "inmarsat_stdc".to_string(),
-                protocol: "inmarsat_c".to_string(),
-                freq_hz: 1_541_450_000,
-                band: "L-Band".to_string(),
-                encryption_posture: "unencrypted".to_string(),
-                payload_capture_mode: "enabled".to_string(),
-                has_coordinates: false,
-                identifier_hints: vec![],
-                payload_parse_state: "parsed".to_string(),
-                payload_fields: HashMap::new(),
-                summary: "a".to_string(),
-                message: "a".to_string(),
-                raw: "a".to_string(),
-            },
-            SdrSatcomObservation {
-                timestamp: Utc::now(),
-                decoder: "iridium".to_string(),
-                protocol: "iridium".to_string(),
-                freq_hz: 1_626_000_000,
-                band: "L-Band".to_string(),
-                encryption_posture: "encrypted".to_string(),
-                payload_capture_mode: "enabled".to_string(),
-                has_coordinates: false,
-                identifier_hints: vec![],
-                payload_parse_state: "denied_by_policy".to_string(),
-                payload_fields: HashMap::new(),
-                summary: "b".to_string(),
-                message: "b".to_string(),
-                raw: "b".to_string(),
-            },
-        ];
-        let summary = format_sdr_satcom_summary(&rows);
-        assert!(summary.contains("rows=2"));
-        assert!(summary.contains("parsed=1"));
-        assert!(summary.contains("denied=1"));
-        assert!(summary.contains("unencrypted=1"));
-        assert!(summary.contains("encrypted=1"));
-    }
-
-    #[test]
-    fn sdr_health_snapshot_includes_core_sections() {
-        let decode_rows = vec![SdrDecodeRow {
-            timestamp: Utc::now(),
-            decoder: "ACARS".to_string(),
-            freq_hz: 131_550_000,
-            protocol: "acars".to_string(),
-            message: "flight=UAL123".to_string(),
-            raw: "flight=UAL123".to_string(),
-        }];
-        let satcom_rows = vec![SdrSatcomObservation {
-            timestamp: Utc::now(),
-            decoder: "inmarsat_stdc".to_string(),
-            protocol: "inmarsat_c".to_string(),
-            freq_hz: 1_541_450_000,
-            band: "L-Band".to_string(),
-            encryption_posture: "unknown".to_string(),
-            payload_capture_mode: "enabled".to_string(),
-            has_coordinates: false,
-            identifier_hints: vec![],
-            payload_parse_state: "not_unencrypted".to_string(),
-            payload_fields: HashMap::new(),
-            summary: "sample".to_string(),
-            message: "sample".to_string(),
-            raw: "sample".to_string(),
-        }];
-        let mut telemetry = HashMap::new();
-        telemetry.insert(
-            "ACARS".to_string(),
-            SdrDecoderTelemetry {
-                timestamp: Utc::now(),
-                decoder: "ACARS".to_string(),
-                decoded_rows: 1,
-                map_points: 0,
-                satcom_rows: 0,
-                stderr_lines: 0,
-            },
-        );
-        let mut rates = HashMap::new();
-        rates.insert(
-            "ACARS".to_string(),
-            SdrDecoderTelemetryRate {
-                decoded_rows_per_sec: 1.0,
-                map_points_per_sec: 0.0,
-                satcom_rows_per_sec: 0.0,
-                stderr_lines_per_sec: 0.0,
-            },
-        );
-        let snapshot = build_sdr_health_snapshot(&decode_rows, &satcom_rows, &telemetry, &rates);
-        assert!(snapshot.get("counts").is_some());
-        assert!(snapshot.get("decoder_telemetry").is_some());
-        assert!(snapshot.get("aircraft_correlation_summary").is_some());
-        assert!(snapshot.get("satcom_summary").is_some());
-        assert_eq!(
-            snapshot["artifact_contract_version"].as_str(),
-            Some(SDR_ARTIFACT_CONTRACT_VERSION)
-        );
-    }
-
-    #[test]
-    fn sdr_summary_json_time_fields_follow_mode_toggle() {
-        let rows = vec![SdrSatcomObservation {
-            timestamp: Utc::now(),
-            decoder: "inmarsat_stdc".to_string(),
-            protocol: "inmarsat_c".to_string(),
-            freq_hz: 1_541_450_000,
-            band: "L-Band".to_string(),
-            encryption_posture: "unknown".to_string(),
-            payload_capture_mode: "enabled".to_string(),
-            has_coordinates: false,
-            identifier_hints: vec![],
-            payload_parse_state: "not_unencrypted".to_string(),
-            payload_fields: HashMap::new(),
-            summary: "sample".to_string(),
-            message: "sample".to_string(),
-            raw: "sample".to_string(),
-        }];
-        set_use_zulu_time_display(true);
-        let zulu = build_sdr_satcom_summary(&rows);
-        assert!(zulu["generated_at"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("UTC"));
-        assert_eq!(
-            zulu["artifact_contract_version"].as_str(),
-            Some(SDR_ARTIFACT_CONTRACT_VERSION)
-        );
-        set_use_zulu_time_display(false);
-        let local = build_sdr_satcom_summary(&rows);
-        assert!(!local["generated_at"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("UTC"));
-    }
-
-    #[test]
-    fn decoder_id_for_fcc_signal_type_maps_common_services() {
-        assert_eq!(
-            decoder_id_for_fcc_signal_type("Public Safety Pool, Conventional"),
-            Some("p25")
-        );
-        assert_eq!(
-            decoder_id_for_fcc_signal_type("Maritime Coast"),
-            Some("ais")
-        );
-        assert_eq!(decoder_id_for_fcc_signal_type("Paging"), Some("pocsag"));
-        assert_eq!(
-            decoder_id_for_fcc_signal_type("Aeronautical Enroute"),
-            Some("acars")
-        );
-        assert_eq!(decoder_id_for_fcc_signal_type("Unknown"), None);
-    }
-
-    #[test]
-    fn decoder_hint_id_for_bookmark_label_maps_common_tokens() {
-        assert_eq!(
-            decoder_hint_id_for_bookmark_label("FCC | Public Safety | WQAB123"),
-            Some("p25")
-        );
-        assert_eq!(
-            decoder_hint_id_for_bookmark_label("Maritime Coast Guard"),
-            Some("ais")
-        );
-        assert_eq!(
-            decoder_hint_id_for_bookmark_label("NOAA Weather APT"),
-            Some("weather_noaa_apt")
-        );
-        assert_eq!(
-            decoder_hint_id_for_bookmark_label("APRS 144.390"),
-            Some("aprs_ax25")
-        );
-    }
-
-    #[test]
-    fn prioritized_decoder_ids_for_bookmark_label_uses_hint_first() {
-        let order = vec![
-            "acars".to_string(),
-            "p25".to_string(),
-            "ais".to_string(),
-            "ads_b".to_string(),
-        ];
-        let lookup = HashMap::from([
-            ("acars".to_string(), SdrDecoderKind::Disabled),
-            (
-                "p25".to_string(),
-                SdrDecoderKind::Plugin {
-                    id: "p25".to_string(),
-                    label: "P25".to_string(),
-                    command_template: "decoder_p25".to_string(),
-                    protocol: Some("p25".to_string()),
-                },
-            ),
-            ("ais".to_string(), SdrDecoderKind::Disabled),
-            ("ads_b".to_string(), SdrDecoderKind::Disabled),
-        ]);
-        let prioritized =
-            prioritized_decoder_ids_for_bookmark_label(order.as_slice(), &lookup, "Public Safety");
-        assert_eq!(prioritized.first().map(String::as_str), Some("p25"));
-        assert!(prioritized.contains(&"acars".to_string()));
-        assert!(prioritized.contains(&"ais".to_string()));
-    }
-
-    #[test]
-    fn static_output_gps_coordinates_match_expected_defaults() {
-        let (lat, lon) = static_output_gps_coordinates();
-        assert!((lat - 35.145_395_7).abs() < 1e-9);
-        assert!((lon + 79.474_718_1).abs() < 1e-9);
-    }
-
-    #[test]
-    fn output_gps_coordinates_uses_static_setting_when_valid() {
-        let settings = AppSettings {
-            gps: GpsSettings::Static {
-                latitude: 33.1234,
-                longitude: -80.4321,
-                altitude_m: None,
-            },
-            ..AppSettings::default()
-        };
-        let (lat, lon) = output_gps_coordinates_for_settings(&settings);
-        assert!((lat - 33.1234).abs() < 1e-9);
-        assert!((lon + 80.4321).abs() < 1e-9);
-    }
-
-    #[test]
-    fn output_gps_coordinates_falls_back_for_invalid_static_setting() {
-        let settings = AppSettings {
-            gps: GpsSettings::Static {
-                latitude: 123.0,
-                longitude: -250.0,
-                altitude_m: None,
-            },
-            ..AppSettings::default()
-        };
-        let (lat, lon) = output_gps_coordinates_for_settings(&settings);
-        let (default_lat, default_lon) = static_output_gps_coordinates();
-        assert!((lat - default_lat).abs() < 1e-9);
-        assert!((lon - default_lon).abs() < 1e-9);
-    }
-
-    #[test]
-    fn output_gps_coordinates_falls_back_for_non_static_mode() {
-        let settings = AppSettings {
-            gps: GpsSettings::Gpsd {
-                host: "127.0.0.1".to_string(),
-                port: 2947,
-            },
-            ..AppSettings::default()
-        };
-        let (lat, lon) = output_gps_coordinates_for_settings(&settings);
-        let (default_lat, default_lon) = static_output_gps_coordinates();
-        assert!((lat - default_lat).abs() < 1e-9);
-        assert!((lon - default_lon).abs() < 1e-9);
-    }
-
-    #[test]
-    fn time_display_mode_switches_zulu_suffix_behavior() {
-        let sample = Utc::now();
-        set_use_zulu_time_display(true);
-        assert!(format_display_time_hms(sample).ends_with('Z'));
-        set_use_zulu_time_display(false);
-        assert!(!format_display_time_hms(sample).ends_with('Z'));
-    }
-
-    #[test]
-    fn runtime_output_root_uses_effective_uid_namespace() {
-        let root = internal_runtime_output_root();
-        let uid = unsafe { libc::geteuid() };
-        let marker = format!("easywifi-runtime-uid{}", uid);
-        assert!(
-            root.to_string_lossy().contains(&marker),
-            "expected runtime output root to include `{}` but got `{}`",
-            marker,
-            root.display()
-        );
     }
 }

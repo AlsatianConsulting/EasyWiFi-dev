@@ -5,7 +5,6 @@ pub mod gps;
 pub mod model;
 pub mod oui;
 pub mod privilege;
-pub mod sdr;
 pub mod settings;
 pub mod storage;
 pub mod test_mode;

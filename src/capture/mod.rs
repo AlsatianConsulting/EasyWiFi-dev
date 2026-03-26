@@ -28,6 +28,7 @@ pub struct CaptureConfig {
     pub session_pcap_path: Option<PathBuf>,
     pub wifi_packet_header_mode: WifiPacketHeaderMode,
     pub wifi_frame_parsing_enabled: bool,
+    pub geoip_city_db_path: Option<PathBuf>,
     pub gps_enabled: bool,
     pub passive_only: bool,
 }
@@ -222,6 +223,17 @@ fn command_exists(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn resolve_command_path(cmd: &str) -> Option<String> {
+    if command_exists(cmd) {
+        return Some(cmd.to_string());
+    }
+    let absolute = format!("/usr/bin/{cmd}");
+    if Path::new(&absolute).exists() {
+        return Some(absolute);
+    }
+    None
+}
+
 fn configure_parent_death_signal(command: &mut Command) {
     let parent_pid = std::process::id();
     unsafe {
@@ -403,15 +415,8 @@ fn helper_invocation_candidates(
         args.extend(helper_args.iter().cloned());
         candidates.push(("direct helper (already root)".to_string(), args));
     } else {
-        if command_exists("pkexec") {
-            let mut args = vec!["pkexec".to_string(), helper_str.clone()];
-            args.extend(helper_args.iter().cloned());
-            candidates.push(("pkexec".to_string(), args));
-        } else {
-            attempt_errors.push("pkexec: not found in PATH".to_string());
-        }
-        if command_exists("sudo") {
-            let mut args = vec!["sudo".to_string(), "-n".to_string(), helper_str.clone()];
+        if let Some(sudo_cmd) = resolve_command_path("sudo") {
+            let mut args = vec![sudo_cmd, "-n".to_string(), helper_str.clone()];
             args.extend(helper_args.iter().cloned());
             candidates.push(("sudo -n".to_string(), args));
         } else {
@@ -420,6 +425,13 @@ fn helper_invocation_candidates(
         let mut args = vec![helper_str.clone()];
         args.extend(helper_args.iter().cloned());
         candidates.push(("direct helper".to_string(), args));
+        if let Some(pkexec_cmd) = resolve_command_path("pkexec") {
+            let mut args = vec![pkexec_cmd, helper_str.clone()];
+            args.extend(helper_args.iter().cloned());
+            candidates.push(("pkexec".to_string(), args));
+        } else {
+            attempt_errors.push("pkexec: not found in PATH".to_string());
+        }
     }
 
     Ok((helper, candidates, attempt_errors))
@@ -462,7 +474,15 @@ fn spawn_privileged_helper_command(
             .env("EASYWIFI_PARENT_PID", std::process::id().to_string());
         configure_parent_death_signal(&mut command);
         match command.spawn() {
-            Ok(child) => {
+            Ok(mut child) => {
+                thread::sleep(Duration::from_millis(200));
+                if let Ok(Some(status)) = child.try_wait() {
+                    attempt_errors.push(format!(
+                        "{}: `{}` exited immediately with {}",
+                        label, command_display, status
+                    ));
+                    continue;
+                }
                 return Ok(PrivilegedPassthroughProcess {
                     child,
                     launch_mode: label,
@@ -1044,7 +1064,7 @@ pub fn start_geiger_mode(
                 "-T".to_string(),
                 "fields".to_string(),
                 "-E".to_string(),
-                "separator=\t".to_string(),
+                "separator=/t".to_string(),
                 "-e".to_string(),
                 "radiotap.dbm_antsignal".to_string(),
                 "-e".to_string(),
@@ -1311,9 +1331,18 @@ fn run_interface_capture(
     let supports_reason_code_field = tshark_supports_field("wlan.fixed.reason_code");
     let supports_listen_interval_field = tshark_supports_field("wlan.fixed.listen_ival");
     let supports_pmkid_count_field = tshark_supports_field("wlan.rsn.pmkid.count");
+    let supports_radiotap_rssi_field = tshark_supports_field("radiotap.dbm_antsignal");
+    let supports_ppi_rssi_field = tshark_supports_field("ppi.dbm_antsignal");
+    if !supports_radiotap_rssi_field && !supports_ppi_rssi_field {
+        let _ = sender.send(CaptureEvent::Log(
+            "no supported tshark RSSI field found; RSSI values will be unavailable".to_string(),
+        ));
+    }
 
     let parse_layout = TSharkParseLayout {
         has_ssid_field: ssid_field.is_some(),
+        has_radiotap_rssi_field: supports_radiotap_rssi_field,
+        has_ppi_rssi_field: supports_ppi_rssi_field,
         has_eapol_msg_field: eapol_msg_field.is_some(),
         has_rsn_version_field: rsn_version_field.is_some(),
         has_country_field: supports_country_field,
@@ -1346,7 +1375,7 @@ fn run_interface_capture(
             "-T".to_string(),
             "fields".to_string(),
             "-E".to_string(),
-            "separator=\t".to_string(),
+            "separator=/t".to_string(),
             "-E".to_string(),
             "quote=n".to_string(),
             "-E".to_string(),
@@ -1364,8 +1393,12 @@ fn run_interface_capture(
         if let Some(field) = &ssid_field {
             push_decoder_field(field);
         }
-        push_decoder_field("radiotap.dbm_antsignal");
-        push_decoder_field("ppi.dbm_antsignal");
+        if supports_radiotap_rssi_field {
+            push_decoder_field("radiotap.dbm_antsignal");
+        }
+        if supports_ppi_rssi_field {
+            push_decoder_field("ppi.dbm_antsignal");
+        }
         push_decoder_field("wlan_radio.channel");
         push_decoder_field("wlan_radio.frequency");
         push_decoder_field("wlan.fc.type");
@@ -1687,6 +1720,7 @@ fn process_live_tshark_fields(
     let mut channel_counts: HashMap<u16, u64> = HashMap::new();
     let mut usage_tick = Instant::now();
     let mut saw_frames = false;
+    let mut raw_line_count: u64 = 0;
 
     for line in reader.lines() {
         if stop_flag.load(Ordering::Relaxed) {
@@ -1700,6 +1734,7 @@ fn process_live_tshark_fields(
         if line.trim().is_empty() {
             continue;
         }
+        raw_line_count = raw_line_count.saturating_add(1);
 
         if let Some(frame) = parse_tshark_line(&line, parse_layout) {
             if !saw_frames {
@@ -1720,7 +1755,12 @@ fn process_live_tshark_fields(
             let is_probe_response = frame.fc_type == Some(0) && frame.subtype == Some(5);
             let is_beacon = frame.fc_type == Some(0) && frame.subtype == Some(8);
 
-            if !bssid.is_empty() && !bssid_is_broadcast {
+            let should_seed_ap = is_beacon || is_probe_response;
+            let should_update_existing_ap = ap_state.contains_key(&bssid);
+            if !bssid.is_empty()
+                && !bssid_is_broadcast
+                && (should_seed_ap || should_update_existing_ap)
+            {
                 let ap = ap_state
                     .entry(bssid.clone())
                     .or_insert_with(|| AccessPointRecord::new(bssid.clone(), now));
@@ -1924,8 +1964,8 @@ fn process_live_tshark_fields(
 
     if !saw_frames {
         let _ = sender.send(CaptureEvent::Log(format!(
-            "live decoder received no parsed 802.11 frames on {}",
-            interface_name
+            "live decoder received no parsed 802.11 frames on {} (raw lines seen: {})",
+            interface_name, raw_line_count
         )));
     }
 
@@ -2274,6 +2314,8 @@ struct ParsedFrame {
 #[derive(Debug, Clone, Copy)]
 struct TSharkParseLayout {
     has_ssid_field: bool,
+    has_radiotap_rssi_field: bool,
+    has_ppi_rssi_field: bool,
     has_eapol_msg_field: bool,
     has_rsn_version_field: bool,
     has_country_field: bool,
@@ -2297,31 +2339,6 @@ struct TSharkParseLayout {
 
 fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFrame> {
     let fields: Vec<&str> = line.split('\t').collect();
-    let required = 11
-        + usize::from(layout.has_ssid_field)
-        + usize::from(layout.has_eapol_msg_field)
-        + usize::from(layout.has_rsn_version_field)
-        + 1 // wlan.fc.protected
-        + usize::from(layout.has_country_field)
-        + usize::from(layout.has_beacon_tsf_field)
-        + usize::from(layout.has_privacy_field)
-        + usize::from(layout.has_rsn_akm_field)
-        + usize::from(layout.has_rsn_cipher_field)
-        + usize::from(layout.has_rsn_mfpc_field)
-        + usize::from(layout.has_rsn_mfpr_field)
-        + usize::from(layout.has_wpa_version_field)
-        + usize::from(layout.has_wpa_akm_field)
-        + usize::from(layout.has_wpa_cipher_field)
-        + usize::from(layout.has_retry_field)
-        + usize::from(layout.has_power_save_field)
-        + usize::from(layout.has_qos_priority_field)
-        + usize::from(layout.has_status_code_field)
-        + usize::from(layout.has_reason_code_field)
-        + usize::from(layout.has_listen_interval_field)
-        + usize::from(layout.has_pmkid_count_field);
-    if fields.len() < required {
-        return None;
-    }
 
     let mut i = 0usize;
     let epoch = parse_opt_f64(fields.get(i).copied().unwrap_or(""));
@@ -2336,17 +2353,27 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
     i += 1;
 
     let ssid = if layout.has_ssid_field {
-        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
+        let v = parse_ssid_value(fields.get(i).copied().unwrap_or(""));
         i += 1;
         v
     } else {
         None
     };
 
-    let radiotap_rssi = parse_opt_i32(fields.get(i).copied().unwrap_or(""));
-    i += 1;
-    let ppi_rssi = parse_opt_i32(fields.get(i).copied().unwrap_or(""));
-    i += 1;
+    let radiotap_rssi = if layout.has_radiotap_rssi_field {
+        let v = parse_opt_i32(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let ppi_rssi = if layout.has_ppi_rssi_field {
+        let v = parse_opt_i32(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
     let rssi = radiotap_rssi.or(ppi_rssi);
     let channel = parse_opt_u16(fields.get(i).copied().unwrap_or(""));
     i += 1;
@@ -2537,6 +2564,32 @@ fn parse_opt_string(raw: &str) -> Option<String> {
     } else {
         Some(v.to_string())
     }
+}
+
+fn parse_ssid_value(raw: &str) -> Option<String> {
+    let value = parse_opt_string(raw)?;
+    if value.len() % 2 != 0 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Some(value);
+    }
+
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    let mut chars = value.chars();
+    while let (Some(a), Some(b)) = (chars.next(), chars.next()) {
+        let high = a.to_digit(16)?;
+        let low = b.to_digit(16)?;
+        bytes.push(((high << 4) | low) as u8);
+    }
+
+    if bytes.is_empty() {
+        return None;
+    }
+    if bytes.iter().all(|b| (0x20..=0x7e).contains(b)) {
+        if let Ok(text) = String::from_utf8(bytes) {
+            return Some(text);
+        }
+    }
+
+    Some(value)
 }
 
 fn parse_opt_u8(raw: &str) -> Option<u8> {
@@ -2764,6 +2817,8 @@ mod tests {
     fn base_parse_layout() -> TSharkParseLayout {
         TSharkParseLayout {
             has_ssid_field: false,
+            has_radiotap_rssi_field: true,
+            has_ppi_rssi_field: true,
             has_eapol_msg_field: false,
             has_rsn_version_field: false,
             has_country_field: false,
@@ -2868,6 +2923,19 @@ mod tests {
         let line = "1710000000.0\t150\t11:22:33:44:55:66\taa:bb:cc:dd:ee:ff\t11:22:33:44:55:66\t\t-62\t6\t2437\t2\t8\t1";
         let parsed = parse_tshark_line(line, layout).expect("parse frame");
         assert_eq!(parsed.rssi, Some(-62));
+    }
+
+    #[test]
+    fn parse_ssid_value_decodes_ascii_hex_payloads() {
+        assert_eq!(
+            parse_ssid_value("486f6d654e6574776f726b").as_deref(),
+            Some("HomeNetwork")
+        );
+    }
+
+    #[test]
+    fn parse_ssid_value_keeps_non_printable_hex_verbatim() {
+        assert_eq!(parse_ssid_value("000102ff").as_deref(), Some("000102ff"));
     }
 
     #[test]
