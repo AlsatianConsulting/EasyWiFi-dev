@@ -16830,11 +16830,6 @@ fn attach_bluetooth_context_menu(
     popover.set_parent(bluetooth_list);
     let box_ = GtkBox::new(Orientation::Vertical, 4);
     let locate_btn = Button::with_label("Locate Device");
-    let scan_ble_btn = Button::with_label("Scan BLE Data Channels (SDR)");
-    let scan_zigbee_btn = Button::with_label("Scan Zigbee 2.4 Channels (SDR)");
-    let scan_thread_btn = Button::with_label("Scan Thread 2.4 Channels (SDR)");
-    let scan_ism_863_btn = Button::with_label("Scan 863-870 MHz ISM (SDR)");
-    let scan_ism_902_btn = Button::with_label("Scan 902-928 MHz ISM (SDR)");
     let enumerate_btn = Button::with_label("Connect & Enumerate");
     let disconnect_btn = Button::with_label("Disconnect");
     box_.append(&locate_btn);
@@ -16857,121 +16852,6 @@ fn attach_bluetooth_context_menu(
                 }
                 start_bluetooth_geiger_tracking(&state, &bluetooth_geiger_state, &device);
             }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let bluetooth_list = bluetooth_list.clone();
-        scan_ble_btn.connect_clicked(move |_| {
-            let Some(device) = selected_bluetooth(&state, &bluetooth_list) else {
-                state
-                    .borrow_mut()
-                    .push_status("no bluetooth device selected for BLE scan profile".to_string());
-                return;
-            };
-            apply_sdr_scan_shortcut_from_bluetooth(
-                &state,
-                &device,
-                "BLE Data Channels",
-                2_404_000_000,
-                2_478_000_000,
-                2_000_000,
-                10.0,
-                -84.0,
-            );
-        });
-    }
-
-    {
-        let state = state.clone();
-        let bluetooth_list = bluetooth_list.clone();
-        scan_zigbee_btn.connect_clicked(move |_| {
-            let Some(device) = selected_bluetooth(&state, &bluetooth_list) else {
-                state.borrow_mut().push_status(
-                    "no bluetooth device selected for Zigbee scan profile".to_string(),
-                );
-                return;
-            };
-            apply_sdr_scan_shortcut_from_bluetooth(
-                &state,
-                &device,
-                "Zigbee 2.4 Channels",
-                2_405_000_000,
-                2_480_000_000,
-                5_000_000,
-                9.0,
-                -84.0,
-            );
-        });
-    }
-
-    {
-        let state = state.clone();
-        let bluetooth_list = bluetooth_list.clone();
-        scan_thread_btn.connect_clicked(move |_| {
-            let Some(device) = selected_bluetooth(&state, &bluetooth_list) else {
-                state.borrow_mut().push_status(
-                    "no bluetooth device selected for Thread scan profile".to_string(),
-                );
-                return;
-            };
-            apply_sdr_scan_shortcut_from_bluetooth(
-                &state,
-                &device,
-                "Thread 2.4 Channels",
-                2_405_000_000,
-                2_480_000_000,
-                5_000_000,
-                9.0,
-                -84.0,
-            );
-        });
-    }
-
-    {
-        let state = state.clone();
-        let bluetooth_list = bluetooth_list.clone();
-        scan_ism_863_btn.connect_clicked(move |_| {
-            let Some(device) = selected_bluetooth(&state, &bluetooth_list) else {
-                state.borrow_mut().push_status(
-                    "no bluetooth device selected for 863-870 MHz ISM scan profile".to_string(),
-                );
-                return;
-            };
-            apply_sdr_scan_shortcut_from_bluetooth(
-                &state,
-                &device,
-                "863-870 MHz ISM",
-                863_000_000,
-                870_000_000,
-                25_000,
-                7.0,
-                -82.0,
-            );
-        });
-    }
-
-    {
-        let state = state.clone();
-        let bluetooth_list = bluetooth_list.clone();
-        scan_ism_902_btn.connect_clicked(move |_| {
-            let Some(device) = selected_bluetooth(&state, &bluetooth_list) else {
-                state.borrow_mut().push_status(
-                    "no bluetooth device selected for 902-928 MHz ISM scan profile".to_string(),
-                );
-                return;
-            };
-            apply_sdr_scan_shortcut_from_bluetooth(
-                &state,
-                &device,
-                "902-928 MHz ISM",
-                902_000_000,
-                928_000_000,
-                200_000,
-                6.0,
-                -80.0,
-            );
         });
     }
 
@@ -17430,46 +17310,6 @@ fn selected_bluetooth(
         .iter()
         .find(|device| device.mac == key)
         .cloned()
-}
-
-fn apply_sdr_scan_shortcut_from_bluetooth(
-    state: &Rc<RefCell<AppState>>,
-    device: &BluetoothDeviceRecord,
-    profile_label: &str,
-    start_hz: u64,
-    end_hz: u64,
-    step_hz: u64,
-    steps_per_sec: f64,
-    squelch_dbm: f32,
-) {
-    let center_hz = (start_hz + end_hz) / 2;
-    let preset = SdrOperatorPresetSetting {
-        label: profile_label.to_string(),
-        center_freq_hz: center_hz,
-        sample_rate_hz: 2_400_000,
-        scan_enabled: true,
-        scan_start_hz: start_hz,
-        scan_end_hz: end_hz,
-        scan_step_hz: step_hz,
-        scan_steps_per_sec: steps_per_sec,
-        squelch_dbm,
-    };
-    let mut s = state.borrow_mut();
-    let added = merge_sdr_operator_presets(&mut s.settings.sdr_operator_presets, vec![preset]);
-    s.save_settings_to_disk();
-    if let Some(runtime) = s.sdr_runtime.as_ref() {
-        runtime.set_center_freq(center_hz);
-        runtime.set_scan_range(true, start_hz, end_hz, step_hz, steps_per_sec);
-    }
-    s.push_status(format!(
-        "applied {} scan profile from {} (range {:.3}-{:.3} MHz, step {:.3} MHz, preset_added={})",
-        profile_label,
-        device.mac,
-        start_hz as f64 / 1_000_000.0,
-        end_hz as f64 / 1_000_000.0,
-        step_hz as f64 / 1_000_000.0,
-        added
-    ));
 }
 
 fn bluetooth_record_bluez_controller(device: &BluetoothDeviceRecord) -> Option<Option<String>> {
