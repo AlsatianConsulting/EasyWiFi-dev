@@ -66,13 +66,20 @@ impl OuiDatabase {
 
     pub fn lookup(&self, mac_address: &str) -> Option<&str> {
         let normalized = normalize_hex(mac_address);
-        for (prefix_len, bucket) in self.by_prefix_len.iter().rev() {
-            if normalized.len() < *prefix_len {
-                continue;
-            }
-            let key = normalized.chars().take(*prefix_len).collect::<String>();
-            if let Some(vendor) = bucket.get(&key) {
-                return Some(vendor.as_str());
+        if let Some(vendor) = self.lookup_normalized(&normalized) {
+            return Some(vendor);
+        }
+
+        // Locally administered/derived BSSIDs may flip bit 1 in the first octet.
+        // Try the globally administered variant as a fallback for OUI vendor mapping.
+        if normalized.len() >= 2 {
+            if let Ok(first_octet) = u8::from_str_radix(&normalized[..2], 16) {
+                if first_octet & 0x02 != 0 {
+                    let fallback = format!("{:02X}{}", first_octet & !0x02, &normalized[2..]);
+                    if let Some(vendor) = self.lookup_normalized(&fallback) {
+                        return Some(vendor);
+                    }
+                }
             }
         }
         None
@@ -251,6 +258,19 @@ impl OuiDatabase {
             entry_count,
         })
     }
+
+    fn lookup_normalized(&self, normalized: &str) -> Option<&str> {
+        for (prefix_len, bucket) in self.by_prefix_len.iter().rev() {
+            if normalized.len() < *prefix_len {
+                continue;
+            }
+            let key = normalized.chars().take(*prefix_len).collect::<String>();
+            if let Some(vendor) = bucket.get(&key) {
+                return Some(vendor.as_str());
+            }
+        }
+        None
+    }
 }
 
 fn normalize_hex(value: &str) -> String {
@@ -367,6 +387,13 @@ MA-M,70B3D57,Acme Mid Prefix Labs,\n";
             Some("Nokia Shanghai Bell Co.,Ltd.")
         );
         assert_eq!(db.lookup("70:B3:D5:7A:11:22"), Some("Acme Mid Prefix Labs"));
+    }
+
+    #[test]
+    fn lookup_falls_back_to_globally_administered_prefix_for_local_mac() {
+        let raw = "prefix,vendor\nC89E43,Example AP Vendor\n";
+        let db = OuiDatabase::load_from_csv_text(raw).expect("csv load");
+        assert_eq!(db.lookup("CA:9E:43:12:34:56"), Some("Example AP Vendor"));
     }
 
     #[test]
