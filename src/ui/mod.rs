@@ -4848,7 +4848,7 @@ fn build_ui(app: &Application) -> Result<()> {
 
     let root = GtkBox::new(Orientation::Vertical, 8);
     let (notebook, widgets) = build_tabs(&window, state.clone());
-    remove_sdr_tab(&notebook, state.clone());
+    remove_sdr_tab(&notebook);
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
     let content_paned = Paned::new(Orientation::Vertical);
@@ -6705,33 +6705,12 @@ fn set_scan_control_button_sensitivity(
     stop_btn.set_sensitive(any_running);
 }
 
-fn remove_sdr_tab(notebook: &Notebook, state: Rc<RefCell<AppState>>) {
+fn remove_sdr_tab(notebook: &Notebook) {
     if notebook.n_pages() <= SDR_TAB_INDEX {
         return;
     }
 
     notebook.remove_page(Some(SDR_TAB_INDEX));
-    let placeholder = GtkBox::new(Orientation::Vertical, 8);
-    placeholder.set_margin_top(16);
-    placeholder.set_margin_bottom(16);
-    placeholder.set_margin_start(16);
-    placeholder.set_margin_end(16);
-    let heading = Label::new(Some("SDR Removed"));
-    heading.add_css_class("heading");
-    heading.set_xalign(0.0);
-    let body = Label::new(Some(
-        "SDR support has been removed from EasyWiFi. This build provides Wi-Fi and Bluetooth only.",
-    ));
-    body.set_wrap(true);
-    body.set_xalign(0.0);
-    placeholder.append(&heading);
-    placeholder.append(&body);
-    let tab_label = Label::new(Some("Removed"));
-    notebook.insert_page(&placeholder, Some(&tab_label), Some(SDR_TAB_INDEX));
-
-    state
-        .borrow_mut()
-        .push_status("SDR support removed from this build".to_string());
 }
 
 fn describe_channel_mode(mode: &ChannelSelectionMode) -> String {
