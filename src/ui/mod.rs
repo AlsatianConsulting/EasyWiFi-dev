@@ -1035,7 +1035,12 @@ fn start_persistence_worker(storage: StorageEngine) -> Sender<PersistenceCommand
 }
 
 fn internal_runtime_output_root() -> PathBuf {
-    std::env::temp_dir().join("easywifi-runtime")
+    if let Some(base) = dirs::data_local_dir() {
+        return base.join("EasyWiFi").join("runtime");
+    }
+    std::env::temp_dir().join(format!("easywifi-runtime-uid{}", unsafe {
+        libc::geteuid()
+    }))
 }
 
 fn normalize_rssi_fraction(rssi_dbm: i32) -> f64 {
