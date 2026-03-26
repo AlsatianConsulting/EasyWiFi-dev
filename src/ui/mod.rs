@@ -644,10 +644,17 @@ impl AppState {
             return;
         }
 
-        let need_wifi = self.capture_runtime.is_none();
+        let wifi_enabled = self.settings.interfaces.iter().any(|iface| iface.enabled);
+        let need_wifi = wifi_enabled && self.capture_runtime.is_none();
         let need_bluetooth = self.settings.bluetooth_enabled && self.bluetooth_runtime.is_none();
         if !need_wifi && !need_bluetooth {
-            self.push_status("scanning already running".to_string());
+            if self.capture_runtime.is_some() || self.bluetooth_runtime.is_some() {
+                self.push_status("scanning already running".to_string());
+            } else {
+                self.push_status(
+                    "no scanning services enabled; enable Wi-Fi and/or Bluetooth".to_string(),
+                );
+            }
             return;
         }
 
@@ -9083,6 +9090,7 @@ fn apply_interface_selection(
     state: Rc<RefCell<AppState>>,
     iface_name: String,
     mode: ChannelSelectionMode,
+    wifi_enabled: bool,
     bluetooth_enabled: bool,
     bluetooth_controller: Option<String>,
     output_to_files: bool,
@@ -9096,7 +9104,7 @@ fn apply_interface_selection(
         interface_name: iface_name,
         monitor_interface_name: None,
         channel_mode: mode,
-        enabled: true,
+        enabled: wifi_enabled,
     }];
     s.settings.bluetooth_enabled = bluetooth_enabled;
     s.settings.bluetooth_controller = bluetooth_controller;
@@ -9235,6 +9243,7 @@ fn open_interface_settings_dialog_inner(
     let lock_ht_buttons = Rc::new(RefCell::new(Vec::<(String, ToggleButton)>::new()));
     let lock_ht_button_box = GtkBox::new(Orientation::Horizontal, 6);
 
+    let wifi_scan_check = CheckButton::with_label("Scan Wi-Fi");
     let bluetooth_scan_check = CheckButton::with_label("Scan Bluetooth");
     let bluetooth_controller_combo = ComboBoxText::new();
     bluetooth_controller_combo.append(Some("default"), "Default Controller");
@@ -9315,6 +9324,13 @@ fn open_interface_settings_dialog_inner(
     ht_row.append(&ht_label);
     ht_row.append(&lock_ht_button_box);
 
+    let wifi_row = GtkBox::new(Orientation::Horizontal, 8);
+    let wifi_label = Label::new(Some("Wi-Fi"));
+    wifi_label.set_xalign(0.0);
+    wifi_label.set_width_chars(18);
+    wifi_row.append(&wifi_label);
+    wifi_row.append(&wifi_scan_check);
+
     let bluetooth_row = GtkBox::new(Orientation::Horizontal, 8);
     let bluetooth_label = Label::new(Some("Bluetooth"));
     bluetooth_label.set_xalign(0.0);
@@ -9359,6 +9375,7 @@ fn open_interface_settings_dialog_inner(
     root.append(&band_row);
     root.append(&lock_row);
     root.append(&ht_row);
+    root.append(&wifi_row);
     root.append(&bluetooth_row);
     root.append(&bluetooth_controller_row);
     root.append(&output_toggle_row);
@@ -9651,13 +9668,25 @@ fn open_interface_settings_dialog_inner(
     let update_mode_visibility = Rc::new(RefCell::new(None::<Box<dyn Fn()>>));
     {
         let mode_combo = mode_combo.clone();
+        let mode_row = mode_row.clone();
         let channels_table_row = channels_table_row.clone();
         let dwell_row = dwell_row.clone();
         let band_row = band_row.clone();
         let lock_row = lock_row.clone();
         let ht_row = ht_row.clone();
+        let wifi_scan_check = wifi_scan_check.clone();
         let update_mode = update_mode_visibility.clone();
         *update_mode.borrow_mut() = Some(Box::new(move || {
+            let wifi_enabled = wifi_scan_check.is_active();
+            mode_row.set_visible(wifi_enabled);
+            if !wifi_enabled {
+                channels_table_row.set_visible(false);
+                dwell_row.set_visible(false);
+                band_row.set_visible(false);
+                lock_row.set_visible(false);
+                ht_row.set_visible(false);
+                return;
+            }
             let mode = mode_combo
                 .active_id()
                 .map(|v| v.to_string())
@@ -9776,6 +9805,15 @@ fn open_interface_settings_dialog_inner(
     }
 
     {
+        let update_mode_visibility = update_mode_visibility.clone();
+        wifi_scan_check.connect_toggled(move |_| {
+            if let Some(cb) = update_mode_visibility.borrow().as_ref() {
+                cb();
+            }
+        });
+    }
+
+    {
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
         bluetooth_scan_check.connect_toggled(move |check| {
             bluetooth_controller_combo.set_sensitive(check.is_active());
@@ -9796,6 +9834,7 @@ fn open_interface_settings_dialog_inner(
         let s = state.borrow();
         (
             s.settings.interfaces.first().cloned(),
+            s.settings.interfaces.iter().any(|iface| iface.enabled),
             s.settings.bluetooth_enabled,
             s.settings.bluetooth_controller.clone(),
             s.settings.output_to_files,
@@ -9842,9 +9881,10 @@ fn open_interface_settings_dialog_inner(
         interface_combo.set_active(Some(0));
     }
 
-    bluetooth_scan_check.set_active(current_interface.1);
-    bluetooth_controller_combo.set_sensitive(current_interface.1);
-    match current_interface.2.as_deref() {
+    wifi_scan_check.set_active(current_interface.1);
+    bluetooth_scan_check.set_active(current_interface.2);
+    bluetooth_controller_combo.set_sensitive(current_interface.2);
+    match current_interface.3.as_deref() {
         Some(ctrl) => {
             if !bluetooth_controller_combo.set_active_id(Some(ctrl)) {
                 bluetooth_controller_combo.set_active_id(Some("default"));
@@ -9854,10 +9894,10 @@ fn open_interface_settings_dialog_inner(
             bluetooth_controller_combo.set_active_id(Some("default"));
         }
     }
-    output_to_files_check.set_active(current_interface.3);
-    output_dir_entry.set_text(&current_interface.4.display().to_string());
-    output_dir_entry.set_sensitive(current_interface.3);
-    browse_output_btn.set_sensitive(current_interface.3);
+    output_to_files_check.set_active(current_interface.4);
+    output_dir_entry.set_text(&current_interface.5.display().to_string());
+    output_dir_entry.set_sensitive(current_interface.4);
+    browse_output_btn.set_sensitive(current_interface.4);
 
     if let Some(cb) = apply_interface_capability.borrow().as_ref() {
         cb();
@@ -9908,6 +9948,7 @@ fn open_interface_settings_dialog_inner(
         let band_combo = band_combo.clone();
         let lock_channel_entry = lock_channel_entry.clone();
         let lock_ht_combo = lock_ht_combo.clone();
+        let wifi_scan_check = wifi_scan_check.clone();
         let bluetooth_scan_check = bluetooth_scan_check.clone();
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
         let output_to_files_check = output_to_files_check.clone();
@@ -9941,6 +9982,7 @@ fn open_interface_settings_dialog_inner(
                 .active_id()
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "HT20".to_string());
+            let wifi_enabled = wifi_scan_check.is_active();
             let bluetooth_enabled = bluetooth_scan_check.is_active();
             let bluetooth_controller = if !bluetooth_enabled {
                 None
@@ -10043,7 +10085,12 @@ fn open_interface_settings_dialog_inner(
                             .to_string(),
                     );
                 }
-                s.push_status(format!("preparing scan setup on {}", iface_name));
+                s.push_status(format!(
+                    "preparing scan setup on {} (Wi-Fi: {}, Bluetooth: {})",
+                    iface_name,
+                    if wifi_enabled { "on" } else { "off" },
+                    if bluetooth_enabled { "on" } else { "off" }
+                ));
             }
 
             settings_window.close();
@@ -10051,6 +10098,7 @@ fn open_interface_settings_dialog_inner(
                 state.clone(),
                 iface_name,
                 mode,
+                wifi_enabled,
                 bluetooth_enabled,
                 bluetooth_controller,
                 output_to_files,
