@@ -6673,7 +6673,6 @@ fn build_menubar(
 
     let root = gio::Menu::new();
     root.append_submenu(Some("File"), &file_menu);
-    root.append_submenu(Some("Presets"), &presets_root_menu);
     root.append_submenu(Some("Settings"), &settings_menu);
 
     gtk::PopoverMenuBar::from_model(Some(&root))
