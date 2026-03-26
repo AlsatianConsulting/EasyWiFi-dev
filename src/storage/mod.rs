@@ -243,7 +243,7 @@ impl StorageEngine {
                 rssi_dbm=excluded.rssi_dbm,
                 number_of_clients=excluded.number_of_clients,
                 first_seen=MIN(access_points.first_seen, excluded.first_seen),
-                last_seen=excluded.last_seen,
+                last_seen=MAX(bluetooth_devices.last_seen, excluded.last_seen),
                 handshake_count=excluded.handshake_count,
                 notes=excluded.notes,
                 uptime_beacons=excluded.uptime_beacons,
@@ -700,7 +700,7 @@ impl StorageEngine {
             let uuid_names_json: String = row.get(15)?;
             let active_enum_json: String = row.get(16)?;
 
-            Ok(BluetoothDeviceRecord {
+            let mut record = BluetoothDeviceRecord {
                 mac: row.get(0)?,
                 address_type: row.get(1)?,
                 transport: row.get(2)?,
@@ -742,7 +742,11 @@ impl StorageEngine {
                         || enumeration.last_error.is_some()
                 }),
                 observations: Vec::new(),
-            })
+            };
+            if record.last_seen < record.first_seen {
+                std::mem::swap(&mut record.first_seen, &mut record.last_seen);
+            }
+            Ok(record)
         })?;
 
         let mut result = Vec::new();
