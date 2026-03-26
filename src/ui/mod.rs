@@ -5843,6 +5843,12 @@ fn label_cell(text: String, width_chars: i32) -> Label {
     label
 }
 
+fn header_cell(text: String, width_chars: i32) -> Label {
+    let label = label_cell(text, width_chars);
+    label.set_xalign(0.5);
+    label
+}
+
 fn attach_row_click_selection(
     row: &ListBoxRow,
     list: &ListBox,
@@ -8982,6 +8988,11 @@ fn open_interface_channel_capabilities_dialog(
     channels: &[capture::SupportedChannel],
     ht_modes: &[String],
 ) {
+    const CAP_COL_CHANNEL: i32 = 12;
+    const CAP_COL_FREQ: i32 = 14;
+    const CAP_COL_BAND: i32 = 12;
+    const CAP_COL_WIDTHS: i32 = 44;
+
     let dialog = Dialog::builder()
         .transient_for(window)
         .modal(true)
@@ -9004,10 +9015,13 @@ fn open_interface_channel_capabilities_dialog(
 
     let rows = GtkBox::new(Orientation::Vertical, 4);
     let header = GtkBox::new(Orientation::Horizontal, 10);
-    header.append(&label_cell("Channel".to_string(), 10));
-    header.append(&label_cell("Freq MHz".to_string(), 10));
-    header.append(&label_cell("Band".to_string(), 10));
-    header.append(&label_cell("Bandwidth / Modes".to_string(), 40));
+    header.append(&header_cell("Channel".to_string(), CAP_COL_CHANNEL));
+    header.append(&header_cell("Freq MHz".to_string(), CAP_COL_FREQ));
+    header.append(&header_cell("Band".to_string(), CAP_COL_BAND));
+    header.append(&header_cell(
+        "Bandwidth / Modes".to_string(),
+        CAP_COL_WIDTHS,
+    ));
     rows.append(&header);
 
     if channels.is_empty() {
@@ -9020,21 +9034,21 @@ fn open_interface_channel_capabilities_dialog(
         let widths = ht_modes.join(", ");
         for ch in channels {
             let row = GtkBox::new(Orientation::Horizontal, 10);
-            row.append(&label_cell(ch.channel.to_string(), 10));
+            row.append(&label_cell(ch.channel.to_string(), CAP_COL_CHANNEL));
             row.append(&label_cell(
                 channel_frequency_mhz(ch)
                     .map(|f| f.to_string())
                     .unwrap_or_default(),
-                10,
+                CAP_COL_FREQ,
             ));
-            row.append(&label_cell(channel_capability_band_label(ch), 10));
+            row.append(&label_cell(channel_capability_band_label(ch), CAP_COL_BAND));
             row.append(&label_cell(
                 if ch.enabled {
                     widths.clone()
                 } else {
                     format!("{widths} | disabled")
                 },
-                40,
+                CAP_COL_WIDTHS,
             ));
             rows.append(&row);
         }
@@ -9438,6 +9452,12 @@ fn open_interface_settings_dialog_inner(
 
     let rebuild_channel_table = Rc::new(RefCell::new(None::<Box<dyn Fn(Vec<capture::SupportedChannel>, Vec<String>)>>));
     {
+        const SEL_COL_USE: i32 = 8;
+        const SEL_COL_CHANNEL: i32 = 12;
+        const SEL_COL_FREQ: i32 = 14;
+        const SEL_COL_BAND: i32 = 12;
+        const SEL_COL_WIDTHS: i32 = 44;
+
         let channels_list = channels_list.clone();
         let channel_checks = channel_checks.clone();
         let channels_entry = channels_entry.clone();
@@ -9462,11 +9482,11 @@ fn open_interface_settings_dialog_inner(
                 .collect::<HashSet<_>>();
 
             let header = GtkBox::new(Orientation::Horizontal, 10);
-            header.append(&label_cell("Use".to_string(), 8));
-            header.append(&label_cell("Channel".to_string(), 10));
-            header.append(&label_cell("Freq MHz".to_string(), 12));
-            header.append(&label_cell("Band".to_string(), 10));
-            header.append(&label_cell("Widths".to_string(), 34));
+            header.append(&header_cell("Use".to_string(), SEL_COL_USE));
+            header.append(&header_cell("Channel".to_string(), SEL_COL_CHANNEL));
+            header.append(&header_cell("Freq MHz".to_string(), SEL_COL_FREQ));
+            header.append(&header_cell("Band".to_string(), SEL_COL_BAND));
+            header.append(&header_cell("Widths".to_string(), SEL_COL_WIDTHS));
             channels_list.append(&header);
 
             if channels.is_empty() {
@@ -9487,22 +9507,27 @@ fn open_interface_settings_dialog_inner(
                 };
                 check.set_active(should_default_select);
                 check.set_sensitive(ch.enabled);
-                row.append(&check);
-                row.append(&label_cell(ch.channel.to_string(), 10));
+                check.set_halign(gtk::Align::Center);
+                let check_cell = GtkBox::new(Orientation::Horizontal, 0);
+                check_cell.set_halign(gtk::Align::Center);
+                check_cell.set_size_request(SEL_COL_USE * TABLE_CHAR_WIDTH_PX, -1);
+                check_cell.append(&check);
+                row.append(&check_cell);
+                row.append(&label_cell(ch.channel.to_string(), SEL_COL_CHANNEL));
                 row.append(&label_cell(
                     channel_frequency_mhz(&ch)
                         .map(|f| f.to_string())
                         .unwrap_or_else(|| "-".to_string()),
-                    12,
+                    SEL_COL_FREQ,
                 ));
-                row.append(&label_cell(channel_capability_band_label(&ch), 10));
+                row.append(&label_cell(channel_capability_band_label(&ch), SEL_COL_BAND));
                 row.append(&label_cell(
                     if ch.enabled {
                         widths.clone()
                     } else {
                         format!("{widths} | disabled")
                     },
-                    34,
+                    SEL_COL_WIDTHS,
                 ));
 
                 let sync = sync_channels_entry_from_checks.clone();
