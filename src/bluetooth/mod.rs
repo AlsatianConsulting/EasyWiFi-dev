@@ -878,7 +878,39 @@ fn run_scan_loop(
         Vec::new()
     };
 
+    if use_bluez {
+        let label = if bluez_targets.is_empty() {
+            "default".to_string()
+        } else {
+            bluez_targets
+                .iter()
+                .map(|target| target.as_deref().unwrap_or("default"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let _ = sender.send(BluetoothEvent::Log(format!(
+            "BlueZ scan backend active (controllers: {label}, timeout={}s, pause={}ms)",
+            scan_timeout, config.pause_ms
+        )));
+    }
+    if use_ubertooth {
+        let label = if ubertooth_targets.is_empty() {
+            "default".to_string()
+        } else {
+            ubertooth_targets
+                .iter()
+                .map(|target| target.as_deref().unwrap_or("default"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let _ = sender.send(BluetoothEvent::Log(format!(
+            "Ubertooth scan backend active (devices: {label}, timeout={}s, pause={}ms)",
+            scan_timeout, config.pause_ms
+        )));
+    }
+
     while !stop_flag.load(Ordering::Relaxed) {
+        let mut info_refresh_budget = 1usize;
         let mut process_hits = |hits: Vec<ScanHit>,
                                 is_ble_only: bool,
                                 source_label: &str,
@@ -889,16 +921,27 @@ fn run_scan_loop(
                 }
 
                 let now = Utc::now();
+                let has_enrichment_hint = hit
+                    .name
+                    .as_deref()
+                    .map(|name| !is_placeholder_scan_name(&hit.mac, name))
+                    .unwrap_or(false);
                 let should_refresh = use_bluez
+                    && info_refresh_budget > 0
+                    && has_enrichment_hint
+                    && cache.contains_key(&hit.mac)
                     && last_refresh
                         .get(&hit.mac)
                         .map(|t| t.elapsed() >= info_refresh_period)
                         .unwrap_or(true);
 
                 if should_refresh {
-                    if let Some(fresh) = query_device_info(info_controller, &hit.mac, &resolver) {
+                    if let Some(fresh) =
+                        query_device_info_with_timeout(info_controller, &hit.mac, &resolver, 2)
+                    {
                         cache.insert(hit.mac.clone(), fresh);
                         last_refresh.insert(hit.mac.clone(), Instant::now());
+                        info_refresh_budget = info_refresh_budget.saturating_sub(1);
                     }
                 }
 
@@ -930,6 +973,7 @@ fn run_scan_loop(
                     record.source_adapters.push(source_label.to_string());
                 }
                 record.last_seen = now;
+                normalize_seen_window(&mut record);
 
                 cache.insert(hit.mac.clone(), record.clone());
                 let _ = sender.send(BluetoothEvent::DeviceSeen(record));
@@ -1163,7 +1207,8 @@ fn run_ubertooth_scan_once_interruptible(
 fn parse_scan_output(text: &str) -> Vec<ScanHit> {
     let mut hits: HashMap<String, ScanHit> = HashMap::new();
     let device_re = Regex::new(r"Device\s+([0-9A-Fa-f:]{17})\s*(.*)$").unwrap();
-    let rssi_re = Regex::new(r"RSSI:\s*(-?\d+)").unwrap();
+    let rssi_paren_re = Regex::new(r"RSSI:\s*(?:0x[0-9A-Fa-f]+)?\s*\((-?\d+)\)").unwrap();
+    let rssi_plain_re = Regex::new(r"RSSI:\s*(-?\d+)").unwrap();
 
     for raw in text.lines() {
         let line = clean_line(raw);
@@ -1191,17 +1236,26 @@ fn parse_scan_output(text: &str) -> Vec<ScanHit> {
             rssi_dbm: None,
         });
 
-        if let Some(rssi_caps) = rssi_re.captures(&rest) {
+        if let Some(rssi_caps) = rssi_paren_re.captures(&rest) {
             entry.rssi_dbm = rssi_caps
                 .get(1)
-                .and_then(|m| m.as_str().parse::<i32>().ok());
+                .and_then(|m| m.as_str().parse::<i32>().ok())
+                .map(|rssi| rssi.clamp(-127, 20));
+            continue;
+        }
+
+        if let Some(rssi_caps) = rssi_plain_re.captures(&rest) {
+            entry.rssi_dbm = rssi_caps
+                .get(1)
+                .and_then(|m| m.as_str().parse::<i32>().ok())
+                .map(|rssi| rssi.clamp(-127, 20));
             continue;
         }
 
         if rest.starts_with("TxPower:")
             || rest.starts_with("ManufacturerData")
+            || is_placeholder_scan_name(&mac, &rest)
             || rest.is_empty()
-            || rest.eq_ignore_ascii_case(&mac.replace(':', "-"))
         {
             continue;
         }
@@ -1292,10 +1346,34 @@ fn parse_ubertooth_links(text: &str) -> Vec<String> {
     out
 }
 
+fn is_placeholder_scan_name(mac: &str, value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let dashed = mac.replace(':', "-");
+    trimmed.eq_ignore_ascii_case(&dashed) || trimmed.eq_ignore_ascii_case(mac)
+}
+
+fn normalize_seen_window(record: &mut BluetoothDeviceRecord) {
+    if record.last_seen < record.first_seen {
+        std::mem::swap(&mut record.first_seen, &mut record.last_seen);
+    }
+}
+
 fn query_device_info(
     controller: Option<&str>,
     mac: &str,
     resolver: &SigResolver,
+) -> Option<BluetoothDeviceRecord> {
+    query_device_info_with_timeout(controller, mac, resolver, 6)
+}
+
+fn query_device_info_with_timeout(
+    controller: Option<&str>,
+    mac: &str,
+    resolver: &SigResolver,
+    timeout_secs: u64,
 ) -> Option<BluetoothDeviceRecord> {
     if let Some(ctrl) = controller {
         select_controller(ctrl);
@@ -1303,7 +1381,7 @@ fn query_device_info(
 
     let output = Command::new("bluetoothctl")
         .arg("--timeout")
-        .arg("6")
+        .arg(timeout_secs.max(1).to_string())
         .arg("info")
         .arg(mac)
         .output()
@@ -2854,7 +2932,8 @@ fn manifest_asset(name: &str) -> PathBuf {
 mod tests {
     use super::{
         appearance_name, decode_characteristic_value, decode_descriptor_value, fallback_uuid_name,
-        merge_resolution_labels, normalize_assigned_uuid, parse_company_id,
+        is_placeholder_scan_name, merge_resolution_labels, normalize_assigned_uuid,
+        parse_company_id, parse_scan_output,
         parse_sig_uuid_map_from_assigned_numbers_html, parse_tab_separated_mappings,
         parse_uuid_line, resolve_bluez_targets, resolve_ubertooth_targets,
     };
@@ -3040,5 +3119,38 @@ mod tests {
             resolve_ubertooth_targets(Some("usb-1-2")),
             vec![Some("usb-1-2".to_string())]
         );
+    }
+
+    #[test]
+    fn parse_scan_output_prefers_parenthesized_rssi_from_hex_form() {
+        let raw = "[CHG] Device AA:BB:CC:DD:EE:FF RSSI: 0xffffffba (-70)";
+        let hits = parse_scan_output(raw);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].mac, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(hits[0].rssi_dbm, Some(-70));
+    }
+
+    #[test]
+    fn parse_scan_output_ignores_placeholder_mac_name() {
+        let raw = "[NEW] Device AA:BB:CC:DD:EE:FF AA-BB-CC-DD-EE-FF";
+        let hits = parse_scan_output(raw);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, None);
+    }
+
+    #[test]
+    fn placeholder_scan_name_detects_mac_variants() {
+        assert!(is_placeholder_scan_name(
+            "AA:BB:CC:DD:EE:FF",
+            "AA-BB-CC-DD-EE-FF"
+        ));
+        assert!(is_placeholder_scan_name(
+            "AA:BB:CC:DD:EE:FF",
+            "AA:BB:CC:DD:EE:FF"
+        ));
+        assert!(!is_placeholder_scan_name(
+            "AA:BB:CC:DD:EE:FF",
+            "My Tracker"
+        ));
     }
 }
