@@ -8134,7 +8134,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             .collect::<Vec<_>>()
     };
     initial_sdr_bookmarks.extend(persisted_bookmarks);
-    initial_sdr_bookmarks.extend(load_gqrx_bookmarks());
     initial_sdr_bookmarks.sort_by_key(|(_, freq)| *freq);
     initial_sdr_bookmarks.dedup_by(|left, right| left.1 == right.1);
     let sdr_bookmarks: Rc<RefCell<Vec<(String, u64)>>> =
@@ -13675,63 +13674,6 @@ fn attach_row_click_selection(
 fn sdr_hardware_from_active_id(active_id: Option<glib::GString>) -> SdrHardware {
     let _ = active_id;
     SdrHardware::default()
-}
-
-fn load_gqrx_bookmarks() -> Vec<(String, u64)> {
-    let Some(config_dir) = dirs::config_dir() else {
-        return Vec::new();
-    };
-    let path = config_dir.join("gqrx/bookmarks.csv");
-    let Ok(raw) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
-
-    let mut bookmarks = Vec::new();
-    for line in raw.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        let parts = line
-            .split([';', ',', '\t'])
-            .map(str::trim)
-            .collect::<Vec<_>>();
-        if parts.len() < 2 {
-            continue;
-        }
-
-        let Some(freq_hz) = parse_frequency_to_hz(parts[1]) else {
-            continue;
-        };
-        if freq_hz < 100_000 {
-            continue;
-        }
-
-        let label = if parts[0].is_empty() {
-            format!("GQRX {:.6} MHz", (freq_hz as f64) / 1_000_000.0)
-        } else {
-            format!("GQRX {}", parts[0])
-        };
-        bookmarks.push((label, freq_hz));
-    }
-    bookmarks
-}
-
-fn parse_frequency_to_hz(value: &str) -> Option<u64> {
-    let normalized = value.trim().replace('_', "");
-    if normalized.is_empty() {
-        return None;
-    }
-    if let Ok(hz) = normalized.parse::<u64>() {
-        return Some(hz);
-    }
-    if let Ok(mhz) = normalized.parse::<f64>() {
-        if mhz.is_finite() && mhz > 0.0 {
-            return Some((mhz * 1_000_000.0).round() as u64);
-        }
-    }
-    None
 }
 
 fn sdr_config_from_inputs(
@@ -22363,7 +22305,7 @@ mod tests {
             "ads_b".to_string(),
         ];
         let lookup = HashMap::from([
-            ("acars".to_string(), SdrDecoderKind::Acars),
+            ("acars".to_string(), SdrDecoderKind::Disabled),
             (
                 "p25".to_string(),
                 SdrDecoderKind::Plugin {
@@ -22373,8 +22315,8 @@ mod tests {
                     protocol: Some("p25".to_string()),
                 },
             ),
-            ("ais".to_string(), SdrDecoderKind::Ais),
-            ("ads_b".to_string(), SdrDecoderKind::Adsb),
+            ("ais".to_string(), SdrDecoderKind::Disabled),
+            ("ads_b".to_string(), SdrDecoderKind::Disabled),
         ]);
         let prioritized =
             prioritized_decoder_ids_for_bookmark_label(order.as_slice(), &lookup, "Public Safety");

@@ -180,16 +180,7 @@ pub enum SdrEvent {
 
 #[derive(Debug, Clone)]
 pub enum SdrDecoderKind {
-    Rtl433,
-    Adsb,
-    Acars,
-    Ais,
-    AprsAx25,
-    Pocsag,
-    Iridium,
-    InmarsatStdc,
-    Dect,
-    GsmLte,
+    Disabled,
     Plugin {
         id: String,
         label: String,
@@ -201,48 +192,21 @@ pub enum SdrDecoderKind {
 impl SdrDecoderKind {
     pub fn id(&self) -> String {
         match self {
-            Self::Rtl433 => "rtl_433".to_string(),
-            Self::Adsb => "ads_b".to_string(),
-            Self::Acars => "acars".to_string(),
-            Self::Ais => "ais".to_string(),
-            Self::AprsAx25 => "aprs_ax25".to_string(),
-            Self::Pocsag => "pocsag".to_string(),
-            Self::Iridium => "iridium".to_string(),
-            Self::InmarsatStdc => "inmarsat_stdc".to_string(),
-            Self::Dect => "dect".to_string(),
-            Self::GsmLte => "gsm_lte".to_string(),
+            Self::Disabled => "disabled".to_string(),
             Self::Plugin { id, .. } => id.clone(),
         }
     }
 
     pub fn label(&self) -> String {
         match self {
-            Self::Rtl433 => "rtl_433".to_string(),
-            Self::Adsb => "ADS-B".to_string(),
-            Self::Acars => "ACARS".to_string(),
-            Self::Ais => "AIS".to_string(),
-            Self::AprsAx25 => "APRS / AX.25".to_string(),
-            Self::Pocsag => "POCSAG".to_string(),
-            Self::Iridium => "Iridium".to_string(),
-            Self::InmarsatStdc => "Inmarsat STD-C".to_string(),
-            Self::Dect => "DECT".to_string(),
-            Self::GsmLte => "GSM/LTE Metadata".to_string(),
+            Self::Disabled => "Disabled".to_string(),
             Self::Plugin { label, .. } => label.clone(),
         }
     }
 
     pub fn default_protocol(&self) -> &'static str {
         match self {
-            Self::Rtl433 => "rtl_433",
-            Self::Adsb => "adsb",
-            Self::Acars => "acars",
-            Self::Ais => "ais",
-            Self::AprsAx25 => "aprs_ax25",
-            Self::Pocsag => "pocsag",
-            Self::Iridium => "iridium",
-            Self::InmarsatStdc => "inmarsat_c",
-            Self::Dect => "dect",
-            Self::GsmLte => "gsm_lte",
+            Self::Disabled => "disabled",
             Self::Plugin { .. } => "plugin",
         }
     }
@@ -295,9 +259,7 @@ impl SdrRuntime {
 }
 
 pub fn default_plugin_config_path() -> Option<PathBuf> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let candidate = root.join("sdr-plugins.json");
-    candidate.exists().then_some(candidate)
+    None
 }
 
 pub fn load_plugin_definitions(_path: Option<&Path>) -> Vec<SdrPluginDefinition> {
@@ -305,18 +267,7 @@ pub fn load_plugin_definitions(_path: Option<&Path>) -> Vec<SdrPluginDefinition>
 }
 
 pub fn builtin_decoders_in_priority_order() -> Vec<SdrDecoderKind> {
-    vec![
-        SdrDecoderKind::Rtl433,
-        SdrDecoderKind::Adsb,
-        SdrDecoderKind::Acars,
-        SdrDecoderKind::Ais,
-        SdrDecoderKind::AprsAx25,
-        SdrDecoderKind::Pocsag,
-        SdrDecoderKind::Iridium,
-        SdrDecoderKind::InmarsatStdc,
-        SdrDecoderKind::Dect,
-        SdrDecoderKind::GsmLte,
-    ]
+    vec![SdrDecoderKind::Disabled]
 }
 
 pub fn dependency_status_snapshot(
