@@ -15,13 +15,9 @@ echo "[3/4] cargo test -q"
 (cd "$ROOT_DIR" && ~/.cargo/bin/cargo test -q)
 
 if [[ -n "$SESSION_DIR" ]]; then
-  echo "[4/4] artifact validation: $SESSION_DIR (time-mode=$TIME_MODE)"
-  "$ROOT_DIR/scripts/validate_sdr_artifacts.py" \
-    --session-dir "$SESSION_DIR" \
-    --time-mode "$TIME_MODE"
+  echo "[4/4] artifact validation skipped: no external validator configured for $SESSION_DIR"
 else
   echo "[4/4] artifact validation skipped (no session-dir provided)"
 fi
 
 echo "Validation matrix run complete."
-

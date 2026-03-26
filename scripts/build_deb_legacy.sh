@@ -43,10 +43,6 @@ if [[ -f "manuf" ]]; then
     install -m644 "manuf" "$STAGE_DIR/usr/share/${PACKAGE_NAME}/manuf"
 fi
 
-if [[ -f "sdr-plugins.json" ]]; then
-    install -m644 "sdr-plugins.json" "$STAGE_DIR/usr/share/${PACKAGE_NAME}/sdr-plugins.json"
-fi
-
 if [[ -f "GeoLite2-City.mmdb" && "${SKIP_GEOIP_MMDB:-0}" != "1" ]]; then
     install -m644 "GeoLite2-City.mmdb" "$STAGE_DIR/usr/share/${PACKAGE_NAME}/GeoLite2-City.mmdb"
 fi
