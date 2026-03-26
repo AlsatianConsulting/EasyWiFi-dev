@@ -71,6 +71,7 @@ pub struct InterfaceInfo {
 pub struct SupportedChannel {
     pub channel: u16,
     pub frequency_mhz: Option<u32>,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -677,13 +678,17 @@ pub fn list_supported_channel_details(interface: &str) -> Result<Vec<SupportedCh
     let Some(text) = phy_info_text_for_interface(interface)? else {
         return Ok(Vec::new());
     };
-    let re = Regex::new(r"(\d+)\s+MHz\s+\[(\d+)\]").unwrap();
+    Ok(parse_supported_channels_from_phy_info(&text))
+}
+
+fn parse_supported_channels_from_phy_info(text: &str) -> Vec<SupportedChannel> {
+    let re = Regex::new(r"([0-9]+(?:\.[0-9]+)?)\s*MHz\s+\[(\d+)\]").unwrap();
     let mut channels = Vec::new();
     let mut seen = HashSet::new();
 
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.contains("(disabled)") {
+        if trimmed.is_empty() {
             continue;
         }
 
@@ -691,22 +696,32 @@ pub fn list_supported_channel_details(interface: &str) -> Result<Vec<SupportedCh
             continue;
         };
 
-        let freq = cap.get(1).and_then(|m| m.as_str().parse::<u32>().ok());
+        let freq = cap
+            .get(1)
+            .and_then(|m| m.as_str().parse::<f32>().ok())
+            .map(|value| value.round() as u32);
         let channel = cap.get(2).and_then(|m| m.as_str().parse::<u16>().ok());
         let (Some(freq), Some(channel)) = (freq, channel) else {
             continue;
         };
+        let enabled = !trimmed.to_ascii_lowercase().contains("(disabled)");
 
-        if seen.insert((freq, channel)) {
+        if seen.insert((freq, channel, enabled)) {
             channels.push(SupportedChannel {
                 channel,
                 frequency_mhz: Some(freq),
+                enabled,
             });
         }
     }
 
-    channels.sort_by_key(|c| (c.frequency_mhz.unwrap_or(0), c.channel));
-    Ok(channels)
+    channels.sort_by_key(|c| (c.frequency_mhz.unwrap_or(0), c.channel, c.enabled));
+    channels.dedup_by(|left, right| {
+        left.channel == right.channel
+            && left.frequency_mhz == right.frequency_mhz
+            && left.enabled == right.enabled
+    });
+    channels
 }
 
 pub fn interface_supports_monitor_mode(interface: &str) -> Result<bool> {
@@ -1064,7 +1079,7 @@ pub fn start_geiger_mode(
                 "-T".to_string(),
                 "fields".to_string(),
                 "-E".to_string(),
-                "separator=/t".to_string(),
+                "separator=\t".to_string(),
                 "-e".to_string(),
                 "radiotap.dbm_antsignal".to_string(),
                 "-e".to_string(),
@@ -1375,7 +1390,7 @@ fn run_interface_capture(
             "-T".to_string(),
             "fields".to_string(),
             "-E".to_string(),
-            "separator=/t".to_string(),
+            "separator=\t".to_string(),
             "-E".to_string(),
             "quote=n".to_string(),
             "-E".to_string(),
@@ -2183,17 +2198,23 @@ fn phy_info_text_for_interface(interface: &str) -> Result<Option<String>> {
         return Ok(None);
     };
 
-    let output = Command::new("iw")
-        .arg(format!("phy{}", phy_index))
-        .arg("info")
-        .output()
-        .context("failed to run iw phy info")?;
-
-    if !output.status.success() {
-        return Ok(None);
+    for args in [
+        vec!["phy".to_string(), format!("phy{}", phy_index), "info".to_string()],
+        vec![format!("phy{}", phy_index), "info".to_string()],
+    ] {
+        let output = Command::new("iw").args(&args).output();
+        let Ok(output) = output else {
+            continue;
+        };
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            if !text.trim().is_empty() {
+                return Ok(Some(text));
+            }
+        }
     }
 
-    Ok(Some(String::from_utf8_lossy(&output.stdout).to_string()))
+    Ok(None)
 }
 
 fn run_simulated_capture(
@@ -2944,5 +2965,42 @@ mod tests {
         assert_eq!(parse_geiger_rssi("\t-70"), Some(-70));
         assert_eq!(parse_geiger_rssi("-58"), Some(-58));
         assert_eq!(parse_geiger_rssi("\t"), None);
+    }
+
+    #[test]
+    fn parse_supported_channels_handles_decimal_frequency_lines() {
+        let text = r#"
+Frequencies:
+        * 2412.0 MHz [1] (20.0 dBm)
+        * 5180.0 MHz [36] (20.0 dBm)
+"#;
+        let channels = parse_supported_channels_from_phy_info(text);
+        assert!(channels.iter().any(|ch| {
+            ch.channel == 1 && ch.frequency_mhz == Some(2412) && ch.enabled
+        }));
+        assert!(channels.iter().any(|ch| {
+            ch.channel == 36 && ch.frequency_mhz == Some(5180) && ch.enabled
+        }));
+    }
+
+    #[test]
+    fn parse_supported_channels_keeps_disabled_rows_for_capability_display() {
+        let text = r#"
+Band 4:
+        Frequencies:
+                * 5955.0 MHz [1] (disabled)
+                * 5975.0 MHz [5] (disabled)
+                * 6115.0 MHz [33] (20.0 dBm)
+"#;
+        let channels = parse_supported_channels_from_phy_info(text);
+        assert!(channels.iter().any(|ch| {
+            ch.channel == 1 && ch.frequency_mhz == Some(5955) && !ch.enabled
+        }));
+        assert!(channels.iter().any(|ch| {
+            ch.channel == 5 && ch.frequency_mhz == Some(5975) && !ch.enabled
+        }));
+        assert!(channels.iter().any(|ch| {
+            ch.channel == 33 && ch.frequency_mhz == Some(6115) && ch.enabled
+        }));
     }
 }

@@ -27,8 +27,8 @@ use gtk::{
     Application, ApplicationWindow, Box as GtkBox, Button, CheckButton, ComboBoxText, Dialog,
     DrawingArea, Entry, EventControllerKey, Expander, FileChooserAction, FileChooserDialog,
     GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned,
-    Popover, ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
-    Window as GtkWindow,
+    Popover, ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar,
+    TextView, ToggleButton, Window as GtkWindow,
 };
 use gtk4 as gtk;
 use std::cell::{Cell, RefCell};
@@ -8835,6 +8835,7 @@ fn detect_wifi_interface_capabilities() -> Vec<WifiInterfaceCapability> {
                     .map(|ch| capture::SupportedChannel {
                         channel: ch,
                         frequency_mhz: None,
+                        enabled: true,
                     })
                     .collect()
             });
@@ -8866,8 +8867,24 @@ fn fallback_band_from_channel_number(channel: u16) -> SpectrumBand {
     }
 }
 
+fn fallback_frequency_mhz_for_channel(channel: u16) -> Option<u32> {
+    match channel {
+        1..=13 => Some(2407 + (channel as u32 * 5)),
+        14 => Some(2484),
+        15..=177 => Some(5000 + (channel as u32 * 5)),
+        178..=233 => Some(5950 + (channel as u32 * 5)),
+        _ => None,
+    }
+}
+
+fn channel_frequency_mhz(channel: &capture::SupportedChannel) -> Option<u32> {
+    channel
+        .frequency_mhz
+        .or_else(|| fallback_frequency_mhz_for_channel(channel.channel))
+}
+
 fn channel_capability_band(channel: &capture::SupportedChannel) -> SpectrumBand {
-    let by_freq = SpectrumBand::from_frequency_mhz(channel.frequency_mhz);
+    let by_freq = SpectrumBand::from_frequency_mhz(channel_frequency_mhz(channel));
     if by_freq == SpectrumBand::Unknown {
         fallback_band_from_channel_number(channel.channel)
     } else {
@@ -8889,7 +8906,7 @@ fn channel_is_usable_for_current_ui(
     }
 
     // Channel 14 (2484 MHz) is not valid with the HT20 hopper path used by scan mode.
-    if channel.channel == 14 || channel.frequency_mhz == Some(2484) {
+    if channel.channel == 14 || channel_frequency_mhz(channel) == Some(2484) {
         return ht_modes.iter().any(|mode| mode == "NOHT");
     }
 
@@ -8905,8 +8922,12 @@ fn filter_usable_capability_channels(
         .filter(|channel| channel_is_usable_for_current_ui(channel, ht_modes))
         .cloned()
         .collect::<Vec<_>>();
-    filtered.sort_by_key(|c| (c.frequency_mhz.unwrap_or(0), c.channel));
-    filtered.dedup_by(|a, b| a.channel == b.channel && a.frequency_mhz == b.frequency_mhz);
+    filtered.sort_by_key(|c| (channel_frequency_mhz(c).unwrap_or(0), c.channel, !c.enabled));
+    filtered.dedup_by(|a, b| {
+        a.channel == b.channel
+            && channel_frequency_mhz(a) == channel_frequency_mhz(b)
+            && a.enabled == b.enabled
+    });
     filtered
 }
 
@@ -9001,11 +9022,20 @@ fn open_interface_channel_capabilities_dialog(
             let row = GtkBox::new(Orientation::Horizontal, 10);
             row.append(&label_cell(ch.channel.to_string(), 10));
             row.append(&label_cell(
-                ch.frequency_mhz.map(|f| f.to_string()).unwrap_or_default(),
+                channel_frequency_mhz(ch)
+                    .map(|f| f.to_string())
+                    .unwrap_or_default(),
                 10,
             ));
             row.append(&label_cell(channel_capability_band_label(ch), 10));
-            row.append(&label_cell(widths.clone(), 40));
+            row.append(&label_cell(
+                if ch.enabled {
+                    widths.clone()
+                } else {
+                    format!("{widths} | disabled")
+                },
+                40,
+            ));
             rows.append(&row);
         }
     }
@@ -9161,8 +9191,19 @@ fn open_interface_settings_dialog_inner(
 
     let channels_entry = Entry::new();
     channels_entry.set_placeholder_text(Some("1,6,11,36,40,44,48"));
+    channels_entry.set_visible(false);
 
+    let select_all_channels_btn = Button::with_label("Select All");
+    let clear_channels_btn = Button::with_label("Clear");
     let show_channels_btn = Button::with_label("Show Device Channels");
+    let channel_checks = Rc::new(RefCell::new(Vec::<(u16, CheckButton)>::new()));
+    let channels_list = GtkBox::new(Orientation::Vertical, 4);
+    let channels_scrolled = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .min_content_height(220)
+        .child(&channels_list)
+        .build();
 
     let band_combo = ComboBoxText::new();
     band_combo.append(Some("5"), "5 GHz");
@@ -9176,6 +9217,9 @@ fn open_interface_settings_dialog_inner(
     lock_ht_combo.append(Some("HT40+"), "HT40+");
     lock_ht_combo.append(Some("HT40-"), "HT40-");
     lock_ht_combo.set_active_id(Some("HT20"));
+    lock_ht_combo.set_visible(false);
+    let lock_ht_buttons = Rc::new(RefCell::new(Vec::<(String, ToggleButton)>::new()));
+    let lock_ht_button_box = GtkBox::new(Orientation::Horizontal, 6);
 
     let bluetooth_scan_check = CheckButton::with_label("Scan Bluetooth");
     let bluetooth_controller_combo = ComboBoxText::new();
@@ -9218,12 +9262,16 @@ fn open_interface_settings_dialog_inner(
     mode_row.append(&mode_combo);
 
     let channels_row = GtkBox::new(Orientation::Horizontal, 8);
-    let channels_label = Label::new(Some("Specific Channels"));
+    let channels_label = Label::new(Some("Channel Selector"));
     channels_label.set_xalign(0.0);
     channels_label.set_width_chars(18);
     channels_row.append(&channels_label);
-    channels_row.append(&channels_entry);
+    channels_row.append(&select_all_channels_btn);
+    channels_row.append(&clear_channels_btn);
     channels_row.append(&show_channels_btn);
+    let channels_table_row = GtkBox::new(Orientation::Vertical, 6);
+    channels_table_row.append(&channels_row);
+    channels_table_row.append(&channels_scrolled);
 
     let dwell_row = GtkBox::new(Orientation::Horizontal, 8);
     let dwell_label = Label::new(Some("Dwell (ms)"));
@@ -9247,11 +9295,11 @@ fn open_interface_settings_dialog_inner(
     lock_row.append(&lock_channel_entry);
 
     let ht_row = GtkBox::new(Orientation::Horizontal, 8);
-    let ht_label = Label::new(Some("HT Mode"));
+    let ht_label = Label::new(Some("Bandwidth"));
     ht_label.set_xalign(0.0);
     ht_label.set_width_chars(18);
     ht_row.append(&ht_label);
-    ht_row.append(&lock_ht_combo);
+    ht_row.append(&lock_ht_button_box);
 
     let bluetooth_row = GtkBox::new(Orientation::Horizontal, 8);
     let bluetooth_label = Label::new(Some("Bluetooth"));
@@ -9292,7 +9340,7 @@ fn open_interface_settings_dialog_inner(
     root.append(&iface_row);
     root.append(&interface_status);
     root.append(&mode_row);
-    root.append(&channels_row);
+    root.append(&channels_table_row);
     root.append(&dwell_row);
     root.append(&band_row);
     root.append(&lock_row);
@@ -9303,6 +9351,185 @@ fn open_interface_settings_dialog_inner(
     root.append(&output_dir_row);
     root.append(&action_row);
 
+    let sync_channels_entry_from_checks = Rc::new(RefCell::new(None::<Box<dyn Fn()>>));
+    {
+        let channel_checks = channel_checks.clone();
+        let channels_entry = channels_entry.clone();
+        let sync = sync_channels_entry_from_checks.clone();
+        *sync.borrow_mut() = Some(Box::new(move || {
+            let mut selected = channel_checks
+                .borrow()
+                .iter()
+                .filter_map(|(ch, cb)| if cb.is_active() { Some(*ch) } else { None })
+                .collect::<Vec<_>>();
+            selected.sort_unstable();
+            channels_entry.set_text(
+                &selected
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+        }));
+    }
+
+    let rebuild_lock_ht_buttons = Rc::new(RefCell::new(None::<Box<dyn Fn(Vec<String>)>>));
+    {
+        let lock_ht_combo = lock_ht_combo.clone();
+        let lock_ht_button_box = lock_ht_button_box.clone();
+        let lock_ht_buttons = lock_ht_buttons.clone();
+        let rebuild = rebuild_lock_ht_buttons.clone();
+        *rebuild.borrow_mut() = Some(Box::new(move |choices: Vec<String>| {
+            while let Some(child) = lock_ht_button_box.first_child() {
+                lock_ht_button_box.remove(&child);
+            }
+            lock_ht_buttons.borrow_mut().clear();
+
+            let current = lock_ht_combo
+                .active_id()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "HT20".to_string());
+            let mut modes = choices;
+            if !modes.iter().any(|m| m == "HT20") {
+                modes.insert(0, "HT20".to_string());
+            }
+            modes.sort();
+            modes.dedup();
+
+            for mode in modes {
+                let button = ToggleButton::with_label(&format!("[{}]", mode));
+                lock_ht_button_box.append(&button);
+                lock_ht_buttons
+                    .borrow_mut()
+                    .push((mode.clone(), button.clone()));
+            }
+
+            let buttons = lock_ht_buttons.borrow().clone();
+            for (mode, button) in buttons.iter() {
+                let peers = lock_ht_buttons.borrow().clone();
+                let mode = mode.clone();
+                let lock_ht_combo = lock_ht_combo.clone();
+                button.connect_toggled(move |btn| {
+                    if btn.is_active() {
+                        for (_, peer) in peers.iter() {
+                            if peer.as_ptr() != btn.as_ptr() {
+                                peer.set_active(false);
+                            }
+                        }
+                        lock_ht_combo.set_active_id(Some(&mode));
+                    } else if !peers.iter().any(|(_, peer)| peer.is_active()) {
+                        btn.set_active(true);
+                    }
+                });
+            }
+
+            if !lock_ht_combo.set_active_id(Some(&current)) {
+                lock_ht_combo.set_active_id(Some("HT20"));
+            }
+            let active = lock_ht_combo
+                .active_id()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "HT20".to_string());
+            for (mode, button) in lock_ht_buttons.borrow().iter() {
+                button.set_active(mode == &active);
+            }
+        }));
+    }
+
+    let rebuild_channel_table = Rc::new(RefCell::new(None::<Box<dyn Fn(Vec<capture::SupportedChannel>, Vec<String>)>>));
+    {
+        let channels_list = channels_list.clone();
+        let channel_checks = channel_checks.clone();
+        let channels_entry = channels_entry.clone();
+        let lock_channel_entry = lock_channel_entry.clone();
+        let sync_channels_entry_from_checks = sync_channels_entry_from_checks.clone();
+        let rebuild = rebuild_channel_table.clone();
+        *rebuild.borrow_mut() = Some(Box::new(move |channels: Vec<capture::SupportedChannel>, ht_choices: Vec<String>| {
+            while let Some(child) = channels_list.first_child() {
+                channels_list.remove(&child);
+            }
+            channel_checks.borrow_mut().clear();
+
+            let widths = if ht_choices.is_empty() {
+                "HT20".to_string()
+            } else {
+                ht_choices.join(" ")
+            };
+            let selected_seed = channels_entry
+                .text()
+                .split(',')
+                .filter_map(|v| v.trim().parse::<u16>().ok())
+                .collect::<HashSet<_>>();
+
+            let header = GtkBox::new(Orientation::Horizontal, 10);
+            header.append(&label_cell("Use".to_string(), 8));
+            header.append(&label_cell("Channel".to_string(), 10));
+            header.append(&label_cell("Freq MHz".to_string(), 12));
+            header.append(&label_cell("Band".to_string(), 10));
+            header.append(&label_cell("Widths".to_string(), 34));
+            channels_list.append(&header);
+
+            if channels.is_empty() {
+                let empty = Label::new(Some("No channel capability data available."));
+                empty.set_xalign(0.0);
+                channels_list.append(&empty);
+                return;
+            }
+
+            let mut default_lock_channel: Option<u16> = None;
+            for ch in channels {
+                let row = GtkBox::new(Orientation::Horizontal, 10);
+                let check = CheckButton::new();
+                let should_default_select = if selected_seed.is_empty() {
+                    ch.enabled
+                } else {
+                    selected_seed.contains(&ch.channel)
+                };
+                check.set_active(should_default_select);
+                check.set_sensitive(ch.enabled);
+                row.append(&check);
+                row.append(&label_cell(ch.channel.to_string(), 10));
+                row.append(&label_cell(
+                    channel_frequency_mhz(&ch)
+                        .map(|f| f.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    12,
+                ));
+                row.append(&label_cell(channel_capability_band_label(&ch), 10));
+                row.append(&label_cell(
+                    if ch.enabled {
+                        widths.clone()
+                    } else {
+                        format!("{widths} | disabled")
+                    },
+                    34,
+                ));
+
+                let sync = sync_channels_entry_from_checks.clone();
+                check.connect_toggled(move |_| {
+                    if let Some(cb) = sync.borrow().as_ref() {
+                        cb();
+                    }
+                });
+
+                if should_default_select && default_lock_channel.is_none() {
+                    default_lock_channel = Some(ch.channel);
+                }
+                channel_checks.borrow_mut().push((ch.channel, check));
+                channels_list.append(&row);
+            }
+
+            if let Some(cb) = sync_channels_entry_from_checks.borrow().as_ref() {
+                cb();
+            }
+            if lock_channel_entry.text().trim().is_empty() {
+                if let Some(ch) = default_lock_channel {
+                    lock_channel_entry.set_text(&ch.to_string());
+                }
+            }
+        }));
+    }
+
     let apply_interface_capability = Rc::new(RefCell::new(None::<Box<dyn Fn()>>));
     {
         let caps = capabilities_rc.clone();
@@ -9311,6 +9538,8 @@ fn open_interface_settings_dialog_inner(
         let interface_status = interface_status.clone();
         let lock_ht_combo = lock_ht_combo.clone();
         let band_combo = band_combo.clone();
+        let rebuild_channel_table = rebuild_channel_table.clone();
+        let rebuild_lock_ht_buttons = rebuild_lock_ht_buttons.clone();
         let apply = apply_interface_capability.clone();
         *apply.borrow_mut() = Some(Box::new(move || {
             let selected = interface_combo
@@ -9328,17 +9557,22 @@ fn open_interface_settings_dialog_inner(
                     let default_channels = cap
                         .channels
                         .iter()
+                        .filter(|ch| ch.enabled)
                         .map(|c| c.channel.to_string())
                         .collect::<Vec<_>>()
                         .join(",");
                     channels_entry.set_text(&default_channels);
                 }
 
+                let discovered_enabled = cap.channels.iter().filter(|ch| ch.enabled).count();
+                let discovered_disabled = cap.channels.iter().filter(|ch| !ch.enabled).count();
+
                 interface_status.set_text(&format!(
-                    "Selected {} | monitor mode: {} | {} channels discovered | modes: {}",
+                    "Selected {} | monitor mode: {} | channels: {} enabled / {} disabled | modes: {}",
                     cap.interface_name,
                     if cap.monitor_capable { "yes" } else { "no" },
-                    cap.channels.len(),
+                    discovered_enabled,
+                    discovered_disabled,
                     cap.ht_modes.join(", ")
                 ));
 
@@ -9367,8 +9601,8 @@ fn open_interface_settings_dialog_inner(
                     .active_id()
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "HT20".to_string());
-                lock_ht_combo.remove_all();
                 let ht_choices = lock_ht_mode_choices_from_capability(&cap.ht_modes);
+                lock_ht_combo.remove_all();
                 for mode in &ht_choices {
                     lock_ht_combo.append(Some(mode), mode);
                 }
@@ -9376,6 +9610,12 @@ fn open_interface_settings_dialog_inner(
                     lock_ht_combo.set_active_id(Some(&current_ht));
                 } else {
                     lock_ht_combo.set_active_id(Some("HT20"));
+                }
+                if let Some(render_ht) = rebuild_lock_ht_buttons.borrow().as_ref() {
+                    render_ht(ht_choices.clone());
+                }
+                if let Some(render_channels) = rebuild_channel_table.borrow().as_ref() {
+                    render_channels(cap.channels.clone(), ht_choices);
                 }
             } else {
                 interface_status.set_text("No interface capability data available.");
@@ -9386,7 +9626,7 @@ fn open_interface_settings_dialog_inner(
     let update_mode_visibility = Rc::new(RefCell::new(None::<Box<dyn Fn()>>));
     {
         let mode_combo = mode_combo.clone();
-        let channels_row = channels_row.clone();
+        let channels_table_row = channels_table_row.clone();
         let dwell_row = dwell_row.clone();
         let band_row = band_row.clone();
         let lock_row = lock_row.clone();
@@ -9399,21 +9639,21 @@ fn open_interface_settings_dialog_inner(
                 .unwrap_or_else(|| "hop_specific".to_string());
             match mode.as_str() {
                 "hop_band" => {
-                    channels_row.set_visible(false);
+                    channels_table_row.set_visible(false);
                     dwell_row.set_visible(false);
                     band_row.set_visible(true);
                     lock_row.set_visible(false);
                     ht_row.set_visible(false);
                 }
                 "locked" => {
-                    channels_row.set_visible(false);
+                    channels_table_row.set_visible(false);
                     dwell_row.set_visible(false);
                     band_row.set_visible(false);
                     lock_row.set_visible(true);
                     ht_row.set_visible(true);
                 }
                 _ => {
-                    channels_row.set_visible(true);
+                    channels_table_row.set_visible(true);
                     dwell_row.set_visible(true);
                     band_row.set_visible(false);
                     lock_row.set_visible(false);
@@ -9462,15 +9702,34 @@ fn open_interface_settings_dialog_inner(
                 (click_handler)();
             });
         }
-        {
-            let click_handler = click_handler.clone();
-            let click = GestureClick::new();
-            click.set_button(1);
-            click.connect_pressed(move |_, _, _, _| {
-                (click_handler)();
-            });
-            channels_entry.add_controller(click);
-        }
+    }
+
+    {
+        let channel_checks = channel_checks.clone();
+        let sync = sync_channels_entry_from_checks.clone();
+        select_all_channels_btn.connect_clicked(move |_| {
+            for (_, check) in channel_checks.borrow().iter() {
+                if check.is_sensitive() {
+                    check.set_active(true);
+                }
+            }
+            if let Some(cb) = sync.borrow().as_ref() {
+                cb();
+            }
+        });
+    }
+
+    {
+        let channel_checks = channel_checks.clone();
+        let sync = sync_channels_entry_from_checks.clone();
+        clear_channels_btn.connect_clicked(move |_| {
+            for (_, check) in channel_checks.borrow().iter() {
+                check.set_active(false);
+            }
+            if let Some(cb) = sync.borrow().as_ref() {
+                cb();
+            }
+        });
     }
 
     {
@@ -9689,10 +9948,16 @@ fn open_interface_settings_dialog_inner(
                         .map(|ch| capture::SupportedChannel {
                             channel: ch,
                             frequency_mhz: None,
+                            enabled: true,
                         })
                         .collect()
                 });
-            let all_channels = all_channel_details
+            let selectable_channel_details = all_channel_details
+                .iter()
+                .filter(|ch| ch.enabled)
+                .cloned()
+                .collect::<Vec<_>>();
+            let all_channels = selectable_channel_details
                 .iter()
                 .map(|c| c.channel)
                 .collect::<Vec<_>>();
@@ -9719,9 +9984,15 @@ fn open_interface_settings_dialog_inner(
                         Some("6") => SpectrumBand::Ghz6,
                         _ => SpectrumBand::Ghz5,
                     };
-                    let mut band_channels = filter_channels_for_band(&all_channel_details, &band);
+                    let band_channels =
+                        filter_channels_for_band(&selectable_channel_details, &band);
                     if band_channels.is_empty() {
-                        band_channels = all_channels.clone();
+                        let mut s = state.borrow_mut();
+                        s.push_status(format!(
+                            "selected band {} has no enabled channels on {}",
+                            band.label(),
+                            iface_name
+                        ));
                     }
                     ChannelSelectionMode::HopBand {
                         band,
@@ -10721,7 +10992,12 @@ fn detect_interface_settings() -> Vec<InterfaceSettings> {
         interface_name: cap.interface_name,
         monitor_interface_name: None,
         channel_mode: ChannelSelectionMode::HopAll {
-            channels: cap.channels.into_iter().map(|c| c.channel).collect(),
+            channels: cap
+                .channels
+                .into_iter()
+                .filter(|c| c.enabled)
+                .map(|c| c.channel)
+                .collect(),
             dwell_ms: 200,
         },
         enabled: true,

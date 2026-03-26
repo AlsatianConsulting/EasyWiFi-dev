@@ -855,7 +855,7 @@ fn build_tshark_command(
         .arg("-T")
         .arg("fields")
         .arg("-E")
-        .arg("separator=/t")
+        .arg("separator=\t")
         .arg("-E")
         .arg("quote=n")
         .arg("-E")
