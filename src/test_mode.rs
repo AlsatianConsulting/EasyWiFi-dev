@@ -1,12 +1,10 @@
 use crate::bluetooth::{self, BluetoothEvent, BluetoothScanConfig};
 use crate::capture;
 use crate::model::BluetoothDeviceRecord;
-use crate::sdr::{self, SdrConfig, SdrDecoderKind, SdrEvent, SdrHardware};
 use crate::settings::{ChannelSelectionMode, InterfaceSettings, WifiPacketHeaderMode};
 use anyhow::{bail, Context, Result};
 use crossbeam_channel::unbounded;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -24,7 +22,7 @@ impl Default for WifiTestOptions {
     fn default() -> Self {
         Self {
             interfaces: Vec::new(),
-            channels: vec![1, 6, 11],
+            channels: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
             duration_secs: 6,
             ht_mode: "HT20".to_string(),
             packet_header_mode: WifiPacketHeaderMode::Radiotap,
@@ -76,49 +74,6 @@ impl Default for BluetoothTestOptions {
 pub fn run_bluetooth_cli(args: &[String]) -> Result<()> {
     let options = parse_bluetooth_test_args(args)?;
     run_bluetooth_test(&options)
-}
-
-#[derive(Debug, Clone)]
-pub struct SdrTestOptions {
-    pub hardware: SdrHardware,
-    pub center_freq_hz: u64,
-    pub sample_rate_hz: u32,
-    pub duration_secs: u64,
-    pub decode: Option<SdrDecoderKind>,
-    pub scan_start_hz: Option<u64>,
-    pub scan_end_hz: Option<u64>,
-    pub scan_step_hz: Option<u64>,
-    pub scan_steps_per_sec: Option<f64>,
-    pub log_output: bool,
-    pub log_output_dir: PathBuf,
-    pub satcom_payload_capture_enabled: bool,
-    pub install_missing_deps: bool,
-}
-
-impl Default for SdrTestOptions {
-    fn default() -> Self {
-        let defaults = SdrConfig::default();
-        Self {
-            hardware: defaults.hardware,
-            center_freq_hz: defaults.center_freq_hz,
-            sample_rate_hz: defaults.sample_rate_hz,
-            duration_secs: 12,
-            decode: None,
-            scan_start_hz: None,
-            scan_end_hz: None,
-            scan_step_hz: None,
-            scan_steps_per_sec: None,
-            log_output: false,
-            log_output_dir: defaults.log_output_dir,
-            satcom_payload_capture_enabled: false,
-            install_missing_deps: false,
-        }
-    }
-}
-
-pub fn run_sdr_cli(args: &[String]) -> Result<()> {
-    let options = parse_sdr_test_args(args)?;
-    run_sdr_test(&options)
 }
 
 fn parse_wifi_test_args(args: &[String]) -> Result<WifiTestOptions> {
@@ -209,7 +164,7 @@ pub fn print_wifi_test_usage() {
     println!("  easywifi --test-wifi --interface <iface1> --interface <iface2> [options]");
     println!();
     println!("Options:");
-    println!("  --channels <csv>        Channel list, default: 1,6,11");
+    println!("  --channels <csv>        Channel list, default: 1-11");
     println!("  --duration-secs <n>     Per-channel capture duration, default: 6");
     println!("  --ht-mode <mode>        HT mode for channel set, default: HT20");
     println!("  --packet-headers <mode> radiotap|ppi (default: radiotap)");
@@ -230,39 +185,6 @@ pub fn print_bluetooth_test_usage() {
     println!("  --scan-timeout-secs <n> Per scan pass timeout, default: 4");
     println!("  --pause-ms <n>          Pause between scan passes, default: 500");
     println!("  --max-devices <n>       Max devices shown, default: 100");
-}
-
-pub fn print_sdr_test_usage() {
-    println!("EasyWiFi non-interactive SDR test mode");
-    println!();
-    println!("Usage:");
-    println!("  easywifi --test-sdr [options]");
-    println!();
-    println!("Options:");
-    println!("  --hardware <name>       rtl_sdr|hackrf|bladerf|ettus_b210");
-    println!("  --center-freq-hz <n>    Center frequency in Hz");
-    println!("  --sample-rate-hz <n>    Sample rate in Hz");
-    println!("  --duration-secs <n>     Runtime duration, default: 12");
-    println!(
-        "  --decode <name>         rtl_433|adsb|acars|ais|aprs_ax25|pocsag|iridium|inmarsat_stdc|dect|gsm_lte"
-    );
-    println!("                          or plugin ID/label from sdr-plugins.json");
-    println!("  --scan-start-hz <n>     Optional scan range start in Hz");
-    println!("  --scan-end-hz <n>       Optional scan range end in Hz");
-    println!("  --scan-step-hz <n>      Optional scan step in Hz");
-    println!("  --scan-steps-per-sec <n> Optional scan speed");
-    println!("  --log-output            Save decoder logs to --log-dir");
-    println!("  --log-dir <path>        Log directory (default temp)");
-    println!("  --satcom-payload-capture Enable satellite payload capture");
-    println!("  --allow-satcom-payload  Alias for --satcom-payload-capture");
-    println!("  --list-decoders         Print built-in + plugin decoder IDs and exit");
-    println!(
-        "  --install-missing-deps  Attempt noninteractive install of missing decoder dependencies"
-    );
-    println!();
-    println!("Environment:");
-    println!("  EASYWIFI_SATCOM_PARSE_DENYLIST=token1,token2");
-    println!("      Optional satcom payload-parser denylist by protocol/decoder token");
 }
 
 fn parse_bluetooth_test_args(args: &[String]) -> Result<BluetoothTestOptions> {
@@ -375,251 +297,6 @@ fn bluetooth_source_label(source: crate::settings::BluetoothScanSource) -> &'sta
         crate::settings::BluetoothScanSource::Ubertooth => "ubertooth",
         crate::settings::BluetoothScanSource::Both => "both",
     }
-}
-
-fn parse_sdr_test_args(args: &[String]) -> Result<SdrTestOptions> {
-    let mut options = SdrTestOptions::default();
-    let plugin_defs = sdr::load_plugin_definitions(sdr::default_plugin_config_path().as_deref());
-    let mut idx = 0usize;
-    let mut list_decoders = false;
-
-    while idx < args.len() {
-        match args[idx].as_str() {
-            "--hardware" => {
-                idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --hardware"))?;
-                options.hardware = parse_sdr_hardware(value)?;
-            }
-            "--center-freq-hz" => {
-                idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --center-freq-hz"))?;
-                options.center_freq_hz = value
-                    .parse::<u64>()
-                    .context("invalid value for --center-freq-hz")?;
-            }
-            "--sample-rate-hz" => {
-                idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --sample-rate-hz"))?;
-                options.sample_rate_hz = value
-                    .parse::<u32>()
-                    .context("invalid value for --sample-rate-hz")?;
-            }
-            "--duration-secs" => {
-                idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --duration-secs"))?;
-                options.duration_secs = value
-                    .parse::<u64>()
-                    .context("invalid value for --duration-secs")?
-                    .max(1);
-            }
-            "--decode" => {
-                idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --decode"))?;
-                options.decode = Some(parse_sdr_decoder_with_plugins(value, &plugin_defs)?);
-            }
-            "--scan-start-hz" => {
-                idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --scan-start-hz"))?;
-                options.scan_start_hz = Some(
-                    value
-                        .parse::<u64>()
-                        .context("invalid value for --scan-start-hz")?,
-                );
-            }
-            "--scan-end-hz" => {
-                idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --scan-end-hz"))?;
-                options.scan_end_hz = Some(
-                    value
-                        .parse::<u64>()
-                        .context("invalid value for --scan-end-hz")?,
-                );
-            }
-            "--scan-step-hz" => {
-                idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --scan-step-hz"))?;
-                options.scan_step_hz = Some(
-                    value
-                        .parse::<u64>()
-                        .context("invalid value for --scan-step-hz")?,
-                );
-            }
-            "--scan-steps-per-sec" => {
-                idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --scan-steps-per-sec"))?;
-                options.scan_steps_per_sec = Some(
-                    value
-                        .parse::<f64>()
-                        .context("invalid value for --scan-steps-per-sec")?,
-                );
-            }
-            "--log-output" => {
-                options.log_output = true;
-            }
-            "--log-dir" => {
-                idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --log-dir"))?;
-                options.log_output_dir = PathBuf::from(value);
-            }
-            "--satcom-payload-capture" | "--allow-satcom-payload" => {
-                options.satcom_payload_capture_enabled = true;
-            }
-            "--install-missing-deps" => {
-                options.install_missing_deps = true;
-            }
-            "--list-decoders" => {
-                list_decoders = true;
-            }
-            "--help" | "-h" => {
-                print_sdr_test_usage();
-                std::process::exit(0);
-            }
-            other => {
-                bail!("unknown option for --test-sdr: {}", other);
-            }
-        }
-        idx += 1;
-    }
-
-    if list_decoders {
-        print_sdr_decoder_inventory(&plugin_defs);
-        std::process::exit(0);
-    }
-
-    if options.scan_start_hz.is_some()
-        || options.scan_end_hz.is_some()
-        || options.scan_step_hz.is_some()
-        || options.scan_steps_per_sec.is_some()
-    {
-        let start = options.scan_start_hz.ok_or_else(|| {
-            anyhow::anyhow!("--scan-start-hz is required when scan options are set")
-        })?;
-        let end = options.scan_end_hz.ok_or_else(|| {
-            anyhow::anyhow!("--scan-end-hz is required when scan options are set")
-        })?;
-        let step = options.scan_step_hz.ok_or_else(|| {
-            anyhow::anyhow!("--scan-step-hz is required when scan options are set")
-        })?;
-        if start >= end {
-            bail!("--scan-start-hz must be less than --scan-end-hz");
-        }
-        if step == 0 {
-            bail!("--scan-step-hz must be greater than zero");
-        }
-        if let Some(steps_per_sec) = options.scan_steps_per_sec {
-            if !steps_per_sec.is_finite() || steps_per_sec <= 0.0 {
-                bail!("--scan-steps-per-sec must be greater than zero");
-            }
-        } else {
-            options.scan_steps_per_sec = Some(4.0);
-        }
-    }
-
-    Ok(options)
-}
-
-fn print_sdr_decoder_inventory(plugin_defs: &[sdr::SdrPluginDefinition]) {
-    println!("Available SDR decoders:");
-    println!("  built-in:");
-    println!("    rtl_433");
-    println!("    adsb");
-    println!("    acars");
-    println!("    ais");
-    println!("    aprs_ax25");
-    println!("    pocsag");
-    println!("    iridium");
-    println!("    dect");
-    println!("    gsm_lte");
-    if plugin_defs.is_empty() {
-        println!("  plugins: none found");
-        return;
-    }
-    println!("  plugins:");
-    for plugin in plugin_defs {
-        let protocol = plugin.protocol.as_deref().unwrap_or("plugin");
-        println!("    {}  ({})  [{}]", plugin.id, plugin.label, protocol);
-    }
-}
-
-fn parse_sdr_hardware(value: &str) -> Result<SdrHardware> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "rtl_sdr" | "rtlsdr" | "rtl-sdr" => Ok(SdrHardware::RtlSdr),
-        "hackrf" => Ok(SdrHardware::HackRf),
-        "bladerf" | "blade_rf" | "blade-rf" => Ok(SdrHardware::BladeRf),
-        "ettus_b210" | "b210" | "ettus" => Ok(SdrHardware::EttusB210),
-        _ => bail!(
-            "invalid --hardware `{}` (expected rtl_sdr|hackrf|bladerf|ettus_b210)",
-            value
-        ),
-    }
-}
-
-fn parse_sdr_decoder_with_plugins(
-    value: &str,
-    plugin_defs: &[sdr::SdrPluginDefinition],
-) -> Result<SdrDecoderKind> {
-    let token = normalize_decoder_token(value);
-    let built_in = match token.as_str() {
-        "rtl433" => Some(SdrDecoderKind::Rtl433),
-        "adsb" => Some(SdrDecoderKind::Adsb),
-        "acars" => Some(SdrDecoderKind::Acars),
-        "ais" => Some(SdrDecoderKind::Ais),
-        "aprsax25" | "aprs" | "ax25" => Some(SdrDecoderKind::AprsAx25),
-        "pocsag" => Some(SdrDecoderKind::Pocsag),
-        "iridium" => Some(SdrDecoderKind::Iridium),
-        "inmarsatstdc" | "inmarsatc" | "inmarsat" | "stdc" => Some(SdrDecoderKind::InmarsatStdc),
-        "dect" => Some(SdrDecoderKind::Dect),
-        "gsmlte" | "gsm" => Some(SdrDecoderKind::GsmLte),
-        _ => None,
-    };
-    if let Some(kind) = built_in {
-        return Ok(kind);
-    }
-
-    if let Some(plugin) = plugin_defs.iter().find(|plugin| {
-        normalize_decoder_token(&plugin.id) == token
-            || normalize_decoder_token(&plugin.label) == token
-    }) {
-        return Ok(SdrDecoderKind::Plugin {
-            id: plugin.id.clone(),
-            label: plugin.label.clone(),
-            command_template: plugin.command_template.clone(),
-            protocol: plugin.protocol.clone(),
-        });
-    }
-
-    bail!(
-        "invalid --decode `{}` (expected rtl_433|adsb|acars|ais|aprs_ax25|pocsag|iridium|inmarsat_stdc|dect|gsm_lte or a plugin ID from sdr-plugins.json)",
-        value
-    );
-}
-
-fn normalize_decoder_token(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .map(|ch| ch.to_ascii_lowercase())
-        .collect()
 }
 
 fn run_bluetooth_test(options: &BluetoothTestOptions) -> Result<()> {
@@ -816,218 +493,6 @@ fn merge_bluetooth_record(existing: &mut BluetoothDeviceRecord, incoming: &Bluet
     for value in &incoming.uuid_names {
         if !existing.uuid_names.contains(value) {
             existing.uuid_names.push(value.clone());
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct SdrTestSummary {
-    spectrum_frames: usize,
-    decode_rows: usize,
-    satcom_rows: usize,
-    map_points: usize,
-    last_freq_hz: Option<u64>,
-    last_decoder: Option<String>,
-    last_message: Option<String>,
-    missing_dependencies: Vec<String>,
-}
-
-fn run_sdr_test(options: &SdrTestOptions) -> Result<()> {
-    println!("EasyWiFi SDR test mode");
-    println!("hardware: {}", options.hardware.label());
-    println!("center frequency: {} Hz", options.center_freq_hz);
-    println!("sample rate: {} Hz", options.sample_rate_hz);
-    println!("duration: {}s", options.duration_secs);
-    println!(
-        "decoder: {}",
-        options
-            .decode
-            .as_ref()
-            .map(|decoder| decoder.label())
-            .unwrap_or_else(|| "(none)".to_string())
-    );
-    if let (Some(start), Some(end), Some(step), Some(speed)) = (
-        options.scan_start_hz,
-        options.scan_end_hz,
-        options.scan_step_hz,
-        options.scan_steps_per_sec,
-    ) {
-        println!(
-            "scan range: {}-{} Hz step {} at {:.2} steps/s",
-            start, end, step, speed
-        );
-    }
-    println!(
-        "satcom payload capture: {}",
-        if options.satcom_payload_capture_enabled {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    );
-    println!(
-        "decoder log output: {} ({})",
-        if options.log_output {
-            "enabled"
-        } else {
-            "disabled"
-        },
-        options.log_output_dir.display()
-    );
-    println!(
-        "dependency auto-install: {}",
-        if options.install_missing_deps {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    );
-    println!();
-
-    let mut config = SdrConfig::default();
-    config.hardware = options.hardware;
-    config.center_freq_hz = options.center_freq_hz;
-    config.sample_rate_hz = options.sample_rate_hz;
-    config.no_payload_satcom = !options.satcom_payload_capture_enabled;
-    config.log_output_enabled = options.log_output;
-    config.log_output_dir = options.log_output_dir.clone();
-    if let (Some(start), Some(end), Some(step), Some(speed)) = (
-        options.scan_start_hz,
-        options.scan_end_hz,
-        options.scan_step_hz,
-        options.scan_steps_per_sec,
-    ) {
-        config.scan_range_enabled = true;
-        config.scan_start_hz = start;
-        config.scan_end_hz = end;
-        config.scan_step_hz = step;
-        config.scan_steps_per_sec = speed;
-    }
-
-    let (sender, receiver) = unbounded();
-    let runtime = sdr::start_runtime(config, sender);
-    if options.install_missing_deps {
-        runtime.install_missing_dependencies();
-    }
-    if let Some(decoder) = options.decode.clone() {
-        runtime.start_decode(decoder);
-    }
-
-    let started = Instant::now();
-    let mut summary = SdrTestSummary::default();
-    let mut logs_printed = 0usize;
-    while started.elapsed() < Duration::from_secs(options.duration_secs) {
-        let remaining =
-            Duration::from_secs(options.duration_secs).saturating_sub(started.elapsed());
-        let timeout = std::cmp::min(remaining, Duration::from_millis(350));
-        if timeout.is_zero() {
-            break;
-        }
-
-        match receiver.recv_timeout(timeout) {
-            Ok(event) => {
-                apply_sdr_test_event(event, &mut summary, &mut logs_printed);
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-
-    runtime.stop_decode();
-    runtime.stop();
-    drain_sdr_test_events(&receiver, &mut summary, &mut logs_printed);
-
-    println!();
-    println!("SDR summary:");
-    println!("  spectrum frames: {}", summary.spectrum_frames);
-    println!("  decode rows: {}", summary.decode_rows);
-    println!("  satcom audit rows: {}", summary.satcom_rows);
-    println!("  map points: {}", summary.map_points);
-    if summary.missing_dependencies.is_empty() {
-        println!("  dependencies: all installed");
-    } else {
-        println!(
-            "  dependencies missing ({}): {}",
-            summary.missing_dependencies.len(),
-            summary.missing_dependencies.join(", ")
-        );
-    }
-    println!(
-        "  last tuned freq: {}",
-        summary
-            .last_freq_hz
-            .map(|freq| format!("{} Hz", freq))
-            .unwrap_or_else(|| "unknown".to_string())
-    );
-    if let Some(decoder) = summary.last_decoder.as_deref() {
-        println!("  last decoder: {}", decoder);
-    }
-    if let Some(message) = summary.last_message.as_deref() {
-        println!("  last message: {}", message);
-    }
-
-    Ok(())
-}
-
-fn apply_sdr_test_event(event: SdrEvent, summary: &mut SdrTestSummary, logs_printed: &mut usize) {
-    match event {
-        SdrEvent::Log(message) => {
-            if *logs_printed < 60 {
-                println!("[sdr] {}", message);
-                *logs_printed += 1;
-            }
-        }
-        SdrEvent::FrequencyChanged(freq_hz) => {
-            summary.last_freq_hz = Some(freq_hz);
-        }
-        SdrEvent::SpectrumFrame(frame) => {
-            summary.spectrum_frames += 1;
-            summary.last_freq_hz = Some(frame.center_freq_hz);
-        }
-        SdrEvent::DecodeRow(row) => {
-            summary.decode_rows += 1;
-            summary.last_decoder = Some(row.decoder.clone());
-            summary.last_message = Some(truncate_text(&row.message, 120));
-        }
-        SdrEvent::MapPoint(_) => {
-            summary.map_points += 1;
-        }
-        SdrEvent::SatcomObservation(_) => {
-            summary.satcom_rows += 1;
-        }
-        SdrEvent::DecoderState { .. } => {}
-        SdrEvent::DependencyStatus(statuses) => {
-            let missing = statuses
-                .into_iter()
-                .filter(|status| !status.installed)
-                .map(|status| format!("{} ({})", status.tool, status.package_hint))
-                .collect::<Vec<_>>();
-            if summary.missing_dependencies != missing && *logs_printed < 60 {
-                if missing.is_empty() {
-                    println!("[sdr] dependencies satisfied");
-                } else {
-                    println!("[sdr] missing dependencies: {}", missing.join(", "));
-                }
-                *logs_printed += 1;
-            }
-            summary.missing_dependencies = missing;
-        }
-        SdrEvent::SquelchChanged(_) => {}
-        SdrEvent::DecoderTelemetry(_) => {}
-    }
-}
-
-fn drain_sdr_test_events(
-    receiver: &crossbeam_channel::Receiver<SdrEvent>,
-    summary: &mut SdrTestSummary,
-    logs_printed: &mut usize,
-) {
-    let deadline = Instant::now() + Duration::from_millis(1200);
-    while Instant::now() < deadline {
-        match receiver.recv_timeout(Duration::from_millis(80)) {
-            Ok(event) => apply_sdr_test_event(event, summary, logs_printed),
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => break,
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
     }
 }
@@ -1282,18 +747,13 @@ fn capture_beacons_for_channel(
         if bssid.eq_ignore_ascii_case("ff:ff:ff:ff:ff:ff") {
             continue;
         }
-        let ssid_raw = fields.next().unwrap_or("").trim().to_string();
+        let ssid_raw = decode_ascii_hex_ssid(fields.next().unwrap_or("").trim());
         let radiotap_rssi = fields
             .next()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .and_then(|value| value.parse::<i32>().ok());
-        let ppi_rssi = fields
-            .next()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .and_then(|value| value.parse::<i32>().ok());
-        let rssi = radiotap_rssi.or(ppi_rssi);
+        let rssi = radiotap_rssi;
         let channel_seen = fields
             .next()
             .map(str::trim)
@@ -1341,6 +801,37 @@ fn capture_beacons_for_channel(
     Ok(observations)
 }
 
+fn decode_ascii_hex_ssid(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.len() % 2 != 0 {
+        return trimmed.to_string();
+    }
+    if !trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return trimmed.to_string();
+    }
+
+    let mut bytes = Vec::with_capacity(trimmed.len() / 2);
+    let mut chars = trimmed.chars();
+    while let (Some(a), Some(b)) = (chars.next(), chars.next()) {
+        let Some(high) = a.to_digit(16) else {
+            return trimmed.to_string();
+        };
+        let Some(low) = b.to_digit(16) else {
+            return trimmed.to_string();
+        };
+        bytes.push(((high << 4) | low) as u8);
+    }
+    if bytes.is_empty() {
+        return trimmed.to_string();
+    }
+    if bytes.iter().all(|b| (0x20..=0x7e).contains(b)) {
+        if let Ok(text) = String::from_utf8(bytes) {
+            return text;
+        }
+    }
+    trimmed.to_string()
+}
+
 fn build_tshark_command(
     interface: &str,
     duration_secs: u64,
@@ -1364,7 +855,7 @@ fn build_tshark_command(
         .arg("-T")
         .arg("fields")
         .arg("-E")
-        .arg("separator=\t")
+        .arg("separator=/t")
         .arg("-E")
         .arg("quote=n")
         .arg("-E")
@@ -1378,7 +869,7 @@ fn build_tshark_command(
         .arg("-e")
         .arg("wlan_radio.channel")
         .arg("-e")
-        .arg("wlan.fc.type_subtype")
+        .arg("wlan.fc.subtype")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command
@@ -1397,15 +888,23 @@ fn command_exists(cmd: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_tshark_command, parse_channels, parse_interface_list, parse_sdr_decoder_with_plugins,
-        parse_sdr_test_args, parse_wifi_test_args,
+        build_tshark_command, decode_ascii_hex_ssid, parse_channels, parse_interface_list,
+        parse_wifi_test_args,
     };
-    use crate::sdr::{SdrDecoderKind, SdrPluginDefinition};
     use crate::settings::WifiPacketHeaderMode;
 
     #[test]
     fn parses_channel_csv() {
         assert_eq!(parse_channels("11,1,6,1").unwrap(), vec![1, 6, 11]);
+    }
+
+    #[test]
+    fn decodes_ascii_hex_ssid_values() {
+        assert_eq!(
+            decode_ascii_hex_ssid("486f6d654e6574776f726b"),
+            "HomeNetwork".to_string()
+        );
+        assert_eq!(decode_ascii_hex_ssid("000102ff"), "000102ff".to_string());
     }
 
     #[test]
@@ -1498,55 +997,5 @@ mod tests {
             parse_interface_list("wlx1cbfcef8e928,wlp0s20f3,wlx1cbfcef8e928").unwrap(),
             vec!["wlp0s20f3".to_string(), "wlx1cbfcef8e928".to_string()]
         );
-    }
-
-    #[test]
-    fn parses_builtin_sdr_decoder_names() {
-        let parsed = parse_sdr_decoder_with_plugins("ads-b", &[]).unwrap();
-        assert!(matches!(parsed, SdrDecoderKind::Adsb));
-        let parsed = parse_sdr_decoder_with_plugins("APRS_AX25", &[]).unwrap();
-        assert!(matches!(parsed, SdrDecoderKind::AprsAx25));
-        let parsed = parse_sdr_decoder_with_plugins("GSM_LTE", &[]).unwrap();
-        assert!(matches!(parsed, SdrDecoderKind::GsmLte));
-        let parsed = parse_sdr_decoder_with_plugins("inmarsat_stdc", &[]).unwrap();
-        assert!(matches!(parsed, SdrDecoderKind::InmarsatStdc));
-    }
-
-    #[test]
-    fn sdr_test_defaults_to_satcom_payload_capture_disabled() {
-        let options = parse_sdr_test_args(&[]).unwrap();
-        assert!(!options.satcom_payload_capture_enabled);
-    }
-
-    #[test]
-    fn sdr_test_allow_satcom_payload_enables_capture() {
-        let options = parse_sdr_test_args(&["--allow-satcom-payload".to_string()]).unwrap();
-        assert!(options.satcom_payload_capture_enabled);
-    }
-
-    #[test]
-    fn sdr_test_satcom_payload_capture_flag_enables_capture() {
-        let options = parse_sdr_test_args(&["--satcom-payload-capture".to_string()]).unwrap();
-        assert!(options.satcom_payload_capture_enabled);
-    }
-
-    #[test]
-    fn parses_plugin_sdr_decoder_by_id_and_label() {
-        let defs = vec![SdrPluginDefinition {
-            id: "drone_dji_droneid".to_string(),
-            label: "Drone: DJI DroneID / RID".to_string(),
-            command_template: "echo plugin".to_string(),
-            protocol: Some("drone_dji".to_string()),
-        }];
-        let by_id = parse_sdr_decoder_with_plugins("drone_dji_droneid", &defs).unwrap();
-        match by_id {
-            SdrDecoderKind::Plugin { id, .. } => assert_eq!(id, "drone_dji_droneid"),
-            _ => panic!("expected plugin decoder"),
-        }
-        let by_label = parse_sdr_decoder_with_plugins("Drone DJI DroneID RID", &defs).unwrap();
-        match by_label {
-            SdrDecoderKind::Plugin { id, .. } => assert_eq!(id, "drone_dji_droneid"),
-            _ => panic!("expected plugin decoder"),
-        }
     }
 }

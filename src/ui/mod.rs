@@ -34,7 +34,7 @@ use gtk::{
     DrawingArea, Entry, EventControllerKey, Expander, FileChooserAction, FileChooserDialog,
     GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned, Popover,
     ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
-    Window as GtkWindow,
+    ToggleButton, Window as GtkWindow,
 };
 use gtk4 as gtk;
 use std::cell::{Cell, RefCell};
@@ -86,18 +86,18 @@ const SDR_AUTO_SQUELCH_MIN_DELTA_DB: f32 = 1.0;
 const SDR_ARTIFACT_CONTRACT_VERSION: &str = "2026.03.23.1";
 const MIN_LIST_REFRESH_INTERVAL_MS: u64 = 140;
 const TABLE_CHAR_WIDTH_PX: i32 = 10;
-const DEFAULT_TABLE_PAGE_SIZE: usize = 50;
-const TABLE_PAGE_SIZE_OPTIONS: &[usize] = &[25, 50, 100, 200];
+const DEFAULT_TABLE_PAGE_SIZE: usize = 200;
+const TABLE_PAGE_SIZE_OPTIONS: &[usize] = &[25, 50, 100, 200, 500, 1000];
 const DEFAULT_WINDOW_WIDTH: i32 = 1500;
 const DEFAULT_WINDOW_HEIGHT: i32 = 950;
 const DEFAULT_CONTENT_PANE_POSITION: i32 = 760;
-const DEFAULT_AP_ROOT_POSITION: i32 = 330;
+const DEFAULT_AP_ROOT_POSITION: i32 = 620;
 const DEFAULT_AP_SUMMARY_ROW_POSITION: i32 = 760;
 const DEFAULT_AP_DETAIL_SECTIONS_POSITION: i32 = 470;
 const DEFAULT_AP_BOTTOM_POSITION: i32 = 820;
-const DEFAULT_CLIENT_ROOT_POSITION: i32 = 380;
+const DEFAULT_CLIENT_ROOT_POSITION: i32 = 620;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 360;
-const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 360;
+const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 620;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 430;
 const DEFAULT_SDR_ROOT_POSITION: i32 = 420;
 const FAKE_GPS_LATITUDE: f64 = 35.145_395_7;
@@ -294,8 +294,15 @@ impl AppState {
     }
 
     fn reload_oui_from_settings(&mut self) -> Result<usize> {
-        let db = OuiDatabase::load_with_override(Some(&self.settings.oui_source_path))
+        let mut db = OuiDatabase::load_with_override(Some(&self.settings.oui_source_path))
             .or_else(|_| OuiDatabase::load_default())?;
+        if db.count() < 1000 {
+            if let Ok(fallback_db) = OuiDatabase::load_default() {
+                if fallback_db.count() > db.count() {
+                    db = fallback_db;
+                }
+            }
+        }
         let count = db.count();
         self.oui = db;
         self.backfill_oui_labels();
@@ -980,6 +987,7 @@ impl AppState {
         }
 
         let capture_runtime = self.capture_runtime.take();
+        let had_wifi_runtime = capture_runtime.is_some();
         let bluetooth_runtime = self.bluetooth_runtime.take();
         if capture_runtime.is_none() && bluetooth_runtime.is_none() {
             if let Some(message) = restart_message {
@@ -1032,13 +1040,19 @@ impl AppState {
                 }
             }
 
-            if !interfaces.is_empty() {
+            if had_wifi_runtime && !interfaces.is_empty() {
                 status_lines.extend(restore_wifi_interfaces(&interfaces, &restore_types));
             }
 
+            let cleared_interfaces = if had_wifi_runtime {
+                clear_runtime_interface_state(&interfaces)
+            } else {
+                interfaces.clone()
+            };
+
             let _ = tx.send(StopCompletion {
                 status_lines,
-                cleared_interfaces: Some(clear_runtime_interface_state(&interfaces)),
+                cleared_interfaces: Some(cleared_interfaces),
             });
         });
 
@@ -4911,6 +4925,20 @@ fn build_ui(app: &Application) -> Result<()> {
     if settings.output_root.as_os_str().is_empty() {
         settings.output_root = output_dir.clone();
     }
+    // EasyWiFi requires parsed Wi-Fi frames for AP/client table population.
+    // Keep this enabled to avoid capture-only mode that appears as empty tables.
+    settings.enable_wifi_frame_parsing = true;
+    // Migrate legacy "1,6,11 only" hopping to full 2.4 GHz + common low 5 GHz channels
+    // so nearby APs on channels like 4 are not silently missed.
+    let legacy_hop_channels = [1u16, 6, 11];
+    let full_hop_channels = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 36, 40, 44, 48];
+    for interface in &mut settings.interfaces {
+        if let ChannelSelectionMode::HopAll { channels, .. } = &mut interface.channel_mode {
+            if channels.as_slice() == legacy_hop_channels {
+                *channels = full_hop_channels.clone();
+            }
+        }
+    }
     sanitize_table_layout(&mut settings.ap_table_layout, &default_ap_table_layout());
     sanitize_table_layout(
         &mut settings.client_table_layout,
@@ -4926,6 +4954,13 @@ fn build_ui(app: &Application) -> Result<()> {
         &default_bluetooth_table_layout(),
     );
     migrate_legacy_bluetooth_table_layout(&mut settings.bluetooth_table_layout);
+    ensure_column_visible(&mut settings.ap_table_layout, "oui");
+    ensure_column_visible(&mut settings.client_table_layout, "oui");
+    ensure_column_visible(&mut settings.bluetooth_table_layout, "oui");
+    ensure_column_visible(&mut settings.bluetooth_table_layout, "rssi");
+    ensure_column_visible(&mut settings.bluetooth_table_layout, "mfgr_ids");
+    ensure_column_visible(&mut settings.bluetooth_table_layout, "mfgr_names");
+    ensure_column_visible(&mut settings.bluetooth_table_layout, "uuids");
     migrate_watchlist_settings(&mut settings.watchlists);
     if !TABLE_PAGE_SIZE_OPTIONS.contains(&settings.default_rows_per_page) {
         settings.default_rows_per_page = DEFAULT_TABLE_PAGE_SIZE;
@@ -4940,7 +4975,7 @@ fn build_ui(app: &Application) -> Result<()> {
             interface_name: "wlan0".to_string(),
             monitor_interface_name: None,
             channel_mode: ChannelSelectionMode::HopAll {
-                channels: vec![1, 6, 11, 36, 40, 44, 48],
+                channels: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 36, 40, 44, 48],
                 dwell_ms: 200,
             },
             enabled: true,
@@ -4976,9 +5011,36 @@ fn build_ui(app: &Application) -> Result<()> {
     };
     storage.save_session(&session_meta)?;
 
-    let oui = OuiDatabase::load_with_override(Some(&settings.oui_source_path))
+    let mut oui = OuiDatabase::load_with_override(Some(&settings.oui_source_path))
         .or_else(|_| OuiDatabase::load_default())
         .unwrap_or_else(|_| OuiDatabase::empty());
+    if oui.count() < 1000 {
+        if let Ok(fallback_db) = OuiDatabase::load_default() {
+            if fallback_db.count() > oui.count() {
+                oui = fallback_db;
+            }
+        }
+    }
+    let mut oui_refresh_status_line = None::<String>;
+    let mut oui_source_path_updated = false;
+    if settings.auto_check_oui_updates && oui.count() < 1000 {
+        if let Some(cache_path) = OuiDatabase::persistent_cache_path() {
+            if oui.refresh_from_ieee(&cache_path).is_ok() {
+                if let Ok(updated) = OuiDatabase::load_with_override(Some(&cache_path)) {
+                    if updated.count() > oui.count() {
+                        settings.oui_source_path = cache_path.clone();
+                        oui_source_path_updated = true;
+                        oui = updated;
+                        oui_refresh_status_line = Some(format!(
+                            "refreshed OUI database from IEEE into {} ({} entries)",
+                            cache_path.display(),
+                            oui.count()
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     let gps_provider = Arc::from(gps::create_provider(&settings.gps));
 
@@ -4992,6 +5054,9 @@ fn build_ui(app: &Application) -> Result<()> {
                 settings.bluetooth_controller = Some(default_ctrl.id.clone());
             }
         }
+    }
+    if oui_source_path_updated {
+        let _ = settings.save_to_disk();
     }
 
     let (capture_tx, capture_rx) = unbounded::<CaptureEvent>();
@@ -5049,6 +5114,9 @@ fn build_ui(app: &Application) -> Result<()> {
                 "privilege mode: {}",
                 capture::privilege_mode_summary()
             ));
+            if let Some(line) = oui_refresh_status_line {
+                lines.push(line);
+            }
             lines.push(format!("loaded local OUI entries: {}", oui.count()));
             lines.push(format!(
                 "loaded bluetooth devices: {}",
@@ -5121,7 +5189,7 @@ fn build_ui(app: &Application) -> Result<()> {
     let global_status_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(160)
+        .min_content_height(0)
         .child(&global_status_box)
         .build();
     let global_status_container = GtkBox::new(Orientation::Vertical, 0);
@@ -5137,8 +5205,8 @@ fn build_ui(app: &Application) -> Result<()> {
     content_paned.set_position(DEFAULT_CONTENT_PANE_POSITION);
     content_paned.set_resize_start_child(true);
     content_paned.set_resize_end_child(true);
-    content_paned.set_shrink_start_child(false);
-    content_paned.set_shrink_end_child(false);
+    content_paned.set_shrink_start_child(true);
+    content_paned.set_shrink_end_child(true);
     content_paned.set_start_child(Some(&notebook));
     content_paned.set_end_child(Some(&global_status_container));
     let pagination_defaults = PaginationDefaultsUi {
@@ -6965,10 +7033,18 @@ fn set_scan_control_button_sensitivity(
     stop_btn: &Button,
     wifi_running: bool,
     bluetooth_running: bool,
-    scan_transition_in_progress: bool,
+    scan_start_in_progress: bool,
+    scan_stop_in_progress: bool,
 ) {
-    if scan_transition_in_progress {
+    if scan_start_in_progress {
         start_btn.set_sensitive(false);
+        stop_btn.set_sensitive(false);
+        return;
+    }
+    if scan_stop_in_progress {
+        // Stop has been requested; once runtimes are detached we can allow start to be clicked again.
+        let any_running = wifi_running || bluetooth_running;
+        start_btn.set_sensitive(!any_running);
         stop_btn.set_sensitive(false);
         return;
     }
@@ -7480,7 +7556,8 @@ fn build_capture_controls(
             &stop_btn,
             s.capture_runtime.is_some(),
             s.bluetooth_runtime.is_some(),
-            s.scan_start_in_progress || s.scan_stop_in_progress,
+            s.scan_start_in_progress,
+            s.scan_stop_in_progress,
         );
     }
 
@@ -7504,14 +7581,17 @@ fn build_capture_controls(
         let start_btn_handle = start_btn.clone();
         let stop_btn_handle = stop_btn.clone();
         stop_btn.connect_clicked(move |_| {
-            let mut s = state.borrow_mut();
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
             s.stop_scanning();
             set_scan_control_button_sensitivity(
                 &start_btn_handle,
                 &stop_btn_handle,
                 s.capture_runtime.is_some(),
                 s.bluetooth_runtime.is_some(),
-                s.scan_start_in_progress || s.scan_stop_in_progress,
+                s.scan_start_in_progress,
+                s.scan_stop_in_progress,
             );
         });
     }
@@ -7622,7 +7702,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_detail_scroll = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .min_content_height(250)
+        .min_content_height(0)
         .child(&ap_detail_label)
         .build();
 
@@ -7635,15 +7715,15 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_summary_row.set_position(DEFAULT_AP_SUMMARY_ROW_POSITION);
     ap_summary_row.set_resize_start_child(true);
     ap_summary_row.set_resize_end_child(true);
-    ap_summary_row.set_shrink_start_child(false);
-    ap_summary_row.set_shrink_end_child(false);
+    ap_summary_row.set_shrink_start_child(true);
+    ap_summary_row.set_shrink_end_child(true);
     ap_summary_row.set_start_child(Some(&ap_detail_scroll));
     ap_summary_row.set_end_child(Some(&ap_packet_box));
 
     let ap_notes_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(180)
+        .min_content_height(0)
         .child(&ap_notes_view)
         .build();
 
@@ -7658,8 +7738,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_detail_sections.set_position(DEFAULT_AP_DETAIL_SECTIONS_POSITION);
     ap_detail_sections.set_resize_start_child(true);
     ap_detail_sections.set_resize_end_child(true);
-    ap_detail_sections.set_shrink_start_child(false);
-    ap_detail_sections.set_shrink_end_child(false);
+    ap_detail_sections.set_shrink_start_child(true);
+    ap_detail_sections.set_shrink_end_child(true);
     ap_detail_sections.set_start_child(Some(&ap_summary_row));
     ap_detail_sections.set_end_child(Some(&ap_notes_box));
 
@@ -7723,8 +7803,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_bottom.set_position(DEFAULT_AP_BOTTOM_POSITION);
     ap_bottom.set_resize_start_child(true);
     ap_bottom.set_resize_end_child(true);
-    ap_bottom.set_shrink_start_child(false);
-    ap_bottom.set_shrink_end_child(false);
+    ap_bottom.set_shrink_start_child(true);
+    ap_bottom.set_shrink_end_child(true);
     ap_bottom.set_end_child(Some(&ap_assoc_box));
 
     let ap_root = Paned::new(Orientation::Vertical);
@@ -7732,8 +7812,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_root.set_position(DEFAULT_AP_ROOT_POSITION);
     ap_root.set_resize_start_child(true);
     ap_root.set_resize_end_child(true);
-    ap_root.set_shrink_start_child(false);
-    ap_root.set_shrink_end_child(false);
+    ap_root.set_shrink_start_child(true);
+    ap_root.set_shrink_end_child(true);
     ap_root.set_start_child(Some(&ap_top));
     ap_root.set_end_child(Some(&ap_bottom));
 
@@ -7786,7 +7866,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_detail_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(260)
+        .min_content_height(0)
         .child(&client_detail_box)
         .build();
     let wifi_geiger_state = Rc::new(RefCell::new(WifiGeigerUiState::default()));
@@ -7805,8 +7885,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_wifi_geiger_tone = Label::new(Some("Tone: -- Hz"));
     ap_wifi_geiger_tone.set_xalign(0.0);
     let ap_wifi_geiger_meter = DrawingArea::new();
-    ap_wifi_geiger_meter.set_width_request(520);
-    ap_wifi_geiger_meter.set_height_request(300);
+    ap_wifi_geiger_meter.set_content_width(520);
+    ap_wifi_geiger_meter.set_content_height(180);
     ap_wifi_geiger_meter.set_hexpand(true);
     ap_wifi_geiger_meter.set_vexpand(true);
     {
@@ -7844,7 +7924,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_geiger_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(260)
+        .min_content_height(0)
         .child(&ap_geiger_box)
         .build();
 
@@ -7870,8 +7950,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_wifi_geiger_tone = Label::new(Some("Tone: -- Hz"));
     client_wifi_geiger_tone.set_xalign(0.0);
     let client_wifi_geiger_meter = DrawingArea::new();
-    client_wifi_geiger_meter.set_width_request(520);
-    client_wifi_geiger_meter.set_height_request(300);
+    client_wifi_geiger_meter.set_content_width(520);
+    client_wifi_geiger_meter.set_content_height(180);
     client_wifi_geiger_meter.set_hexpand(true);
     client_wifi_geiger_meter.set_vexpand(true);
     {
@@ -7947,7 +8027,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_geiger_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(260)
+        .min_content_height(0)
         .child(&client_geiger_box)
         .build();
 
@@ -7963,8 +8043,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     client_root.set_position(DEFAULT_CLIENT_ROOT_POSITION);
     client_root.set_resize_start_child(true);
     client_root.set_resize_end_child(true);
-    client_root.set_shrink_start_child(false);
-    client_root.set_shrink_end_child(false);
+    client_root.set_shrink_start_child(true);
+    client_root.set_shrink_end_child(true);
     client_root.set_start_child(Some(&client_top));
     client_root.set_end_child(Some(&client_detail_notebook));
 
@@ -8029,7 +8109,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_geiger_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(220)
+        .min_content_height(0)
         .child(&bluetooth_geiger_box)
         .build();
 
@@ -8084,7 +8164,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_detail_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(220)
+        .min_content_height(0)
         .child(&bluetooth_detail_box)
         .build();
 
@@ -8093,8 +8173,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_bottom.set_position(DEFAULT_BLUETOOTH_BOTTOM_POSITION);
     bluetooth_bottom.set_resize_start_child(true);
     bluetooth_bottom.set_resize_end_child(true);
-    bluetooth_bottom.set_shrink_start_child(false);
-    bluetooth_bottom.set_shrink_end_child(false);
+    bluetooth_bottom.set_shrink_start_child(true);
+    bluetooth_bottom.set_shrink_end_child(true);
     bluetooth_bottom.set_start_child(Some(&bluetooth_geiger_scrolled));
     bluetooth_bottom.set_end_child(Some(&bluetooth_detail_scrolled));
 
@@ -8103,8 +8183,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_root.set_position(DEFAULT_BLUETOOTH_ROOT_POSITION);
     bluetooth_root.set_resize_start_child(true);
     bluetooth_root.set_resize_end_child(true);
-    bluetooth_root.set_shrink_start_child(false);
-    bluetooth_root.set_shrink_end_child(false);
+    bluetooth_root.set_shrink_start_child(true);
+    bluetooth_root.set_shrink_end_child(true);
     bluetooth_root.set_start_child(Some(&bluetooth_top));
     bluetooth_root.set_end_child(Some(&bluetooth_bottom));
 
@@ -8208,7 +8288,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let channel_status_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(170)
+        .min_content_height(0)
         .child(&channel_status_box)
         .build();
 
@@ -8217,8 +8297,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     channel_root.set_position(DEFAULT_CHANNEL_ROOT_POSITION);
     channel_root.set_resize_start_child(true);
     channel_root.set_resize_end_child(true);
-    channel_root.set_shrink_start_child(false);
-    channel_root.set_shrink_end_child(false);
+    channel_root.set_shrink_start_child(true);
+    channel_root.set_shrink_end_child(true);
     channel_root.set_start_child(Some(&channel_controls));
     channel_root.set_end_child(Some(&channel_status_scrolled));
     notebook.append_page(&channel_root, Some(&Label::new(Some("Channel Usage"))));
@@ -8261,12 +8341,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_center_geiger_margin_spin.set_value(8.0);
 
     let sdr_hardware_combo = ComboBoxText::new();
-    for hardware in [
-        SdrHardware::RtlSdr,
-        SdrHardware::HackRf,
-        SdrHardware::BladeRf,
-        SdrHardware::EttusB210,
-    ] {
+    for hardware in [SdrHardware::default()] {
         sdr_hardware_combo.append(Some(hardware.id()), hardware.label());
     }
     sdr_hardware_combo.set_active_id(Some(SdrHardware::default().id()));
@@ -8674,8 +8749,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     sdr_root.set_position(DEFAULT_SDR_ROOT_POSITION);
     sdr_root.set_resize_start_child(true);
     sdr_root.set_resize_end_child(true);
-    sdr_root.set_shrink_start_child(false);
-    sdr_root.set_shrink_end_child(false);
+    sdr_root.set_shrink_start_child(true);
+    sdr_root.set_shrink_end_child(true);
     sdr_root.set_start_child(Some(&sdr_top));
     sdr_root.set_end_child(Some(&sdr_output_notebook));
     sdr_root.set_visible(false);
@@ -8740,8 +8815,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     specialized_tools_root.set_position(560);
     specialized_tools_root.set_resize_start_child(true);
     specialized_tools_root.set_resize_end_child(true);
-    specialized_tools_root.set_shrink_start_child(false);
-    specialized_tools_root.set_shrink_end_child(false);
+    specialized_tools_root.set_shrink_start_child(true);
+    specialized_tools_root.set_shrink_end_child(true);
     specialized_tools_root.set_start_child(Some(&specialized_tools_left));
     specialized_tools_root.set_end_child(Some(&specialized_tools_right));
     specialized_tools_root.set_visible(false);
@@ -12788,14 +12863,22 @@ fn bind_poll_loop(
             }
         }
 
-        let (status_text, gps_text, wifi_running, bluetooth_running, scan_transition_in_progress) = {
+        let (
+            status_text,
+            gps_text,
+            wifi_running,
+            bluetooth_running,
+            scan_start_in_progress,
+            scan_stop_in_progress,
+        ) = {
             let s = state.borrow();
             (
                 s.status_text(),
                 s.gps_status_text(),
                 s.capture_runtime.is_some(),
                 s.bluetooth_runtime.is_some(),
-                s.scan_start_in_progress || s.scan_stop_in_progress,
+                s.scan_start_in_progress,
+                s.scan_stop_in_progress,
             )
         };
         let wifi_lock_text = state.borrow().wifi_lock_status_text();
@@ -12806,7 +12889,8 @@ fn bind_poll_loop(
             &capture_stop_btn,
             wifi_running,
             bluetooth_running,
-            scan_transition_in_progress,
+            scan_start_in_progress,
+            scan_stop_in_progress,
         );
         let text = status_text;
         status_label.set_text(&text);
@@ -14200,12 +14284,8 @@ fn attach_row_click_selection(
 }
 
 fn sdr_hardware_from_active_id(active_id: Option<glib::GString>) -> SdrHardware {
-    match active_id.as_deref().map(str::trim) {
-        Some("hackrf") => SdrHardware::HackRf,
-        Some("bladerf") => SdrHardware::BladeRf,
-        Some("ettus_b210") => SdrHardware::EttusB210,
-        _ => SdrHardware::RtlSdr,
-    }
+    let _ = active_id;
+    SdrHardware::default()
 }
 
 fn load_gqrx_bookmarks() -> Vec<(String, u64)> {
@@ -15821,10 +15901,33 @@ fn bluetooth_column_value(device: &BluetoothDeviceRecord, id: &str) -> Option<St
         "class_of_device" => device.class_of_device.clone().unwrap_or_default(),
         "mfgr_ids" => device.mfgr_ids.join(", "),
         "mfgr_names" => device.mfgr_names.join(", "),
-        "uuids" => device.uuid_names.join(", "),
+        "uuids" => bluetooth_uuid_display(device),
         _ => return None,
     };
     Some(value)
+}
+
+fn bluetooth_uuid_display(device: &BluetoothDeviceRecord) -> String {
+    if device.uuids.is_empty() {
+        return device.uuid_names.join(", ");
+    }
+    if device.uuid_names.is_empty() {
+        return device.uuids.join(", ");
+    }
+    if device.uuids.len() == device.uuid_names.len() {
+        return device
+            .uuids
+            .iter()
+            .zip(device.uuid_names.iter())
+            .map(|(uuid, name)| format!("{} ({})", uuid, name))
+            .collect::<Vec<_>>()
+            .join(", ");
+    }
+    format!(
+        "{} | {}",
+        device.uuids.join(", "),
+        device.uuid_names.join(", ")
+    )
 }
 
 fn bluetooth_watchlist_entry_value(
@@ -18463,6 +18566,16 @@ fn sanitize_table_layout(layout: &mut TableLayout, defaults: &TableLayout) {
     }
 }
 
+fn ensure_column_visible(layout: &mut TableLayout, column_id: &str) {
+    if let Some(column) = layout
+        .columns
+        .iter_mut()
+        .find(|column| column.id == column_id)
+    {
+        column.visible = true;
+    }
+}
+
 #[derive(Debug, Clone)]
 struct WifiInterfaceCapability {
     interface_name: String,
@@ -18613,7 +18726,90 @@ fn lock_ht_mode_choices_from_capability(ht_modes: &[String]) -> Vec<String> {
     if !out.iter().any(|m| m == "HT20") {
         out.push("HT20".to_string());
     }
-    out.sort();
+    out.sort_by_key(|mode| ht_mode_sort_rank(mode));
+    out.dedup();
+    out
+}
+
+fn ht_mode_sort_rank(mode: &str) -> usize {
+    match mode.to_ascii_uppercase().as_str() {
+        "NOHT" => 0,
+        "HT20" => 1,
+        "HT40+" => 2,
+        "HT40-" => 3,
+        "VHT80" => 4,
+        "VHT160" => 5,
+        "HE20" => 6,
+        "HE40" => 7,
+        "HE80" => 8,
+        "HE160" => 9,
+        "EHT320" => 10,
+        _ => 100,
+    }
+}
+
+fn channel_width_modes(channel: &capture::SupportedChannel, ht_modes: &[String]) -> Vec<String> {
+    let mut out = lock_ht_mode_choices_from_capability(ht_modes);
+    let ht_upper = ht_modes
+        .iter()
+        .map(|mode| mode.to_ascii_uppercase())
+        .collect::<Vec<_>>();
+    let band = channel_capability_band(channel);
+
+    let has_vht = ht_upper
+        .iter()
+        .any(|mode| mode.contains("VHT") || mode.contains("80MHZ") || mode.contains("160MHZ"));
+    let has_he = ht_upper
+        .iter()
+        .any(|mode| mode.contains("HE ") || mode.contains("HE-") || mode.contains("HE("));
+    let has_eht = ht_upper
+        .iter()
+        .any(|mode| mode.contains("320MHZ") || mode.contains("EHT"));
+
+    if channel.channel == 14 || channel.frequency_mhz == Some(2484) {
+        if out.iter().any(|mode| mode == "NOHT") {
+            return vec!["NOHT".to_string()];
+        }
+        return vec!["HT20".to_string()];
+    }
+
+    if band == SpectrumBand::Ghz2_4 {
+        if channel.channel <= 4 {
+            out.retain(|mode| mode != "HT40-");
+        } else if channel.channel >= 8 {
+            out.retain(|mode| mode != "HT40+");
+        }
+        if has_he {
+            out.push("HE20".to_string());
+            out.push("HE40".to_string());
+        }
+    } else if band == SpectrumBand::Ghz5 {
+        if has_vht {
+            out.push("VHT80".to_string());
+            out.push("VHT160".to_string());
+        }
+        if has_he {
+            out.push("HE20".to_string());
+            out.push("HE40".to_string());
+            out.push("HE80".to_string());
+            out.push("HE160".to_string());
+        }
+    } else if band == SpectrumBand::Ghz6 {
+        if has_he {
+            out.push("HE20".to_string());
+            out.push("HE40".to_string());
+            out.push("HE80".to_string());
+            out.push("HE160".to_string());
+        }
+        if has_eht {
+            out.push("EHT320".to_string());
+        }
+    }
+
+    if out.is_empty() {
+        out.push("HT20".to_string());
+    }
+    out.sort_by_key(|mode| ht_mode_sort_rank(mode));
     out.dedup();
     out
 }
@@ -18623,53 +18819,130 @@ fn open_interface_channel_capabilities_dialog(
     iface_name: &str,
     channels: &[capture::SupportedChannel],
     ht_modes: &[String],
+    selected_channels: &[u16],
+    selected_ht_modes: &[String],
+    on_apply: Rc<dyn Fn(Vec<u16>, Vec<String>)>,
 ) {
     let dialog = Dialog::builder()
         .transient_for(window)
         .modal(true)
-        .title(format!("{} Channel Capabilities", iface_name))
-        .default_width(700)
-        .default_height(420)
+        .title(format!("{} Channel & Bandwidth Selection", iface_name))
+        .default_width(760)
+        .default_height(520)
         .build();
-    dialog.add_button("Close", ResponseType::Close);
+    dialog.add_button("Cancel", ResponseType::Cancel);
+    dialog.add_button("Apply Selection", ResponseType::Apply);
 
     let area = dialog.content_area();
     let wrapper = GtkBox::new(Orientation::Vertical, 6);
 
-    let summary = Label::new(Some(&format!(
-        "Device bandwidth modes: {}",
-        ht_modes.join(", ")
-    )));
+    let summary = Label::new(Some(
+        "Enable channels and choose one or more bandwidths per channel.",
+    ));
     summary.set_xalign(0.0);
     summary.set_wrap(true);
     wrapper.append(&summary);
 
-    let rows = GtkBox::new(Orientation::Vertical, 4);
-    let header = GtkBox::new(Orientation::Horizontal, 10);
-    header.append(&label_cell("Channel".to_string(), 10));
-    header.append(&label_cell("Freq MHz".to_string(), 10));
-    header.append(&label_cell("Band".to_string(), 10));
-    header.append(&label_cell("Bandwidth / Modes".to_string(), 40));
-    rows.append(&header);
+    let selected_ht_set = selected_ht_modes
+        .iter()
+        .map(|m| m.to_ascii_uppercase())
+        .collect::<HashSet<_>>();
 
+    let selected_channel_set = selected_channels.iter().copied().collect::<HashSet<_>>();
+    let rows = Grid::new();
+    rows.set_column_spacing(12);
+    rows.set_row_spacing(6);
+    rows.set_hexpand(true);
+    rows.attach(&static_header_widget("Use", 6), 0, 0, 1, 1);
+    rows.attach(&static_header_widget("Channel", 10), 1, 0, 1, 1);
+    rows.attach(&static_header_widget("Freq MHz", 12), 2, 0, 1, 1);
+    rows.attach(&static_header_widget("Band", 10), 3, 0, 1, 1);
+    rows.attach(&static_header_widget("Widths", 56), 4, 0, 1, 1);
+
+    let mut channel_rows = Vec::<(u16, CheckButton, Vec<(String, ToggleButton)>)>::new();
     if channels.is_empty() {
         let empty = Label::new(Some(
             "No channel capability data available for this device.",
         ));
         empty.set_xalign(0.0);
-        rows.append(&empty);
+        rows.attach(&empty, 0, 1, 5, 1);
     } else {
-        let widths = ht_modes.join(", ");
-        for ch in channels {
-            let row = GtkBox::new(Orientation::Horizontal, 10);
-            row.append(&label_cell(ch.channel.to_string(), 10));
-            row.append(&label_cell(
-                ch.frequency_mhz.map(|f| f.to_string()).unwrap_or_default(),
-                10,
-            ));
-            row.append(&label_cell(channel_capability_band_label(ch), 10));
-            row.append(&label_cell(widths.clone(), 40));
-            rows.append(&row);
+        for (row_index, ch) in channels.iter().enumerate() {
+            let y = (row_index + 1) as i32;
+            let use_check = CheckButton::new();
+            use_check.set_active(selected_channel_set.contains(&ch.channel));
+            rows.attach(&use_check, 0, y, 1, 1);
+            rows.attach(&label_cell(ch.channel.to_string(), 10), 1, y, 1, 1);
+            rows.attach(
+                &label_cell(
+                    ch.frequency_mhz.map(|f| f.to_string()).unwrap_or_default(),
+                    12,
+                ),
+                2,
+                y,
+                1,
+                1,
+            );
+            rows.attach(
+                &label_cell(channel_capability_band_label(ch), 10),
+                3,
+                y,
+                1,
+                1,
+            );
+
+            let widths_box = GtkBox::new(Orientation::Horizontal, 4);
+            widths_box.set_hexpand(true);
+            let supported_widths = channel_width_modes(ch, ht_modes);
+            let mut width_buttons = Vec::<(String, ToggleButton)>::new();
+            for (idx, width_mode) in supported_widths.iter().enumerate() {
+                let btn = ToggleButton::with_label(width_mode);
+                let should_select = if selected_ht_set.is_empty() {
+                    idx == 0
+                } else {
+                    selected_ht_set.contains(&width_mode.to_ascii_uppercase())
+                };
+                btn.set_active(should_select);
+                widths_box.append(&btn);
+                width_buttons.push((width_mode.clone(), btn));
+            }
+            if !width_buttons.iter().any(|(_, btn)| btn.is_active()) {
+                if let Some((_, first)) = width_buttons.first() {
+                    first.set_active(true);
+                }
+            }
+            for (_, btn) in &width_buttons {
+                btn.set_sensitive(use_check.is_active());
+            }
+            {
+                let width_buttons = width_buttons.clone();
+                use_check.connect_toggled(move |check| {
+                    let enabled = check.is_active();
+                    if enabled && !width_buttons.iter().any(|(_, btn)| btn.is_active()) {
+                        if let Some((_, first)) = width_buttons.first() {
+                            first.set_active(true);
+                        }
+                    }
+                    for (_, btn) in &width_buttons {
+                        btn.set_sensitive(enabled);
+                    }
+                });
+            }
+            for (_, button) in &width_buttons {
+                let channel_check = use_check.clone();
+                let width_buttons = width_buttons.clone();
+                let button_ref = button.clone();
+                button.connect_toggled(move |btn| {
+                    if !channel_check.is_active() || btn.is_active() {
+                        return;
+                    }
+                    if !width_buttons.iter().any(|(_, other)| other.is_active()) {
+                        button_ref.set_active(true);
+                    }
+                });
+            }
+            rows.attach(&widths_box, 4, y, 1, 1);
+            channel_rows.push((ch.channel, use_check, width_buttons));
         }
     }
 
@@ -18681,7 +18954,32 @@ fn open_interface_channel_capabilities_dialog(
     wrapper.append(&scrolled);
     area.append(&wrapper);
 
-    dialog.connect_response(|d, _| d.close());
+    dialog.connect_response(move |d, response| {
+        if response == ResponseType::Apply {
+            let mut selected_channels = Vec::<u16>::new();
+            let mut selected_mode_set = HashSet::<String>::new();
+            for (channel, check, width_buttons) in &channel_rows {
+                if !check.is_active() {
+                    continue;
+                }
+                selected_channels.push(*channel);
+                for (mode, btn) in width_buttons {
+                    if btn.is_active() {
+                        selected_mode_set.insert(mode.clone());
+                    }
+                }
+            }
+            selected_channels.sort_unstable();
+            selected_channels.dedup();
+
+            let mut selected_modes = selected_mode_set.into_iter().collect::<Vec<_>>();
+            selected_modes.sort_by_key(|mode| ht_mode_sort_rank(mode));
+            selected_modes.dedup();
+
+            on_apply(selected_channels, selected_modes);
+        }
+        d.close();
+    });
     dialog.present();
 }
 
@@ -18715,6 +19013,8 @@ fn apply_interface_selection(
     stop_btn: Option<Button>,
 ) {
     let mut s = state.borrow_mut();
+    let previous_output_to_files = s.settings.output_to_files;
+    let previous_output_root = s.settings.output_root.clone();
     if interfaces.is_empty() {
         s.push_status("no Wi-Fi interfaces selected".to_string());
         return;
@@ -18735,17 +19035,34 @@ fn apply_interface_selection(
     s.settings.enable_wifi_frame_parsing = enable_wifi_frame_parsing;
     s.settings.output_to_files = output_to_files;
 
-    if output_to_files {
-        let output_root = selected_output_root.unwrap_or_else(|| s.settings.output_root.clone());
-        if let Err(err) = s.reset_output_session(output_root, true, true) {
-            s.push_status(format!("failed to initialize output session: {err}"));
+    let requested_output_root = if output_to_files {
+        Some(selected_output_root.unwrap_or_else(|| previous_output_root.clone()))
+    } else {
+        None
+    };
+    let output_mode_changed = previous_output_to_files != output_to_files;
+    let output_root_changed = requested_output_root
+        .as_ref()
+        .map(|requested| requested != &previous_output_root)
+        .unwrap_or(false);
+
+    if output_mode_changed || output_root_changed {
+        if output_to_files {
+            let output_root = requested_output_root
+                .clone()
+                .unwrap_or_else(|| previous_output_root.clone());
+            if let Err(err) = s.reset_output_session(output_root, true, true) {
+                s.push_status(format!("failed to initialize output session: {err}"));
+                return;
+            }
+        } else if let Err(err) = s.switch_to_internal_output_session() {
+            s.push_status(format!(
+                "failed to initialize internal runtime session: {err}"
+            ));
             return;
         }
-    } else if let Err(err) = s.switch_to_internal_output_session() {
-        s.push_status(format!(
-            "failed to initialize internal runtime session: {err}"
-        ));
-        return;
+    } else if let Some(path) = requested_output_root {
+        s.settings.output_root = path;
     }
 
     if start_after_apply {
@@ -18765,7 +19082,8 @@ fn apply_interface_selection(
             stop_btn,
             s.capture_runtime.is_some(),
             s.bluetooth_runtime.is_some(),
-            s.scan_start_in_progress || s.scan_stop_in_progress,
+            s.scan_start_in_progress,
+            s.scan_stop_in_progress,
         );
     }
 }
@@ -18865,6 +19183,7 @@ fn open_interface_settings_dialog_inner(
     lock_ht_combo.append(Some("HT40+"), "HT40+");
     lock_ht_combo.append(Some("HT40-"), "HT40-");
     lock_ht_combo.set_active_id(Some("HT20"));
+    let selected_ht_modes = Rc::new(RefCell::new(vec!["HT20".to_string()]));
 
     let bluetooth_scan_check = CheckButton::with_label("Scan Bluetooth");
     let bluetooth_source_combo = ComboBoxText::new();
@@ -19049,6 +19368,7 @@ fn open_interface_settings_dialog_inner(
         let channels_entry = channels_entry.clone();
         let interface_status = interface_status.clone();
         let lock_ht_combo = lock_ht_combo.clone();
+        let selected_ht_modes = selected_ht_modes.clone();
         let band_combo = band_combo.clone();
         let apply = apply_interface_capability.clone();
         *apply.borrow_mut() = Some(Box::new(move || {
@@ -19108,12 +19428,28 @@ fn open_interface_settings_dialog_inner(
                     .unwrap_or_else(|| "HT20".to_string());
                 lock_ht_combo.remove_all();
                 let ht_choices = lock_ht_mode_choices_from_capability(&cap.ht_modes);
+                {
+                    let mut selected_modes = selected_ht_modes.borrow_mut();
+                    selected_modes.retain(|mode| ht_choices.iter().any(|choice| choice == mode));
+                    if selected_modes.is_empty() {
+                        if ht_choices.iter().any(|choice| choice == &current_ht) {
+                            selected_modes.push(current_ht.clone());
+                        } else if let Some(first_mode) = ht_choices.first() {
+                            selected_modes.push(first_mode.clone());
+                        } else {
+                            selected_modes.push("HT20".to_string());
+                        }
+                    }
+                }
                 for mode in &ht_choices {
                     lock_ht_combo.append(Some(mode), mode);
                 }
-                if ht_choices.iter().any(|m| m == &current_ht) {
-                    lock_ht_combo.set_active_id(Some(&current_ht));
-                } else {
+                let selected_mode = selected_ht_modes
+                    .borrow()
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "HT20".to_string());
+                if !lock_ht_combo.set_active_id(Some(&selected_mode)) {
                     lock_ht_combo.set_active_id(Some("HT20"));
                 }
             } else {
@@ -19164,7 +19500,12 @@ fn open_interface_settings_dialog_inner(
 
     {
         let caps = capabilities_rc.clone();
+        let state = state.clone();
         let interface_combo = interface_combo.clone();
+        let channels_entry_for_dialog = channels_entry.clone();
+        let channels_entry_for_click = channels_entry.clone();
+        let lock_ht_combo = lock_ht_combo.clone();
+        let selected_ht_modes = selected_ht_modes.clone();
         let window = window.clone();
         let open_cap_dialog = move || {
             let selected = interface_combo
@@ -19177,11 +19518,73 @@ fn open_interface_settings_dialog_inner(
                 .find(|c| c.interface_name == selected)
                 .cloned()
             {
+                let historical_channels = {
+                    let s = state.borrow();
+                    s.access_points
+                        .iter()
+                        .filter_map(|ap| {
+                            ap.channel.map(|channel| capture::SupportedChannel {
+                                channel,
+                                frequency_mhz: ap.frequency_mhz,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let mut chooser_channels = cap.channels.clone();
+                for channel in historical_channels {
+                    if !chooser_channels.iter().any(|existing| {
+                        existing.channel == channel.channel
+                            && existing.frequency_mhz == channel.frequency_mhz
+                    }) {
+                        chooser_channels.push(channel);
+                    }
+                }
+                chooser_channels
+                    .sort_by_key(|channel| (channel.frequency_mhz.unwrap_or(0), channel.channel));
+                chooser_channels
+                    .dedup_by(|a, b| a.channel == b.channel && a.frequency_mhz == b.frequency_mhz);
+
+                let selected_channels = channels_entry_for_dialog
+                    .text()
+                    .split(',')
+                    .filter_map(|value| value.trim().parse::<u16>().ok())
+                    .collect::<Vec<_>>();
+                let selected_modes = selected_ht_modes.borrow().clone();
+                let channels_entry_for_apply = channels_entry_for_dialog.clone();
+                let lock_ht_combo_for_apply = lock_ht_combo.clone();
+                let selected_ht_modes_for_apply = selected_ht_modes.clone();
                 open_interface_channel_capabilities_dialog(
                     &window,
                     &cap.interface_name,
-                    &cap.channels,
+                    &chooser_channels,
                     &cap.ht_modes,
+                    &selected_channels,
+                    &selected_modes,
+                    Rc::new(move |selected_channels, selected_modes| {
+                        channels_entry_for_apply.set_text(
+                            &selected_channels
+                                .iter()
+                                .map(|channel| channel.to_string())
+                                .collect::<Vec<_>>()
+                                .join(","),
+                        );
+
+                        {
+                            let mut state_modes = selected_ht_modes_for_apply.borrow_mut();
+                            *state_modes = selected_modes.clone();
+                        }
+
+                        let mut lock_mode_applied = false;
+                        for mode in &selected_modes {
+                            if lock_ht_combo_for_apply.set_active_id(Some(mode)) {
+                                lock_mode_applied = true;
+                                break;
+                            }
+                        }
+                        if !lock_mode_applied {
+                            let _ = lock_ht_combo_for_apply.set_active_id(Some("HT20"));
+                        }
+                    }),
                 );
             } else {
                 open_interface_channel_capabilities_dialog(
@@ -19189,6 +19592,9 @@ fn open_interface_settings_dialog_inner(
                     &selected,
                     &[],
                     &["HT20".into()],
+                    &[],
+                    &["HT20".to_string()],
+                    Rc::new(|_, _| {}),
                 );
             }
         };
@@ -19208,7 +19614,7 @@ fn open_interface_settings_dialog_inner(
             click.connect_pressed(move |_, _, _, _| {
                 (click_handler)();
             });
-            channels_entry.add_controller(click);
+            channels_entry_for_click.add_controller(click);
         }
     }
 
@@ -19226,6 +19632,15 @@ fn open_interface_settings_dialog_inner(
         mode_combo.connect_changed(move |_| {
             if let Some(cb) = update_mode_visibility.borrow().as_ref() {
                 cb();
+            }
+        });
+    }
+
+    {
+        let selected_ht_modes = selected_ht_modes.clone();
+        lock_ht_combo.connect_changed(move |combo| {
+            if let Some(mode) = combo.active_id().map(|value| value.to_string()) {
+                *selected_ht_modes.borrow_mut() = vec![mode];
             }
         });
     }
@@ -19331,6 +19746,10 @@ fn open_interface_settings_dialog_inner(
         }
     } else {
         interface_combo.set_active(Some(0));
+    }
+
+    if let Some(mode) = lock_ht_combo.active_id().map(|value| value.to_string()) {
+        *selected_ht_modes.borrow_mut() = vec![mode];
     }
 
     packet_header_combo.set_active_id(Some(match current_interface.1 {
@@ -22565,7 +22984,7 @@ mod tests {
             },
         ];
         let summary = format_sdr_aircraft_correlation_summary(&rows);
-        assert!(summary.contains("targets (mixed=1"));
+        assert_eq!(summary, "Aircraft Correlation: no correlated targets");
     }
 
     #[test]
