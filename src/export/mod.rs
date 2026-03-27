@@ -1,3 +1,4 @@
+use crate::bluetooth;
 use crate::model::{
     observation_highlights, AccessPointRecord, BluetoothDeviceRecord, ClientRecord, GeoObservation,
 };
@@ -29,6 +30,17 @@ pub struct ExportPaths {
 #[derive(Debug, Clone)]
 pub struct ExportManager {
     pub paths: ExportPaths,
+}
+
+#[derive(Debug, Clone, Default)]
+struct BluetoothUuidExportView {
+    uuids: String,
+    names: String,
+    short_forms: String,
+    types: String,
+    sources: String,
+    uncertainty: String,
+    metadata_json: Vec<serde_json::Value>,
 }
 
 impl ExportManager {
@@ -168,6 +180,12 @@ impl ExportManager {
                 "BT/BLE",
                 "Transport Class",
                 "Device Type",
+                "UUIDs",
+                "UUID Names",
+                "UUID Short Forms",
+                "UUID Types",
+                "UUID Sources",
+                "UUID Uncertainty",
                 "RSSI",
                 "Latitude",
                 "Longitude",
@@ -607,12 +625,19 @@ impl ExportManager {
             "BT/BLE",
             "Transport Class",
             "Device Type",
+            "UUIDs",
+            "UUID Names",
+            "UUID Short Forms",
+            "UUID Types",
+            "UUID Sources",
+            "UUID Uncertainty",
             "RSSI",
             "Latitude",
             "Longitude",
             "Altitude M",
         ])?;
         for dev in bluetooth {
+            let uuid_view = bluetooth_uuid_export_view(dev);
             for obs in &dev.observations {
                 bt_w.write_record(&[
                     obs.timestamp.to_rfc3339(),
@@ -621,6 +646,12 @@ impl ExportManager {
                     dev.transport.clone(),
                     bluetooth_transport_class(&dev.transport).to_string(),
                     dev.device_type.clone().unwrap_or_default(),
+                    uuid_view.uuids.clone(),
+                    uuid_view.names.clone(),
+                    uuid_view.short_forms.clone(),
+                    uuid_view.types.clone(),
+                    uuid_view.sources.clone(),
+                    uuid_view.uncertainty.clone(),
                     obs.rssi_dbm
                         .or(dev.rssi_dbm)
                         .map(|v| v.to_string())
@@ -798,6 +829,7 @@ impl ExportManager {
             .iter()
             .map(|dev| {
                 let locations = summarize_locations(&dev.observations);
+                let uuid_view = bluetooth_uuid_export_view(dev);
                 json!({
                     "mac": dev.mac.clone(),
                     "transport": dev.transport.clone(),
@@ -812,8 +844,13 @@ impl ExportManager {
                     "rssi_dbm": dev.rssi_dbm,
                     "mfgr_ids": dev.mfgr_ids.clone(),
                     "mfgr_names": dev.mfgr_names.clone(),
-                    "uuids": dev.uuids.clone(),
-                    "uuid_names": dev.uuid_names.clone(),
+                    "uuids": uuid_view.uuids.split(';').filter(|v| !v.is_empty()).map(str::to_string).collect::<Vec<_>>(),
+                    "uuid_names": uuid_view.names.split(';').filter(|v| !v.is_empty()).map(str::to_string).collect::<Vec<_>>(),
+                    "uuid_short_forms": uuid_view.short_forms.split(';').filter(|v| !v.is_empty()).map(str::to_string).collect::<Vec<_>>(),
+                    "uuid_types": uuid_view.types.split(';').filter(|v| !v.is_empty()).map(str::to_string).collect::<Vec<_>>(),
+                    "uuid_sources": uuid_view.sources.split(';').filter(|v| !v.is_empty()).map(str::to_string).collect::<Vec<_>>(),
+                    "uuid_uncertainty": uuid_view.uncertainty.split(';').filter(|v| !v.is_empty()).map(str::to_string).collect::<Vec<_>>(),
+                    "uuid_metadata": uuid_view.metadata_json,
                     "active_enumeration": dev.active_enumeration.clone(),
                     "first_seen": dev.first_seen.to_rfc3339(),
                     "last_seen": dev.last_seen.to_rfc3339(),
@@ -1362,9 +1399,85 @@ fn client_style_id(associated_bssid: &str) -> &'static str {
     }
 }
 
+fn bluetooth_uuid_export_view(device: &BluetoothDeviceRecord) -> BluetoothUuidExportView {
+    if device.uuids.is_empty() {
+        return BluetoothUuidExportView::default();
+    }
+
+    let metadata = bluetooth::resolve_uuid_metadata_many(&device.uuids);
+    let mut metadata_by_uuid = HashMap::new();
+    for entry in metadata {
+        metadata_by_uuid.insert(entry.uuid.to_ascii_lowercase(), entry);
+    }
+
+    let mut names = Vec::new();
+    let mut short_forms = Vec::new();
+    let mut types = Vec::new();
+    let mut sources = Vec::new();
+    let mut uncertainty = Vec::new();
+    let mut metadata_json = Vec::new();
+
+    for (idx, uuid) in device.uuids.iter().enumerate() {
+        let uuid_norm = uuid.to_ascii_lowercase();
+        let entry = metadata_by_uuid.get(&uuid_norm);
+        let fallback_name = device
+            .uuid_names
+            .get(idx)
+            .cloned()
+            .filter(|v| !v.is_empty());
+        let name = entry
+            .and_then(|m| m.name.clone())
+            .or(fallback_name)
+            .filter(|v| !v.trim().is_empty());
+        let short_form = entry.and_then(|m| m.short_form.clone());
+        let uuid_type = entry.and_then(|m| m.kind.clone());
+        let entry_sources = entry
+            .map(|m| m.sources.clone())
+            .filter(|values| !values.is_empty())
+            .unwrap_or_default();
+        let entry_uncertainty = entry.and_then(|m| m.uncertainty.clone());
+
+        if let Some(value) = &name {
+            names.push(value.clone());
+        }
+        if let Some(value) = &short_form {
+            short_forms.push(format!("{uuid_norm}={value}"));
+        }
+        if let Some(value) = &uuid_type {
+            types.push(format!("{uuid_norm}={value}"));
+        }
+        if !entry_sources.is_empty() {
+            sources.push(format!("{uuid_norm}={}", entry_sources.join("|")));
+        }
+        if let Some(value) = &entry_uncertainty {
+            uncertainty.push(format!("{uuid_norm}={value}"));
+        }
+
+        metadata_json.push(json!({
+            "uuid": uuid_norm,
+            "short_form": short_form,
+            "name": name,
+            "type": uuid_type,
+            "sources": entry_sources,
+            "uncertainty": entry_uncertainty,
+        }));
+    }
+
+    BluetoothUuidExportView {
+        uuids: device.uuids.join(";"),
+        names: names.join(";"),
+        short_forms: short_forms.join(";"),
+        types: types.join(";"),
+        sources: sources.join(";"),
+        uncertainty: uncertainty.join(";"),
+        metadata_json,
+    }
+}
+
 fn build_bluetooth_kml_placemarks(bluetooth: &[BluetoothDeviceRecord]) -> String {
     let mut marks = String::new();
     for dev in bluetooth {
+        let uuid_view = bluetooth_uuid_export_view(dev);
         let device_name = dev
             .advertised_name
             .clone()
@@ -1403,8 +1516,18 @@ fn build_bluetooth_kml_placemarks(bluetooth: &[BluetoothDeviceRecord]) -> String
                 ("rssi_dbm".to_string(), rssi.to_string()),
                 ("mfgr_ids".to_string(), dev.mfgr_ids.join(";")),
                 ("mfgr_names".to_string(), dev.mfgr_names.join(";")),
-                ("uuids".to_string(), dev.uuids.join(";")),
-                ("uuid_names".to_string(), dev.uuid_names.join(";")),
+                ("uuids".to_string(), uuid_view.uuids.clone()),
+                ("uuid_names".to_string(), uuid_view.names.clone()),
+                (
+                    "uuid_short_forms".to_string(),
+                    uuid_view.short_forms.clone(),
+                ),
+                ("uuid_types".to_string(), uuid_view.types.clone()),
+                ("uuid_sources".to_string(), uuid_view.sources.clone()),
+                (
+                    "uuid_uncertainty".to_string(),
+                    uuid_view.uncertainty.clone(),
+                ),
                 ("first_seen".to_string(), dev.first_seen.to_rfc3339()),
                 ("last_seen".to_string(), dev.last_seen.to_rfc3339()),
                 ("observation_time".to_string(), obs.timestamp.to_rfc3339()),
@@ -1750,6 +1873,7 @@ mod tests {
         let mut bluetooth = BluetoothDeviceRecord::new("22:33:44:55:66:77", now);
         bluetooth.transport = "BLE".to_string();
         bluetooth.source_adapters = vec!["bluez:hci0".to_string()];
+        bluetooth.uuids = vec!["0000fe2c-0000-1000-8000-00805f9b34fb".to_string()];
         bluetooth.active_enumeration = Some(crate::model::BluetoothActiveEnumeration {
             connected: true,
             battery_percent: Some(84),
@@ -1782,6 +1906,26 @@ mod tests {
         assert_eq!(payload["bluetooth"][0]["transport"], "BLE");
         assert_eq!(payload["bluetooth"][0]["transport_class"], "ble");
         assert_eq!(payload["bluetooth"][0]["source_adapters"][0], "bluez:hci0");
+        assert_eq!(
+            payload["bluetooth"][0]["uuid_metadata"][0]["uuid"],
+            "0000fe2c-0000-1000-8000-00805f9b34fb"
+        );
+        assert_eq!(
+            payload["bluetooth"][0]["uuid_metadata"][0]["short_form"],
+            "0xFE2C"
+        );
+        assert_eq!(
+            payload["bluetooth"][0]["uuid_metadata"][0]["type"],
+            "Member Service"
+        );
+        assert!(payload["bluetooth"][0]["uuid_metadata"][0]["name"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Google"));
+        assert!(payload["bluetooth"][0]["uuid_sources"][0]
+            .as_str()
+            .unwrap_or_default()
+            .contains("developers.google.com"));
         assert_eq!(
             payload["bluetooth"][0]["active_enumeration"]["connected"],
             true
@@ -1844,7 +1988,8 @@ mod tests {
         bluetooth_ble.address_type = Some("random".to_string());
         bluetooth_ble.class_of_device = Some("0x000000".to_string());
         bluetooth_ble.mfgr_names = vec!["Acme".to_string()];
-        bluetooth_ble.uuid_names = vec!["Battery Service".to_string()];
+        bluetooth_ble.uuids = vec!["0000fe2c-0000-1000-8000-00805f9b34fb".to_string()];
+        bluetooth_ble.uuid_names = vec!["Fast Pair Service".to_string()];
         bluetooth_ble.active_enumeration = Some(crate::model::BluetoothActiveEnumeration {
             connected: true,
             paired: true,
@@ -1913,7 +2058,10 @@ mod tests {
             "<Data name=\"address_type\"><value>random</value></Data>",
             "<Data name=\"class_of_device\"><value>0x000000</value></Data>",
             "<Data name=\"mfgr_names\"><value>Acme</value></Data>",
-            "<Data name=\"uuid_names\"><value>Battery Service</value></Data>",
+            "<Data name=\"uuid_names\"><value>Fast Pair Service",
+            "<Data name=\"uuid_short_forms\"><value>0000fe2c-0000-1000-8000-00805f9b34fb=0xFE2C</value></Data>",
+            "<Data name=\"uuid_types\"><value>0000fe2c-0000-1000-8000-00805f9b34fb=Member Service</value></Data>",
+            "<Data name=\"uuid_sources\"><value>0000fe2c-0000-1000-8000-00805f9b34fb=https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Assigned_Numbers/out/en/Assigned_Numbers.pdf?v=1711120414996|https://developers.google.com/nearby/fast-pair/specifications/service/provider</value></Data>",
             "<Data name=\"active_connected\"><value>true</value></Data>",
             "<Data name=\"active_paired\"><value>true</value></Data>",
             "<Data name=\"active_services_resolved\"><value>true</value></Data>",
@@ -2044,6 +2192,7 @@ mod tests {
         bluetooth.transport = "BLE".to_string();
         bluetooth.oui_manufacturer = Some("Acme".to_string());
         bluetooth.device_type = Some("tag".to_string());
+        bluetooth.uuids = vec!["0000fe2c-0000-1000-8000-00805f9b34fb".to_string()];
         bluetooth.observations.push(sample_observation(now));
 
         let outputs = manager
@@ -2055,6 +2204,9 @@ mod tests {
             .expect("bluetooth locations output path");
         let content = fs::read_to_string(bt_path).expect("read bluetooth csv");
         assert!(content.contains("Transport Class"));
+        assert!(content.contains("UUID Types"));
         assert!(content.contains(",BLE,ble,tag,"));
+        assert!(content.contains("0000fe2c-0000-1000-8000-00805f9b34fb=0xFE2C"));
+        assert!(content.contains("0000fe2c-0000-1000-8000-00805f9b34fb=Member Service"));
     }
 }
