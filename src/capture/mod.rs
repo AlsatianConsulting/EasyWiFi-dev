@@ -2199,7 +2199,11 @@ fn phy_info_text_for_interface(interface: &str) -> Result<Option<String>> {
     };
 
     for args in [
-        vec!["phy".to_string(), format!("phy{}", phy_index), "info".to_string()],
+        vec![
+            "phy".to_string(),
+            format!("phy{}", phy_index),
+            "info".to_string(),
+        ],
         vec![format!("phy{}", phy_index), "info".to_string()],
     ] {
         let output = Command::new("iw").args(&args).output();
@@ -2975,12 +2979,12 @@ Frequencies:
         * 5180.0 MHz [36] (20.0 dBm)
 "#;
         let channels = parse_supported_channels_from_phy_info(text);
-        assert!(channels.iter().any(|ch| {
-            ch.channel == 1 && ch.frequency_mhz == Some(2412) && ch.enabled
-        }));
-        assert!(channels.iter().any(|ch| {
-            ch.channel == 36 && ch.frequency_mhz == Some(5180) && ch.enabled
-        }));
+        assert!(channels
+            .iter()
+            .any(|ch| { ch.channel == 1 && ch.frequency_mhz == Some(2412) && ch.enabled }));
+        assert!(channels
+            .iter()
+            .any(|ch| { ch.channel == 36 && ch.frequency_mhz == Some(5180) && ch.enabled }));
     }
 
     #[test]
@@ -2993,14 +2997,14 @@ Band 4:
                 * 6115.0 MHz [33] (20.0 dBm)
 "#;
         let channels = parse_supported_channels_from_phy_info(text);
-        assert!(channels.iter().any(|ch| {
-            ch.channel == 1 && ch.frequency_mhz == Some(5955) && !ch.enabled
-        }));
-        assert!(channels.iter().any(|ch| {
-            ch.channel == 5 && ch.frequency_mhz == Some(5975) && !ch.enabled
-        }));
-        assert!(channels.iter().any(|ch| {
-            ch.channel == 33 && ch.frequency_mhz == Some(6115) && ch.enabled
-        }));
+        assert!(channels
+            .iter()
+            .any(|ch| { ch.channel == 1 && ch.frequency_mhz == Some(5955) && !ch.enabled }));
+        assert!(channels
+            .iter()
+            .any(|ch| { ch.channel == 5 && ch.frequency_mhz == Some(5975) && !ch.enabled }));
+        assert!(channels
+            .iter()
+            .any(|ch| { ch.channel == 33 && ch.frequency_mhz == Some(6115) && ch.enabled }));
     }
 }

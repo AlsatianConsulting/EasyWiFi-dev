@@ -34,6 +34,8 @@ use gtk4 as gtk;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -657,6 +659,29 @@ impl AppState {
     }
 
     fn export_session_snapshots(&mut self) {
+        let session_log_path = self.exporter.paths.logs_dir.join("session.log");
+        let append_session_log = |line: &str| {
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&session_log_path)
+            {
+                let _ = writeln!(file, "{line}");
+            }
+        };
+
+        append_session_log(&format!(
+            "snapshot export start ap={} clients={} bt={}",
+            self.access_points.len(),
+            self.clients.len(),
+            self.bluetooth_devices.len()
+        ));
+        self.push_status(format!(
+            "exporting session snapshots: ap={} clients={} bt={}",
+            self.access_points.len(),
+            self.clients.len(),
+            self.bluetooth_devices.len()
+        ));
         let mut failures = Vec::new();
 
         if let Err(err) = self.exporter.export_access_points_csv(&self.access_points) {
@@ -695,8 +720,13 @@ impl AppState {
         }
 
         if failures.is_empty() {
+            append_session_log("snapshot export complete");
             self.push_status("session artifacts refreshed (CSV/KML/KMZ/summary)".to_string());
         } else {
+            append_session_log(&format!(
+                "snapshot export incomplete: {}",
+                failures.join(" | ")
+            ));
             self.push_status(format!(
                 "session artifact refresh incomplete: {}",
                 failures.join(" | ")
@@ -9105,6 +9135,52 @@ fn selected_bluetooth(
         .cloned()
 }
 
+fn populate_bluetooth_controller_combo(combo: &ComboBoxText, preferred: Option<&str>) {
+    combo.remove_all();
+    combo.append(Some("default"), "Default Controller");
+
+    let mut known_ids = HashSet::new();
+    for ctrl in bluetooth::list_controllers().unwrap_or_default() {
+        known_ids.insert(ctrl.id.clone());
+        combo.append(
+            Some(&ctrl.id),
+            &format!(
+                "{}{} ({}){}",
+                ctrl.id,
+                ctrl.adapter
+                    .as_deref()
+                    .map(|adapter| format!(" [{}]", adapter))
+                    .unwrap_or_default(),
+                if ctrl.name.is_empty() {
+                    "unnamed"
+                } else {
+                    ctrl.name.as_str()
+                },
+                if ctrl.is_default { " [default]" } else { "" }
+            ),
+        );
+    }
+
+    let preferred = preferred
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_uppercase());
+
+    if let Some(controller_id) = preferred {
+        if !known_ids.contains(&controller_id) {
+            combo.append(
+                Some(&controller_id),
+                &format!("{controller_id} [saved controller]"),
+            );
+        }
+        if !combo.set_active_id(Some(&controller_id)) {
+            combo.set_active_id(Some("default"));
+        }
+    } else {
+        combo.set_active_id(Some("default"));
+    }
+}
+
 fn start_bluetooth_geiger_tracking(
     state: &Rc<RefCell<AppState>>,
     geiger_state: &Rc<RefCell<BluetoothGeigerUiState>>,
@@ -9998,27 +10074,6 @@ fn open_interface_settings_dialog_inner(
     let wifi_scan_check = CheckButton::with_label("Scan Wi-Fi");
     let bluetooth_scan_check = CheckButton::with_label("Scan Bluetooth");
     let bluetooth_controller_combo = ComboBoxText::new();
-    bluetooth_controller_combo.append(Some("default"), "Default Controller");
-    for ctrl in bluetooth::list_controllers().unwrap_or_default() {
-        bluetooth_controller_combo.append(
-            Some(&ctrl.id),
-            &format!(
-                "{}{} ({}){}",
-                ctrl.id,
-                ctrl.adapter
-                    .as_deref()
-                    .map(|adapter| format!(" [{}]", adapter))
-                    .unwrap_or_default(),
-                if ctrl.name.is_empty() {
-                    "unnamed"
-                } else {
-                    ctrl.name.as_str()
-                },
-                if ctrl.is_default { " [default]" } else { "" }
-            ),
-        );
-    }
-    bluetooth_controller_combo.set_active_id(Some("default"));
 
     let output_to_files_check = CheckButton::with_label("Output to Files");
     let output_dir_entry = Entry::new();
@@ -10646,17 +10701,11 @@ fn open_interface_settings_dialog_inner(
 
     wifi_scan_check.set_active(current_interface.1);
     bluetooth_scan_check.set_active(current_interface.2);
+    populate_bluetooth_controller_combo(
+        &bluetooth_controller_combo,
+        current_interface.3.as_deref(),
+    );
     bluetooth_controller_combo.set_sensitive(current_interface.2);
-    match current_interface.3.as_deref() {
-        Some(ctrl) => {
-            if !bluetooth_controller_combo.set_active_id(Some(ctrl)) {
-                bluetooth_controller_combo.set_active_id(Some("default"));
-            }
-        }
-        None => {
-            bluetooth_controller_combo.set_active_id(Some("default"));
-        }
-    }
     output_to_files_check.set_active(current_interface.4);
     output_dir_entry.set_text(&current_interface.5.display().to_string());
     output_dir_entry.set_sensitive(current_interface.4);
@@ -11113,31 +11162,9 @@ fn open_preferences_window(
     bluetooth_page.append(&bluetooth_enabled_check);
 
     let bluetooth_controller_combo = ComboBoxText::new();
-    bluetooth_controller_combo.append(Some("default"), "Default Controller");
-    for ctrl in bluetooth::list_controllers().unwrap_or_default() {
-        bluetooth_controller_combo.append(
-            Some(&ctrl.id),
-            &format!(
-                "{}{} ({}){}",
-                ctrl.id,
-                ctrl.adapter
-                    .as_deref()
-                    .map(|adapter| format!(" [{}]", adapter))
-                    .unwrap_or_default(),
-                if ctrl.name.is_empty() {
-                    "unnamed"
-                } else {
-                    ctrl.name.as_str()
-                },
-                if ctrl.is_default { " [default]" } else { "" }
-            ),
-        );
-    }
-    bluetooth_controller_combo.set_active_id(
-        settings_snapshot
-            .bluetooth_controller
-            .as_deref()
-            .or(Some("default")),
+    populate_bluetooth_controller_combo(
+        &bluetooth_controller_combo,
+        settings_snapshot.bluetooth_controller.as_deref(),
     );
     bluetooth_controller_combo.set_sensitive(settings_snapshot.bluetooth_enabled);
 

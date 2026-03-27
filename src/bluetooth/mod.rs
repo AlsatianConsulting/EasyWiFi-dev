@@ -128,7 +128,7 @@ fn resolve_bluez_targets(selection: Option<&str>) -> Vec<Option<String>> {
 
     match selection.map(str::trim).filter(|value| !value.is_empty()) {
         Some("default") | None => vec![None],
-        Some(controller) => vec![Some(controller.to_string())],
+        Some(controller) => vec![Some(controller.to_string()), None],
     }
 }
 
@@ -833,11 +833,8 @@ pub fn start_geiger_mode(
     thread::spawn(move || {
         let mut rng = rand::thread_rng();
         while !stop_flag.load(Ordering::Relaxed) {
-            if let Some(ctrl) = controller.as_deref() {
-                select_controller(ctrl);
-            }
-
-            let hits = run_scan_once_interruptible(2, Some(&stop_flag)).unwrap_or_default();
+            let hits = run_scan_once_interruptible(2, controller.as_deref(), Some(&stop_flag))
+                .unwrap_or_default();
             let mut emitted = false;
             for hit in hits {
                 if hit.mac == target {
@@ -1031,6 +1028,7 @@ fn run_scan_loop(
     } else {
         Vec::new()
     };
+    let mut disabled_bluez_targets = HashSet::new();
     let ubertooth_targets = if use_ubertooth {
         resolve_ubertooth_targets(config.ubertooth_device.as_deref())
     } else {
@@ -1144,10 +1142,18 @@ fn run_scan_loop(
                 if stop_flag.load(Ordering::Relaxed) {
                     break;
                 }
-                if let Some(controller_id) = controller.as_deref() {
-                    select_controller(controller_id);
+                let controller_key = controller
+                    .as_deref()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "default".to_string());
+                if disabled_bluez_targets.contains(&controller_key) {
+                    continue;
                 }
-                match run_scan_once_interruptible(scan_timeout, Some(&stop_flag)) {
+                match run_scan_once_interruptible(
+                    scan_timeout,
+                    controller.as_deref(),
+                    Some(&stop_flag),
+                ) {
                     Ok(hits) => process_hits(
                         hits,
                         false,
@@ -1157,6 +1163,15 @@ fn run_scan_loop(
                     Err(err) => {
                         if stop_flag.load(Ordering::Relaxed) {
                             break;
+                        }
+                        let err_text = err.to_string();
+                        if controller.is_some() && err_text.to_ascii_uppercase().contains("SIGSEGV")
+                        {
+                            disabled_bluez_targets.insert(controller_key.clone());
+                            let _ = sender.send(BluetoothEvent::Log(format!(
+                                "BlueZ controller {} crashed during scan; disabling it and falling back to default controller",
+                                controller_key
+                            )));
                         }
                         let _ = sender.send(BluetoothEvent::Log(format!(
                             "BlueZ bluetooth scan failed{}: {err}",
@@ -1255,8 +1270,13 @@ fn run_simulated_scan(sender: Sender<BluetoothEvent>, stop_flag: Arc<AtomicBool>
 
 fn run_scan_once_interruptible(
     scan_timeout_secs: u64,
+    controller: Option<&str>,
     stop_flag: Option<&Arc<AtomicBool>>,
 ) -> Result<Vec<ScanHit>> {
+    if let Some(controller) = controller.map(str::trim).filter(|value| !value.is_empty()) {
+        select_controller(controller);
+    }
+
     let mut child = Command::new("bluetoothctl")
         .arg("--timeout")
         .arg(scan_timeout_secs.to_string())
@@ -3413,7 +3433,7 @@ mod tests {
     fn explicit_bluez_target_is_preserved() {
         assert_eq!(
             resolve_bluez_targets(Some("AA:BB:CC:DD:EE:FF")),
-            vec![Some("AA:BB:CC:DD:EE:FF".to_string())]
+            vec![Some("AA:BB:CC:DD:EE:FF".to_string()), None]
         );
     }
 
