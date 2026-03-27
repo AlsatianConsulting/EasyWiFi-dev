@@ -16,7 +16,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -90,6 +90,18 @@ struct ScanHit {
     rssi_dbm: Option<i32>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BluetoothUuidMetadata {
+    pub uuid: String,
+    pub short_form: Option<String>,
+    pub name: Option<String>,
+    pub kind: Option<String>,
+    pub sources: Vec<String>,
+    pub uncertainty: Option<String>,
+}
+
+static SHARED_SIG_RESOLVER: OnceLock<SigResolver> = OnceLock::new();
+
 fn bluetooth_source_label(source: &str, id: Option<&str>) -> String {
     match id.map(str::trim).filter(|value| !value.is_empty()) {
         Some(id) => format!("{}:{}", source, id),
@@ -149,6 +161,7 @@ fn resolve_ubertooth_targets(selection: Option<&str>) -> Vec<Option<String>> {
 struct SigResolver {
     company_names: HashMap<u16, String>,
     uuid_names: HashMap<String, String>,
+    uuid_metadata: HashMap<String, BluetoothUuidMetadata>,
 }
 
 impl SigResolver {
@@ -157,6 +170,7 @@ impl SigResolver {
         let mut resolver = Self {
             company_names: HashMap::new(),
             uuid_names: HashMap::new(),
+            uuid_metadata: HashMap::new(),
         };
         resolver.load_company_kismet_gz(PathBuf::from(
             "/usr/share/kismet/kismet_bluetooth_manuf.txt.gz",
@@ -198,9 +212,10 @@ impl SigResolver {
         let Ok(raw) = fs::read_to_string(path) else {
             return;
         };
-        for (uuid, name) in parse_uuid_mappings_csv(&raw) {
-            if !uuid.is_empty() && !name.is_empty() {
-                self.insert_uuid_name(uuid, name);
+        for row in parse_uuid_mappings_csv(&raw) {
+            if !row.uuid.is_empty() && !row.name.is_empty() {
+                self.insert_uuid_name(row.uuid.clone(), row.name.clone());
+                self.insert_uuid_metadata(row);
             }
         }
     }
@@ -247,6 +262,51 @@ impl SigResolver {
             .or_insert(name);
     }
 
+    fn insert_uuid_metadata(&mut self, row: ParsedUuidCsvRow) {
+        if row.uuid.is_empty() {
+            return;
+        }
+        let ParsedUuidCsvRow {
+            uuid,
+            name,
+            short_form,
+            kind,
+            sources,
+            uncertainty,
+        } = row;
+
+        self.uuid_metadata
+            .entry(uuid.clone())
+            .and_modify(|existing| {
+                existing.name =
+                    merge_optional_resolution_label(existing.name.take(), Some(name.clone()));
+                existing.short_form =
+                    merge_optional_resolution_label(existing.short_form.take(), short_form.clone());
+                existing.kind = merge_optional_resolution_label(existing.kind.take(), kind.clone());
+                existing.uncertainty = merge_optional_resolution_label(
+                    existing.uncertainty.take(),
+                    uncertainty.clone(),
+                );
+                for source in &sources {
+                    if !existing
+                        .sources
+                        .iter()
+                        .any(|current| current.eq_ignore_ascii_case(source))
+                    {
+                        existing.sources.push(source.clone());
+                    }
+                }
+            })
+            .or_insert_with(|| BluetoothUuidMetadata {
+                uuid,
+                short_form,
+                name: Some(name),
+                kind,
+                sources,
+                uncertainty,
+            });
+    }
+
     fn company_name(&self, id: u16) -> Option<String> {
         self.company_names.get(&id).cloned()
     }
@@ -262,6 +322,58 @@ impl SigResolver {
             (None, None) => None,
         }
     }
+
+    fn uuid_metadata(&self, uuid: &str) -> Option<BluetoothUuidMetadata> {
+        let normalized = normalize_assigned_uuid(uuid);
+        if !normalized_assigned_uuid_like(&normalized) {
+            return None;
+        }
+
+        let mut entry = self
+            .uuid_metadata
+            .get(&normalized)
+            .cloned()
+            .unwrap_or_else(|| BluetoothUuidMetadata {
+                uuid: normalized.clone(),
+                ..BluetoothUuidMetadata::default()
+            });
+        entry.uuid = normalized.clone();
+        entry.name =
+            merge_optional_resolution_label(entry.name.take(), self.uuid_name(&normalized));
+        if entry.short_form.is_none() {
+            entry.short_form = short_assigned_number(&normalized).map(|short| format!("0x{short}"));
+        }
+
+        if entry.name.is_none()
+            && entry.short_form.is_none()
+            && entry.kind.is_none()
+            && entry.sources.is_empty()
+            && entry.uncertainty.is_none()
+        {
+            None
+        } else {
+            Some(entry)
+        }
+    }
+}
+
+fn shared_sig_resolver() -> &'static SigResolver {
+    SHARED_SIG_RESOLVER.get_or_init(SigResolver::load_default)
+}
+
+pub fn resolve_uuid_metadata(uuid: &str) -> Option<BluetoothUuidMetadata> {
+    shared_sig_resolver().uuid_metadata(uuid)
+}
+
+pub fn resolve_uuid_metadata_many(uuids: &[String]) -> Vec<BluetoothUuidMetadata> {
+    let resolver = shared_sig_resolver();
+    let mut out = Vec::new();
+    for uuid in uuids {
+        if let Some(entry) = resolver.uuid_metadata(uuid) {
+            out.push(entry);
+        }
+    }
+    out
 }
 
 #[derive(Debug, Deserialize)]
@@ -538,6 +650,18 @@ fn merge_resolution_labels(existing: &str, incoming: &str) -> String {
         labels.push(incoming);
     }
     labels.join(JOINER)
+}
+
+fn merge_optional_resolution_label(
+    existing: Option<String>,
+    incoming: Option<String>,
+) -> Option<String> {
+    match (existing, incoming) {
+        (Some(left), Some(right)) => Some(merge_resolution_labels(&left, &right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(collapse_whitespace(&right)),
+        (None, None) => None,
+    }
 }
 
 fn normalize_resolution_label(value: &str) -> String {
@@ -2056,8 +2180,18 @@ fn parse_tab_separated_mappings(raw: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn parse_uuid_mappings_csv(raw: &str) -> Vec<(String, String)> {
-    let mut out = Vec::<(String, String)>::new();
+#[derive(Debug, Clone)]
+struct ParsedUuidCsvRow {
+    uuid: String,
+    name: String,
+    short_form: Option<String>,
+    kind: Option<String>,
+    sources: Vec<String>,
+    uncertainty: Option<String>,
+}
+
+fn parse_uuid_mappings_csv(raw: &str) -> Vec<ParsedUuidCsvRow> {
+    let mut out = Vec::<ParsedUuidCsvRow>::new();
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
         .comment(Some(b'#'))
@@ -2094,11 +2228,57 @@ fn parse_uuid_mappings_csv(raw: &str) -> Vec<(String, String)> {
         };
         let name = collapse_whitespace(preferred_name);
         if !name.is_empty() {
-            out.push((uuid, name));
+            let short_form = if uuid_short_alias_like(col1) {
+                normalize_short_assigned_alias(col1)
+            } else {
+                None
+            };
+            let kind = record
+                .get(3)
+                .map(collapse_whitespace)
+                .filter(|value| !value.is_empty());
+            let sources = record
+                .get(6)
+                .map(|value| {
+                    value
+                        .split(';')
+                        .map(collapse_whitespace)
+                        .filter(|entry| !entry.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let uncertainty = record
+                .get(7)
+                .map(collapse_whitespace)
+                .filter(|value| !value.is_empty());
+            out.push(ParsedUuidCsvRow {
+                uuid,
+                name,
+                short_form,
+                kind,
+                sources,
+                uncertainty,
+            });
         }
     }
 
     out
+}
+
+fn normalize_short_assigned_alias(value: &str) -> Option<String> {
+    let trimmed = collapse_whitespace(value.trim_matches('"'));
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !uuid_short_alias_like(&trimmed) {
+        return None;
+    }
+    let token = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(&trimmed)
+        .to_ascii_uppercase();
+    Some(format!("0x{}", token))
 }
 
 fn uuid_short_alias_like(value: &str) -> bool {
@@ -3093,20 +3273,15 @@ mod tests {
 "#,
         );
         assert_eq!(rows.len(), 3);
-        assert_eq!(
-            rows[0],
-            (
-                "0000185a-0000-1000-8000-00805f9b34fb".to_string(),
-                "Industrial Measurement Device".to_string()
-            )
-        );
-        assert_eq!(
-            rows[2],
-            (
-                "03b80e5a-ede8-4b33-a751-6ce34ec4c700".to_string(),
-                "BLE-MIDI Service".to_string()
-            )
-        );
+        assert_eq!(rows[0].uuid, "0000185a-0000-1000-8000-00805f9b34fb");
+        assert_eq!(rows[0].name, "Industrial Measurement Device");
+        assert_eq!(rows[0].short_form.as_deref(), Some("0x185A"));
+        assert_eq!(rows[0].kind.as_deref(), Some("Service"));
+
+        assert_eq!(rows[2].uuid, "03b80e5a-ede8-4b33-a751-6ce34ec4c700");
+        assert_eq!(rows[2].name, "BLE-MIDI Service");
+        assert!(rows[2].short_form.is_none());
+        assert_eq!(rows[2].kind.as_deref(), Some("Vendor Custom"));
     }
 
     #[test]

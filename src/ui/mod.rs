@@ -7551,7 +7551,47 @@ fn format_bluetooth_passive_section(device: &BluetoothDeviceRecord) -> String {
             .join(", ")
     };
 
-    format!("MFGR IDs: {}\nUUIDs: {}", mfgr, uuids)
+    let uuid_details = format_bluetooth_uuid_metadata(device);
+
+    format!(
+        "MFGR IDs: {}\nUUIDs: {}\nUUID Resolver Details:\n{}",
+        mfgr, uuids, uuid_details
+    )
+}
+
+fn format_bluetooth_uuid_metadata(device: &BluetoothDeviceRecord) -> String {
+    if device.uuids.is_empty() {
+        return "None observed".to_string();
+    }
+    let metadata = bluetooth::resolve_uuid_metadata_many(&device.uuids);
+    if metadata.is_empty() {
+        return "No resolver metadata available".to_string();
+    }
+    metadata
+        .into_iter()
+        .map(|entry| {
+            let name = entry.name.unwrap_or_else(|| "Unknown".to_string());
+            let kind = entry.kind.unwrap_or_else(|| "Unknown Type".to_string());
+            let short = entry
+                .short_form
+                .map(|value| format!(" ({value})"))
+                .unwrap_or_default();
+            let sources = if entry.sources.is_empty() {
+                "Unknown source".to_string()
+            } else {
+                entry.sources.join(" ; ")
+            };
+            let uncertainty = entry
+                .uncertainty
+                .map(|value| format!(" | note: {value}"))
+                .unwrap_or_default();
+            format!(
+                "- {}{}: {} [{}] | source: {}{}",
+                entry.uuid, short, name, kind, sources, uncertainty
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn format_bluetooth_active_summary(device: &BluetoothDeviceRecord) -> String {
