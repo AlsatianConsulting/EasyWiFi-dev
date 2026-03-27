@@ -243,7 +243,7 @@ impl StorageEngine {
                 rssi_dbm=excluded.rssi_dbm,
                 number_of_clients=excluded.number_of_clients,
                 first_seen=MIN(access_points.first_seen, excluded.first_seen),
-                last_seen=MAX(bluetooth_devices.last_seen, excluded.last_seen),
+                last_seen=MAX(access_points.last_seen, excluded.last_seen),
                 handshake_count=excluded.handshake_count,
                 notes=excluded.notes,
                 uptime_beacons=excluded.uptime_beacons,
