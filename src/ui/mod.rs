@@ -73,6 +73,10 @@ const MAX_CAPTURE_EVENTS_PER_TICK: usize = 1200;
 const MAX_BLUETOOTH_EVENTS_PER_TICK: usize = 200;
 const MAX_WIFI_GEIGER_UPDATES_PER_TICK: usize = 8;
 const MIN_LIST_REFRESH_INTERVAL_MS: u64 = 140;
+const WIFI_WATCHDOG_STALL_TIMEOUT_SECS: u64 = 20;
+const BLUETOOTH_WATCHDOG_STALL_TIMEOUT_SECS: u64 = 20;
+const WATCHDOG_RESTART_GRACE_SECS: u64 = 12;
+const WATCHDOG_MAX_CONSECUTIVE_RESTARTS: u8 = 3;
 const TABLE_CHAR_WIDTH_PX: i32 = 10;
 const DEFAULT_TABLE_PAGE_SIZE: usize = 50;
 const TABLE_PAGE_SIZE_OPTIONS: &[usize] = &[25, 50, 100, 200];
@@ -129,6 +133,15 @@ enum SortableTable {
     Bluetooth,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InterfaceHealthState {
+    Idle,
+    Active,
+    Stalled,
+    Restarting,
+    Error,
+}
+
 #[derive(Debug, Clone)]
 struct BluetoothEnumerationStatus {
     message: String,
@@ -151,6 +164,18 @@ struct AppState {
     bluetooth_runtime: Option<BluetoothRuntime>,
     bluetooth_sender: Sender<BluetoothEvent>,
     bluetooth_enumeration_status: HashMap<String, BluetoothEnumerationStatus>,
+    wifi_health_state: InterfaceHealthState,
+    wifi_health_detail: String,
+    wifi_last_data_at: Option<Instant>,
+    wifi_restart_count: u32,
+    wifi_consecutive_watchdog_restarts: u8,
+    wifi_watchdog_block_until: Option<Instant>,
+    bluetooth_health_state: InterfaceHealthState,
+    bluetooth_health_detail: String,
+    bluetooth_last_data_at: Option<Instant>,
+    bluetooth_restart_count: u32,
+    bluetooth_consecutive_watchdog_restarts: u8,
+    bluetooth_watchdog_block_until: Option<Instant>,
     session_capture_path: PathBuf,
     gps_track: Vec<GeoObservation>,
     last_gps_track_point_at: Option<chrono::DateTime<Utc>>,
@@ -201,6 +226,217 @@ impl AppState {
                 is_error,
             },
         );
+    }
+
+    fn set_wifi_health_state(&mut self, state: InterfaceHealthState, detail: impl Into<String>) {
+        self.wifi_health_state = state;
+        self.wifi_health_detail = detail.into();
+    }
+
+    fn set_bluetooth_health_state(
+        &mut self,
+        state: InterfaceHealthState,
+        detail: impl Into<String>,
+    ) {
+        self.bluetooth_health_state = state;
+        self.bluetooth_health_detail = detail.into();
+    }
+
+    fn note_wifi_activity(&mut self, detail: impl Into<String>) {
+        self.wifi_last_data_at = Some(Instant::now());
+        self.wifi_consecutive_watchdog_restarts = 0;
+        self.wifi_watchdog_block_until = None;
+        self.set_wifi_health_state(InterfaceHealthState::Active, detail);
+    }
+
+    fn note_bluetooth_activity(&mut self, detail: impl Into<String>) {
+        self.bluetooth_last_data_at = Some(Instant::now());
+        self.bluetooth_consecutive_watchdog_restarts = 0;
+        self.bluetooth_watchdog_block_until = None;
+        self.set_bluetooth_health_state(InterfaceHealthState::Active, detail);
+    }
+
+    fn interface_runtime_status_text(&self) -> String {
+        let wifi_iface = self
+            .settings
+            .interfaces
+            .iter()
+            .find(|iface| iface.enabled)
+            .map(|iface| {
+                iface
+                    .monitor_interface_name
+                    .clone()
+                    .unwrap_or_else(|| iface.interface_name.clone())
+            });
+        let bluetooth_controller = self
+            .settings
+            .bluetooth_controller
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+
+        let wifi_line = if !self.settings.interfaces.iter().any(|iface| iface.enabled) {
+            "Wi-Fi: disabled".to_string()
+        } else {
+            format!(
+                "Wi-Fi {} | {} | {} | last data: {} | restarts: {}",
+                wifi_iface.unwrap_or_else(|| "<unknown>".to_string()),
+                interface_health_state_label(self.wifi_health_state),
+                self.wifi_health_detail,
+                format_health_elapsed(self.wifi_last_data_at),
+                self.wifi_restart_count
+            )
+        };
+
+        let bluetooth_line = if !self.settings.bluetooth_enabled {
+            "Bluetooth: disabled".to_string()
+        } else {
+            format!(
+                "Bluetooth {} | {} | {} | last data: {} | restarts: {}",
+                bluetooth_controller,
+                interface_health_state_label(self.bluetooth_health_state),
+                self.bluetooth_health_detail,
+                format_health_elapsed(self.bluetooth_last_data_at),
+                self.bluetooth_restart_count
+            )
+        };
+
+        format!("{wifi_line}\n{bluetooth_line}")
+    }
+
+    fn maybe_run_scan_watchdog(&mut self) -> bool {
+        if self.scan_start_in_progress || self.scan_stop_in_progress {
+            return false;
+        }
+
+        let now = Instant::now();
+        let mut changed = false;
+
+        if self.capture_runtime.is_some()
+            && self.settings.interfaces.iter().any(|iface| iface.enabled)
+        {
+            if self
+                .wifi_watchdog_block_until
+                .map(|until| now >= until)
+                .unwrap_or(false)
+            {
+                self.wifi_watchdog_block_until = None;
+            }
+
+            let stalled = self
+                .wifi_last_data_at
+                .map(|last| {
+                    now.saturating_duration_since(last).as_secs()
+                        >= WIFI_WATCHDOG_STALL_TIMEOUT_SECS
+                })
+                .unwrap_or(false);
+
+            if stalled && self.wifi_watchdog_block_until.is_none() {
+                let was_error = self.wifi_health_state == InterfaceHealthState::Error;
+                self.set_wifi_health_state(
+                    InterfaceHealthState::Stalled,
+                    format!("no Wi-Fi frames for {}s", WIFI_WATCHDOG_STALL_TIMEOUT_SECS),
+                );
+
+                if self.wifi_consecutive_watchdog_restarts >= WATCHDOG_MAX_CONSECUTIVE_RESTARTS {
+                    if !was_error {
+                        self.push_status(
+                            "Wi-Fi watchdog reached restart limit; manual restart required"
+                                .to_string(),
+                        );
+                    }
+                    self.set_wifi_health_state(
+                        InterfaceHealthState::Error,
+                        "restart limit reached; waiting for manual action".to_string(),
+                    );
+                    self.wifi_watchdog_block_until =
+                        Some(now + Duration::from_secs(WATCHDOG_RESTART_GRACE_SECS));
+                    changed = true;
+                } else {
+                    self.wifi_consecutive_watchdog_restarts =
+                        self.wifi_consecutive_watchdog_restarts.saturating_add(1);
+                    self.wifi_restart_count = self.wifi_restart_count.saturating_add(1);
+                    self.wifi_watchdog_block_until =
+                        Some(now + Duration::from_secs(WATCHDOG_RESTART_GRACE_SECS));
+                    self.wifi_last_data_at = Some(now);
+                    self.set_wifi_health_state(
+                        InterfaceHealthState::Restarting,
+                        "watchdog restarting Wi-Fi capture".to_string(),
+                    );
+                    self.push_status(
+                        "Wi-Fi watchdog: stalled capture detected; restarting Wi-Fi scan"
+                            .to_string(),
+                    );
+                    self.restart_wifi_scan();
+                    return true;
+                }
+            }
+        }
+
+        if self.bluetooth_runtime.is_some() && self.settings.bluetooth_enabled {
+            if self
+                .bluetooth_watchdog_block_until
+                .map(|until| now >= until)
+                .unwrap_or(false)
+            {
+                self.bluetooth_watchdog_block_until = None;
+            }
+
+            let stalled = self
+                .bluetooth_last_data_at
+                .map(|last| {
+                    now.saturating_duration_since(last).as_secs()
+                        >= BLUETOOTH_WATCHDOG_STALL_TIMEOUT_SECS
+                })
+                .unwrap_or(false);
+
+            if stalled && self.bluetooth_watchdog_block_until.is_none() {
+                let was_error = self.bluetooth_health_state == InterfaceHealthState::Error;
+                self.set_bluetooth_health_state(
+                    InterfaceHealthState::Stalled,
+                    format!(
+                        "no Bluetooth devices for {}s",
+                        BLUETOOTH_WATCHDOG_STALL_TIMEOUT_SECS
+                    ),
+                );
+
+                if self.bluetooth_consecutive_watchdog_restarts >= WATCHDOG_MAX_CONSECUTIVE_RESTARTS
+                {
+                    if !was_error {
+                        self.push_status(
+                            "Bluetooth watchdog reached restart limit; manual restart required"
+                                .to_string(),
+                        );
+                    }
+                    self.set_bluetooth_health_state(
+                        InterfaceHealthState::Error,
+                        "restart limit reached; waiting for manual action".to_string(),
+                    );
+                    self.bluetooth_watchdog_block_until =
+                        Some(now + Duration::from_secs(WATCHDOG_RESTART_GRACE_SECS));
+                    changed = true;
+                } else {
+                    self.bluetooth_consecutive_watchdog_restarts = self
+                        .bluetooth_consecutive_watchdog_restarts
+                        .saturating_add(1);
+                    self.bluetooth_restart_count = self.bluetooth_restart_count.saturating_add(1);
+                    self.bluetooth_watchdog_block_until =
+                        Some(now + Duration::from_secs(WATCHDOG_RESTART_GRACE_SECS));
+                    self.bluetooth_last_data_at = Some(now);
+                    self.set_bluetooth_health_state(
+                        InterfaceHealthState::Restarting,
+                        "watchdog restarting Bluetooth scan".to_string(),
+                    );
+                    self.push_status(
+                        "Bluetooth watchdog: stalled scan detected; restarting Bluetooth scan"
+                            .to_string(),
+                    );
+                    self.restart_bluetooth_scan();
+                    return true;
+                }
+            }
+        }
+
+        changed
     }
 
     fn toggle_table_sort(&mut self, table: SortableTable, column_id: impl Into<String>) {
@@ -339,6 +575,7 @@ impl AppState {
     fn apply_capture_event(&mut self, event: CaptureEvent) -> Result<UiRefreshHint> {
         match event {
             CaptureEvent::AccessPointSeen(mut ap) => {
+                self.note_wifi_activity("capturing Wi-Fi packets");
                 if ap.oui_manufacturer.is_none() {
                     ap.oui_manufacturer = self.oui.lookup(&ap.bssid).map(str::to_string);
                 }
@@ -388,6 +625,7 @@ impl AppState {
                 })
             }
             CaptureEvent::ClientSeen(mut client) => {
+                self.note_wifi_activity("capturing Wi-Fi packets");
                 if client.oui_manufacturer.is_none() {
                     client.oui_manufacturer = self.oui.lookup(&client.mac).map(str::to_string);
                 }
@@ -459,6 +697,7 @@ impl AppState {
                 Ok(UiRefreshHint::none())
             }
             CaptureEvent::HandshakeSeen(handshake) => {
+                self.note_wifi_activity("capturing Wi-Fi packets");
                 self.enqueue_persistence(PersistenceCommand::AddHandshake(handshake.clone()));
                 self.enqueue_persistence(PersistenceCommand::IncrementHandshakeCount(
                     handshake.bssid.clone(),
@@ -507,6 +746,7 @@ impl AppState {
                 })
             }
             CaptureEvent::ChannelUsage(usage) => {
+                self.note_wifi_activity("capturing Wi-Fi packets");
                 self.enqueue_persistence(PersistenceCommand::AddChannelUsage(usage.clone()));
                 self.channel_usage.push(usage);
                 if self.channel_usage.len() > 800 {
@@ -537,6 +777,7 @@ impl AppState {
     fn apply_bluetooth_event(&mut self, event: BluetoothEvent) -> Result<UiRefreshHint> {
         match event {
             BluetoothEvent::DeviceSeen(mut device) => {
+                self.note_bluetooth_activity("scanning Bluetooth advertisements");
                 if device.oui_manufacturer.is_none() {
                     device.oui_manufacturer = self.oui.lookup(&device.mac).map(str::to_string);
                 }
@@ -626,6 +867,9 @@ impl AppState {
                 })
             }
             BluetoothEvent::Log(text) => {
+                if text.contains("scan failed") {
+                    self.set_bluetooth_health_state(InterfaceHealthState::Error, text.clone());
+                }
                 self.push_status(text);
                 Ok(UiRefreshHint {
                     ap_list: false,
@@ -704,6 +948,20 @@ impl AppState {
         let (tx, rx) = unbounded::<StartCompletion>();
         self.pending_start_completion = Some(rx);
         self.scan_start_in_progress = true;
+        if need_wifi {
+            self.set_wifi_health_state(
+                InterfaceHealthState::Restarting,
+                "starting Wi-Fi capture".to_string(),
+            );
+            self.wifi_last_data_at = Some(Instant::now());
+        }
+        if need_bluetooth {
+            self.set_bluetooth_health_state(
+                InterfaceHealthState::Restarting,
+                "starting Bluetooth scan".to_string(),
+            );
+            self.bluetooth_last_data_at = Some(Instant::now());
+        }
         self.push_status("starting scans...".to_string());
 
         let interfaces = self.settings.interfaces.clone();
@@ -782,8 +1040,18 @@ impl AppState {
         }
         if !self.settings.bluetooth_enabled {
             self.push_status("bluetooth scanning disabled".to_string());
+            self.set_bluetooth_health_state(
+                InterfaceHealthState::Idle,
+                "Bluetooth scanning disabled".to_string(),
+            );
             return;
         }
+
+        self.set_bluetooth_health_state(
+            InterfaceHealthState::Restarting,
+            "restarting Bluetooth scan".to_string(),
+        );
+        self.bluetooth_last_data_at = Some(Instant::now());
 
         let runtime = bluetooth::start_scan(
             BluetoothScanConfig {
@@ -796,6 +1064,26 @@ impl AppState {
             self.bluetooth_sender.clone(),
         );
         self.bluetooth_runtime = Some(runtime);
+    }
+
+    fn restart_wifi_scan(&mut self) {
+        if let Some(runtime) = self.capture_runtime.take() {
+            runtime.stop();
+        }
+        if !self.settings.interfaces.iter().any(|iface| iface.enabled) {
+            self.set_wifi_health_state(
+                InterfaceHealthState::Idle,
+                "Wi-Fi scanning disabled".to_string(),
+            );
+            return;
+        }
+
+        self.set_wifi_health_state(
+            InterfaceHealthState::Restarting,
+            "restarting Wi-Fi capture".to_string(),
+        );
+        self.wifi_last_data_at = Some(Instant::now());
+        self.start_scanning();
     }
 
     fn active_wifi_interface_name(&self) -> Option<String> {
@@ -1225,6 +1513,7 @@ struct UiWidgets {
     bluetooth_geiger_state: Rc<RefCell<BluetoothGeigerUiState>>,
     channel_draw: DrawingArea,
     status_label: Label,
+    interface_health_label: Label,
     gps_status_label: Label,
 }
 
@@ -1670,6 +1959,18 @@ fn build_ui(app: &Application) -> Result<()> {
         bluetooth_runtime,
         bluetooth_sender: bluetooth_tx,
         bluetooth_enumeration_status: HashMap::new(),
+        wifi_health_state: InterfaceHealthState::Idle,
+        wifi_health_detail: "Wi-Fi scanning idle".to_string(),
+        wifi_last_data_at: None,
+        wifi_restart_count: 0,
+        wifi_consecutive_watchdog_restarts: 0,
+        wifi_watchdog_block_until: None,
+        bluetooth_health_state: InterfaceHealthState::Idle,
+        bluetooth_health_detail: "Bluetooth scanning idle".to_string(),
+        bluetooth_last_data_at: None,
+        bluetooth_restart_count: 0,
+        bluetooth_consecutive_watchdog_restarts: 0,
+        bluetooth_watchdog_block_until: None,
         session_capture_path,
         gps_track: existing_gps_track,
         last_gps_track_point_at: None,
@@ -3339,6 +3640,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     status_label.set_xalign(0.0);
     status_label.set_wrap(true);
     status_label.set_selectable(true);
+    let interface_health_label = Label::new(Some("initializing interface status..."));
+    interface_health_label.set_xalign(0.0);
+    interface_health_label.set_wrap(true);
+    interface_health_label.set_selectable(true);
 
     let gps_status_label = Label::new(Some("GPS status initializing"));
     gps_status_label.set_xalign(0.0);
@@ -3348,6 +3653,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let channel_status_box = GtkBox::new(Orientation::Vertical, 6);
     channel_status_box.append(&Label::new(Some("Status")));
     channel_status_box.append(&status_label);
+    channel_status_box.append(&Label::new(Some("Interface Status")));
+    channel_status_box.append(&interface_health_label);
     channel_status_box.append(&Label::new(Some("GPS Status")));
     channel_status_box.append(&gps_status_label);
     let channel_status_scrolled = ScrolledWindow::builder()
@@ -3899,6 +4206,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             bluetooth_geiger_state,
             channel_draw,
             status_label,
+            interface_health_label,
             gps_status_label,
         },
     )
@@ -3974,6 +4282,7 @@ fn bind_poll_loop(
         bluetooth_geiger_state,
         channel_draw,
         status_label,
+        interface_health_label,
         gps_status_label,
     } = widgets;
     let window = window.clone();
@@ -4059,6 +4368,13 @@ fn bind_poll_loop(
                 s.push_status(message);
                 s.start_scanning();
             } else {
+                s.set_wifi_health_state(InterfaceHealthState::Idle, "Wi-Fi scanning stopped");
+                s.set_bluetooth_health_state(
+                    InterfaceHealthState::Idle,
+                    "Bluetooth scanning stopped",
+                );
+                s.wifi_last_data_at = None;
+                s.bluetooth_last_data_at = None;
                 s.push_status("scanning stopped".to_string());
             }
             refresh.status = true;
@@ -4090,6 +4406,33 @@ fn bind_poll_loop(
             if let Some(alert) = completion.privilege_alert {
                 s.pending_privilege_alert = Some(alert);
             }
+            if completion.wifi_started {
+                s.set_wifi_health_state(InterfaceHealthState::Active, "capturing packets");
+                s.wifi_last_data_at = Some(Instant::now());
+                s.wifi_consecutive_watchdog_restarts = 0;
+            } else if completion.wifi_failed {
+                s.set_wifi_health_state(
+                    InterfaceHealthState::Error,
+                    "Wi-Fi capture failed to start",
+                );
+            } else if !s.settings.interfaces.iter().any(|iface| iface.enabled) {
+                s.set_wifi_health_state(InterfaceHealthState::Idle, "Wi-Fi scanning disabled");
+                s.wifi_last_data_at = None;
+            }
+            if completion.bluetooth_started {
+                s.set_bluetooth_health_state(
+                    InterfaceHealthState::Active,
+                    "scanning Bluetooth advertisements",
+                );
+                s.bluetooth_last_data_at = Some(Instant::now());
+                s.bluetooth_consecutive_watchdog_restarts = 0;
+            } else if !s.settings.bluetooth_enabled {
+                s.set_bluetooth_health_state(
+                    InterfaceHealthState::Idle,
+                    "Bluetooth scanning disabled",
+                );
+                s.bluetooth_last_data_at = None;
+            }
             if completion.wifi_started && completion.bluetooth_started {
                 s.push_status("Wi-Fi and Bluetooth scanning started".to_string());
             } else if completion.wifi_started {
@@ -4106,6 +4449,13 @@ fn bind_poll_loop(
                 s.push_status("scan start completed".to_string());
             }
             refresh.status = true;
+        }
+
+        {
+            let mut s = state.borrow_mut();
+            if s.maybe_run_scan_watchdog() {
+                refresh.status = true;
+            }
         }
 
         if layout_changed {
@@ -4647,10 +4997,18 @@ fn bind_poll_loop(
             pending_channel_refresh.set(false);
         }
 
-        let (status_text, gps_text, wifi_running, bluetooth_running, scan_transition_in_progress) = {
+        let (
+            status_text,
+            interface_status_text,
+            gps_text,
+            wifi_running,
+            bluetooth_running,
+            scan_transition_in_progress,
+        ) = {
             let s = state.borrow();
             (
                 s.status_text(),
+                s.interface_runtime_status_text(),
                 s.gps_status_text(),
                 s.capture_runtime.is_some(),
                 s.bluetooth_runtime.is_some(),
@@ -4670,12 +5028,29 @@ fn bind_poll_loop(
         let text = status_text;
         status_label.set_text(&text);
         global_status_label.set_text(&text);
+        interface_health_label.set_text(&interface_status_text);
 
         gps_status_label.set_text(&gps_text);
         global_gps_status_label.set_text(&gps_text);
 
         glib::ControlFlow::Continue
     });
+}
+
+fn interface_health_state_label(state: InterfaceHealthState) -> &'static str {
+    match state {
+        InterfaceHealthState::Idle => "Idle",
+        InterfaceHealthState::Active => "Active",
+        InterfaceHealthState::Stalled => "Stalled",
+        InterfaceHealthState::Restarting => "Restarting",
+        InterfaceHealthState::Error => "Error",
+    }
+}
+
+fn format_health_elapsed(last_data_at: Option<Instant>) -> String {
+    last_data_at
+        .map(|ts| format!("{}s ago", ts.elapsed().as_secs()))
+        .unwrap_or_else(|| "n/a".to_string())
 }
 
 fn default_sort_descending(table: SortableTable, column_id: &str) -> bool {
