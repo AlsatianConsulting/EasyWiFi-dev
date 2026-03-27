@@ -7576,19 +7576,7 @@ fn format_bluetooth_uuid_metadata(device: &BluetoothDeviceRecord) -> String {
                 .short_form
                 .map(|value| format!(" ({value})"))
                 .unwrap_or_default();
-            let sources = if entry.sources.is_empty() {
-                "Unknown source".to_string()
-            } else {
-                entry.sources.join(" ; ")
-            };
-            let uncertainty = entry
-                .uncertainty
-                .map(|value| format!(" | note: {value}"))
-                .unwrap_or_default();
-            format!(
-                "- {}{}: {} [{}] | source: {}{}",
-                entry.uuid, short, name, kind, sources, uncertainty
-            )
+            format!("- {}{}: {} [{}]", entry.uuid, short, name, kind)
         })
         .collect::<Vec<_>>()
         .join("\n")
