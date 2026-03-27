@@ -9294,8 +9294,12 @@ fn open_interface_settings_dialog_inner(
         bluetooth_controller_combo.append(
             Some(&ctrl.id),
             &format!(
-                "{} ({}){}",
+                "{}{} ({}){}",
                 ctrl.id,
+                ctrl.adapter
+                    .as_deref()
+                    .map(|adapter| format!(" [{}]", adapter))
+                    .unwrap_or_default(),
                 if ctrl.name.is_empty() {
                     "unnamed"
                 } else {
@@ -10398,8 +10402,12 @@ fn open_preferences_window(
         bluetooth_controller_combo.append(
             Some(&ctrl.id),
             &format!(
-                "{} ({}){}",
+                "{}{} ({}){}",
                 ctrl.id,
+                ctrl.adapter
+                    .as_deref()
+                    .map(|adapter| format!(" [{}]", adapter))
+                    .unwrap_or_default(),
                 if ctrl.name.is_empty() {
                     "unnamed"
                 } else {
@@ -10947,8 +10955,12 @@ fn open_bluetooth_settings_dialog(window: &ApplicationWindow, state: Rc<RefCell<
         controller_combo.append(
             Some(&ctrl.id),
             &format!(
-                "{} ({}){}",
+                "{}{} ({}){}",
                 ctrl.id,
+                ctrl.adapter
+                    .as_deref()
+                    .map(|adapter| format!(" [{}]", adapter))
+                    .unwrap_or_default(),
                 if ctrl.name.is_empty() {
                     "unnamed"
                 } else {

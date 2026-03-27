@@ -324,7 +324,15 @@ fn run_bluetooth_test(options: &BluetoothTestOptions) -> Result<()> {
                 } else {
                     ""
                 };
-                println!("  {}  {}{}", controller.id, controller.name, suffix);
+                let adapter = controller
+                    .adapter
+                    .as_deref()
+                    .map(|value| format!(" [{}]", value))
+                    .unwrap_or_default();
+                println!(
+                    "  {}{}  {}{}",
+                    controller.id, adapter, controller.name, suffix
+                );
             }
             println!();
         }

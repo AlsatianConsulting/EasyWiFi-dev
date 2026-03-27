@@ -26,6 +26,7 @@ pub const ALL_UBERTOOTH_DEVICES_ID: &str = "all";
 #[derive(Debug, Clone)]
 pub struct BluetoothControllerInfo {
     pub id: String,
+    pub adapter: Option<String>,
     pub name: String,
     pub is_default: bool,
 }
@@ -560,6 +561,7 @@ pub fn list_controllers() -> Result<Vec<BluetoothControllerInfo>> {
         return Ok(Vec::new());
     }
 
+    let adapter_by_address = bluez_adapter_by_address();
     let mut out = Vec::new();
     let re = Regex::new(r"Controller\s+([0-9A-Fa-f:]{17})\s+(.+)$").unwrap();
     for raw in String::from_utf8_lossy(&output.stdout).lines() {
@@ -573,6 +575,9 @@ pub fn list_controllers() -> Result<Vec<BluetoothControllerInfo>> {
                 .unwrap_or_default()
                 .to_string(),
         );
+        if id.is_empty() {
+            continue;
+        }
         let mut name = caps
             .get(2)
             .map(|m| m.as_str().trim().to_string())
@@ -580,6 +585,7 @@ pub fn list_controllers() -> Result<Vec<BluetoothControllerInfo>> {
         let is_default = name.contains("[default]");
         name = name.replace("[default]", "").trim().to_string();
         out.push(BluetoothControllerInfo {
+            adapter: adapter_by_address.get(&id).cloned(),
             id,
             name,
             is_default,
@@ -587,6 +593,42 @@ pub fn list_controllers() -> Result<Vec<BluetoothControllerInfo>> {
     }
 
     Ok(out)
+}
+
+fn bluez_adapter_by_address() -> HashMap<String, String> {
+    let output = Command::new("busctl")
+        .args(["--system", "--list", "tree", "org.bluez"])
+        .output();
+    let Ok(output) = output else {
+        return HashMap::new();
+    };
+    if !output.status.success() {
+        return HashMap::new();
+    }
+
+    let mut out = HashMap::new();
+    for path in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            line.starts_with("/org/bluez/hci") && line.split('/').count() == 4 && !line.is_empty()
+        })
+    {
+        let Some(adapter_name) = adapter_name_from_path(path).map(str::to_string) else {
+            continue;
+        };
+        let Some(address) = busctl_get_string_property(path, "org.bluez.Adapter1", "Address")
+            .ok()
+            .flatten()
+            .map(normalize_mac)
+        else {
+            continue;
+        };
+        if !address.is_empty() {
+            out.insert(address, adapter_name);
+        }
+    }
+    out
 }
 
 pub fn list_ubertooth_devices() -> Result<Vec<UbertoothDeviceInfo>> {
