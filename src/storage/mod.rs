@@ -408,16 +408,6 @@ impl StorageEngine {
         Ok(())
     }
 
-    pub fn clear_bluetooth_history(&self) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
-            "DELETE FROM observations WHERE device_type = 'bluetooth'",
-            [],
-        )?;
-        conn.execute("DELETE FROM bluetooth_devices", [])?;
-        Ok(())
-    }
-
     pub fn add_observation(
         &self,
         device_type: &str,

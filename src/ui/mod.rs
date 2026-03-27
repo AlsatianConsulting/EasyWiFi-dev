@@ -26,9 +26,9 @@ use gtk::prelude::*;
 use gtk::{
     Application, ApplicationWindow, Box as GtkBox, Button, CheckButton, ComboBoxText, Dialog,
     DrawingArea, Entry, EventControllerKey, Expander, FileChooserAction, FileChooserDialog,
-    GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned,
-    Popover, ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar,
-    TextView, ToggleButton, Window as GtkWindow,
+    GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned, Popover,
+    ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
+    ToggleButton, Window as GtkWindow,
 };
 use gtk4 as gtk;
 use std::cell::{Cell, RefCell};
@@ -94,7 +94,6 @@ enum PersistenceCommand {
     UpsertAccessPoint(AccessPointRecord),
     UpsertClient(ClientRecord),
     UpsertBluetoothDevice(BluetoothDeviceRecord),
-    ClearBluetoothHistory,
     AddObservation {
         device_type: String,
         device_id: String,
@@ -130,6 +129,12 @@ enum SortableTable {
     Bluetooth,
 }
 
+#[derive(Debug, Clone)]
+struct BluetoothEnumerationStatus {
+    message: String,
+    is_error: bool,
+}
+
 struct AppState {
     settings: AppSettings,
     storage: StorageEngine,
@@ -145,6 +150,7 @@ struct AppState {
     capture_sender: Sender<CaptureEvent>,
     bluetooth_runtime: Option<BluetoothRuntime>,
     bluetooth_sender: Sender<BluetoothEvent>,
+    bluetooth_enumeration_status: HashMap<String, BluetoothEnumerationStatus>,
     session_capture_path: PathBuf,
     gps_track: Vec<GeoObservation>,
     last_gps_track_point_at: Option<chrono::DateTime<Utc>>,
@@ -182,16 +188,19 @@ impl AppState {
         }
     }
 
-    fn clear_bluetooth_history(&mut self) {
-        self.bluetooth_devices.clear();
-        self.last_observation_by_device
-            .retain(|key, _| !key.starts_with("bluetooth:"));
-        self.last_storage_persist_by_device
-            .retain(|key, _| !key.starts_with("bluetooth:"));
-        self.alerted_watch_entities
-            .retain(|key| !key.starts_with("bluetooth:"));
-        self.enqueue_persistence(PersistenceCommand::ClearBluetoothHistory);
-        self.push_status("cleared bluetooth history".to_string());
+    fn set_bluetooth_enumeration_status(
+        &mut self,
+        mac: impl Into<String>,
+        message: impl Into<String>,
+        is_error: bool,
+    ) {
+        self.bluetooth_enumeration_status.insert(
+            mac.into(),
+            BluetoothEnumerationStatus {
+                message: message.into(),
+                is_error,
+            },
+        );
     }
 
     fn toggle_table_sort(&mut self, table: SortableTable, column_id: impl Into<String>) {
@@ -548,6 +557,13 @@ impl AppState {
                 }
 
                 merge_bluetooth_device(&mut self.bluetooth_devices, device.clone());
+                if let Some(status) = bluetooth_enumeration_status_from_device(&device) {
+                    self.set_bluetooth_enumeration_status(
+                        device.mac.clone(),
+                        status.message,
+                        status.is_error,
+                    );
+                }
                 if let Some(current) = self
                     .bluetooth_devices
                     .iter()
@@ -593,6 +609,20 @@ impl AppState {
                     bluetooth_list: true,
                     channel_chart: false,
                     status: watch_alert,
+                })
+            }
+            BluetoothEvent::EnumerationStatus {
+                mac,
+                message,
+                is_error,
+            } => {
+                self.set_bluetooth_enumeration_status(mac, message, is_error);
+                Ok(UiRefreshHint {
+                    ap_list: false,
+                    client_list: false,
+                    bluetooth_list: false,
+                    channel_chart: false,
+                    status: false,
                 })
             }
             BluetoothEvent::Log(text) => {
@@ -1021,9 +1051,6 @@ fn start_persistence_worker(storage: StorageEngine) -> Sender<PersistenceCommand
                 PersistenceCommand::UpsertBluetoothDevice(device) => {
                     let _ = storage.upsert_bluetooth_device(&device);
                 }
-                PersistenceCommand::ClearBluetoothHistory => {
-                    let _ = storage.clear_bluetooth_history();
-                }
                 PersistenceCommand::AddObservation {
                     device_type,
                     device_id,
@@ -1189,6 +1216,7 @@ struct UiWidgets {
     bluetooth_services_label: Label,
     bluetooth_characteristics_label: Label,
     bluetooth_descriptors_label: Label,
+    bluetooth_enumeration_status_label: Label,
     bluetooth_root: Paned,
     bluetooth_bottom: Paned,
     bluetooth_geiger_rssi: Label,
@@ -1641,6 +1669,7 @@ fn build_ui(app: &Application) -> Result<()> {
         capture_sender: capture_tx,
         bluetooth_runtime,
         bluetooth_sender: bluetooth_tx,
+        bluetooth_enumeration_status: HashMap::new(),
         session_capture_path,
         gps_track: existing_gps_track,
         last_gps_track_point_at: None,
@@ -3124,7 +3153,11 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_detail_view = state.borrow().settings.bluetooth_detail_view.clone();
     let bluetooth_enumerate_btn = Button::with_label("Connect & Enumerate");
     let bluetooth_disconnect_btn = Button::with_label("Disconnect");
-    let bluetooth_clear_history_btn = Button::with_label("Clear History");
+    let bluetooth_enumeration_status_label = Label::new(Some("Enumeration status: idle"));
+    bluetooth_enumeration_status_label.set_xalign(0.0);
+    bluetooth_enumeration_status_label.set_wrap(true);
+    bluetooth_enumeration_status_label.set_use_markup(true);
+    set_bluetooth_enumeration_status_label(&bluetooth_enumeration_status_label, None, None);
 
     let bluetooth_geiger_rssi = Label::new(Some("RSSI: -- dBm"));
     bluetooth_geiger_rssi.set_xalign(0.0);
@@ -3155,8 +3188,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_detail_actions = GtkBox::new(Orientation::Horizontal, 6);
     bluetooth_detail_actions.append(&bluetooth_enumerate_btn);
     bluetooth_detail_actions.append(&bluetooth_disconnect_btn);
-    bluetooth_detail_actions.append(&bluetooth_clear_history_btn);
     bluetooth_detail_box.append(&bluetooth_detail_actions);
+    bluetooth_detail_box.append(&bluetooth_enumeration_status_label);
     let bluetooth_identity_expander = append_detail_section(
         &bluetooth_detail_box,
         "Identity",
@@ -3579,6 +3612,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 return;
             };
 
+            let device_mac = device.mac.clone();
             let (controller, sender) = {
                 let s = state.borrow();
                 (
@@ -3586,33 +3620,55 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     s.bluetooth_sender.clone(),
                 )
             };
-            state.borrow_mut().push_status(format!(
-                "starting active bluetooth enumeration for {}",
-                device.mac
-            ));
+            {
+                let mut s = state.borrow_mut();
+                s.set_bluetooth_enumeration_status(
+                    device_mac.clone(),
+                    format!("Enumerating {}...", device_mac),
+                    false,
+                );
+                s.push_status(format!(
+                    "starting active bluetooth enumeration for {}",
+                    device_mac
+                ));
+            }
 
             thread::spawn(move || {
-                match bluetooth::connect_and_enumerate_device(controller.as_deref(), &device.mac) {
+                match bluetooth::connect_and_enumerate_device(controller.as_deref(), &device_mac) {
                     Ok(record) => {
-                        let note = record
-                            .active_enumeration
-                            .as_ref()
-                            .and_then(|active| active.last_error.clone())
-                            .map(|error| {
-                                format!(
-                                    "active bluetooth enumeration completed with warning: {error}"
-                                )
-                            })
-                            .unwrap_or_else(|| {
-                                format!("active bluetooth enumeration completed for {}", record.mac)
-                            });
+                        let status = bluetooth_enumeration_status_from_device(&record).unwrap_or(
+                            BluetoothEnumerationStatus {
+                                message: format!("Enumeration complete for {}", record.mac),
+                                is_error: false,
+                            },
+                        );
+                        let log_line = if status.is_error {
+                            format!(
+                                "active bluetooth enumeration completed with warning for {}: {}",
+                                record.mac, status.message
+                            )
+                        } else {
+                            format!("active bluetooth enumeration completed for {}", record.mac)
+                        };
+                        let mac = record.mac.clone();
                         let _ = sender.send(BluetoothEvent::DeviceSeen(record));
-                        let _ = sender.send(BluetoothEvent::Log(note));
+                        let _ = sender.send(BluetoothEvent::EnumerationStatus {
+                            mac,
+                            message: status.message,
+                            is_error: status.is_error,
+                        });
+                        let _ = sender.send(BluetoothEvent::Log(log_line));
                     }
                     Err(err) => {
+                        let message = format!("Enumeration failed for {}: {}", device_mac, err);
+                        let _ = sender.send(BluetoothEvent::EnumerationStatus {
+                            mac: device_mac.clone(),
+                            message,
+                            is_error: true,
+                        });
                         let _ = sender.send(BluetoothEvent::Log(format!(
                             "active bluetooth enumeration failed for {}: {err}",
-                            device.mac
+                            device_mac
                         )));
                     }
                 }
@@ -3662,26 +3718,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     }
                 }
             });
-        });
-    }
-
-    {
-        let state = state.clone();
-        let bluetooth_geiger_state = bluetooth_geiger_state.clone();
-        let bluetooth_geiger_rssi = bluetooth_geiger_rssi.clone();
-        let bluetooth_geiger_tone = bluetooth_geiger_tone.clone();
-        let bluetooth_geiger_progress = bluetooth_geiger_progress.clone();
-        bluetooth_clear_history_btn.connect_clicked(move |_| {
-            if let Some(stop) = bluetooth_geiger_state.borrow_mut().stop.take() {
-                stop.store(true, Ordering::Relaxed);
-            }
-            bluetooth_geiger_state.borrow_mut().receiver = None;
-            bluetooth_geiger_state.borrow_mut().target_mac = None;
-            bluetooth_geiger_rssi.set_text("RSSI: -- dBm");
-            bluetooth_geiger_tone.set_text("Tone: -- Hz");
-            bluetooth_geiger_progress.set_fraction(0.0);
-            bluetooth_geiger_progress.set_text(Some("No target"));
-            state.borrow_mut().clear_bluetooth_history();
         });
     }
 
@@ -3854,6 +3890,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             bluetooth_services_label,
             bluetooth_characteristics_label,
             bluetooth_descriptors_label,
+            bluetooth_enumeration_status_label,
             bluetooth_root,
             bluetooth_bottom,
             bluetooth_geiger_rssi,
@@ -3928,6 +3965,7 @@ fn bind_poll_loop(
         bluetooth_services_label,
         bluetooth_characteristics_label,
         bluetooth_descriptors_label,
+        bluetooth_enumeration_status_label,
         bluetooth_root: _bluetooth_root,
         bluetooth_bottom: _bluetooth_bottom,
         bluetooth_geiger_rssi,
@@ -4444,6 +4482,16 @@ fn bind_poll_loop(
                     let detail_changed = bluetooth_selection_changed
                         || last_bluetooth_detail_signature.borrow().as_deref()
                             != Some(detail_signature.as_str());
+                    let status = s
+                        .bluetooth_enumeration_status
+                        .get(&device.mac)
+                        .cloned()
+                        .or_else(|| bluetooth_enumeration_status_from_device(device));
+                    set_bluetooth_enumeration_status_label(
+                        &bluetooth_enumeration_status_label,
+                        status.as_ref(),
+                        Some(&device.mac),
+                    );
                     if detail_changed {
                         set_bluetooth_detail_sections(
                             device,
@@ -4473,6 +4521,11 @@ fn bind_poll_loop(
                         &bluetooth_characteristics_label,
                         &bluetooth_descriptors_label,
                     );
+                    set_bluetooth_enumeration_status_label(
+                        &bluetooth_enumeration_status_label,
+                        None,
+                        Some(key),
+                    );
                     set_detail_watchlist_highlight(&bluetooth_detail_box, false);
                     *last_bluetooth_detail_signature.borrow_mut() = None;
                 }
@@ -4487,6 +4540,11 @@ fn bind_poll_loop(
                     &bluetooth_services_label,
                     &bluetooth_characteristics_label,
                     &bluetooth_descriptors_label,
+                );
+                set_bluetooth_enumeration_status_label(
+                    &bluetooth_enumeration_status_label,
+                    None,
+                    None,
                 );
                 set_detail_watchlist_highlight(&bluetooth_detail_box, false);
                 *last_bluetooth_detail_signature.borrow_mut() = None;
@@ -5673,6 +5731,7 @@ fn drain_bluetooth_events_batch(
     limit: usize,
 ) -> Vec<BluetoothEvent> {
     let mut latest_devices: HashMap<String, BluetoothDeviceRecord> = HashMap::new();
+    let mut latest_enum_status: HashMap<String, (String, bool)> = HashMap::new();
     let mut logs = Vec::new();
 
     for _ in 0..limit {
@@ -5683,12 +5742,31 @@ fn drain_bluetooth_events_batch(
             BluetoothEvent::DeviceSeen(device) => {
                 latest_devices.insert(device.mac.clone(), device);
             }
+            BluetoothEvent::EnumerationStatus {
+                mac,
+                message,
+                is_error,
+            } => {
+                latest_enum_status.insert(mac, (message, is_error));
+            }
             BluetoothEvent::Log(text) => logs.push(text),
         }
     }
 
-    let mut events = Vec::with_capacity(logs.len() + latest_devices.len());
+    let mut events =
+        Vec::with_capacity(logs.len() + latest_enum_status.len() + latest_devices.len());
     events.extend(logs.into_iter().map(BluetoothEvent::Log));
+    events.extend(
+        latest_enum_status
+            .into_iter()
+            .map(
+                |(mac, (message, is_error))| BluetoothEvent::EnumerationStatus {
+                    mac,
+                    message,
+                    is_error,
+                },
+            ),
+    );
     events.extend(latest_devices.into_values().map(BluetoothEvent::DeviceSeen));
     events
 }
@@ -6453,6 +6531,55 @@ fn bluetooth_display_name(device: &BluetoothDeviceRecord) -> String {
         .clone()
         .or_else(|| device.alias.clone())
         .unwrap_or_default()
+}
+
+fn bluetooth_enumeration_status_from_device(
+    device: &BluetoothDeviceRecord,
+) -> Option<BluetoothEnumerationStatus> {
+    let active = device.active_enumeration.as_ref()?;
+    if let Some(error) = active.last_error.as_ref() {
+        return Some(BluetoothEnumerationStatus {
+            message: format!("Enumeration failed for {}: {}", device.mac, error),
+            is_error: true,
+        });
+    }
+
+    let service_count = active.services.len();
+    let characteristic_count = active.characteristics.len();
+    if service_count == 0 {
+        return Some(BluetoothEnumerationStatus {
+            message: format!("Enumeration returned no services for {}", device.mac),
+            is_error: true,
+        });
+    }
+
+    Some(BluetoothEnumerationStatus {
+        message: format!(
+            "Enumeration complete for {} (services: {}, characteristics: {})",
+            device.mac, service_count, characteristic_count
+        ),
+        is_error: false,
+    })
+}
+
+fn set_bluetooth_enumeration_status_label(
+    label: &Label,
+    status: Option<&BluetoothEnumerationStatus>,
+    selected_mac: Option<&str>,
+) {
+    let text = match (selected_mac, status) {
+        (None, _) => "<b>Enumeration status:</b> select a Bluetooth device".to_string(),
+        (Some(_), None) => "<b>Enumeration status:</b> idle".to_string(),
+        (Some(_), Some(status)) if status.is_error => format!(
+            "<span foreground='red'><b>Enumeration status:</b> {}</span>",
+            glib::markup_escape_text(&status.message)
+        ),
+        (Some(_), Some(status)) => format!(
+            "<b>Enumeration status:</b> {}",
+            glib::markup_escape_text(&status.message)
+        ),
+    };
+    label.set_markup(&text);
 }
 
 fn ap_hidden_ssid(ap: &AccessPointRecord) -> bool {
@@ -7569,9 +7696,7 @@ fn apply_watchlist_css(provider: &gtk::CssProvider, watchlists: &WatchlistSettin
             let class_name = watchlist_css_class(index);
             let color_hex = normalize_watchlist_color(&entry.color_hex);
             let background = parse_watchlist_color_rgba(&color_hex, 0.30);
-            format!(
-                ".{class_name} {{ background-color: {background}; }}"
-            )
+            format!(".{class_name} {{ background-color: {background}; }}")
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -7978,6 +8103,7 @@ fn attach_bluetooth_context_menu(
                     .push_status("no bluetooth device selected for enumeration".to_string());
                 return;
             };
+            let device_mac = device.mac.clone();
             let (controller, sender) = {
                 let s = state.borrow();
                 (
@@ -7985,32 +8111,54 @@ fn attach_bluetooth_context_menu(
                     s.bluetooth_sender.clone(),
                 )
             };
-            state.borrow_mut().push_status(format!(
-                "starting active bluetooth enumeration for {}",
-                device.mac
-            ));
+            {
+                let mut s = state.borrow_mut();
+                s.set_bluetooth_enumeration_status(
+                    device_mac.clone(),
+                    format!("Enumerating {}...", device_mac),
+                    false,
+                );
+                s.push_status(format!(
+                    "starting active bluetooth enumeration for {}",
+                    device_mac
+                ));
+            }
             thread::spawn(move || {
-                match bluetooth::connect_and_enumerate_device(controller.as_deref(), &device.mac) {
+                match bluetooth::connect_and_enumerate_device(controller.as_deref(), &device_mac) {
                     Ok(record) => {
-                        let note = record
-                            .active_enumeration
-                            .as_ref()
-                            .and_then(|active| active.last_error.clone())
-                            .map(|error| {
-                                format!(
-                                    "active bluetooth enumeration completed with warning: {error}"
-                                )
-                            })
-                            .unwrap_or_else(|| {
-                                format!("active bluetooth enumeration completed for {}", record.mac)
-                            });
+                        let status = bluetooth_enumeration_status_from_device(&record).unwrap_or(
+                            BluetoothEnumerationStatus {
+                                message: format!("Enumeration complete for {}", record.mac),
+                                is_error: false,
+                            },
+                        );
+                        let log_line = if status.is_error {
+                            format!(
+                                "active bluetooth enumeration completed with warning for {}: {}",
+                                record.mac, status.message
+                            )
+                        } else {
+                            format!("active bluetooth enumeration completed for {}", record.mac)
+                        };
+                        let mac = record.mac.clone();
                         let _ = sender.send(BluetoothEvent::DeviceSeen(record));
-                        let _ = sender.send(BluetoothEvent::Log(note));
+                        let _ = sender.send(BluetoothEvent::EnumerationStatus {
+                            mac,
+                            message: status.message,
+                            is_error: status.is_error,
+                        });
+                        let _ = sender.send(BluetoothEvent::Log(log_line));
                     }
                     Err(err) => {
+                        let message = format!("Enumeration failed for {}: {}", device_mac, err);
+                        let _ = sender.send(BluetoothEvent::EnumerationStatus {
+                            mac: device_mac.clone(),
+                            message,
+                            is_error: true,
+                        });
                         let _ = sender.send(BluetoothEvent::Log(format!(
                             "active bluetooth enumeration failed for {}: {err}",
-                            device.mac
+                            device_mac
                         )));
                     }
                 }
@@ -9514,7 +9662,9 @@ fn open_interface_settings_dialog_inner(
         }));
     }
 
-    let rebuild_channel_table = Rc::new(RefCell::new(None::<Box<dyn Fn(Vec<capture::SupportedChannel>, Vec<String>)>>));
+    let rebuild_channel_table = Rc::new(RefCell::new(
+        None::<Box<dyn Fn(Vec<capture::SupportedChannel>, Vec<String>)>>,
+    ));
     {
         const SEL_COL_USE: i32 = 8;
         const SEL_COL_CHANNEL: i32 = 12;
@@ -9528,95 +9678,100 @@ fn open_interface_settings_dialog_inner(
         let lock_channel_entry = lock_channel_entry.clone();
         let sync_channels_entry_from_checks = sync_channels_entry_from_checks.clone();
         let rebuild = rebuild_channel_table.clone();
-        *rebuild.borrow_mut() = Some(Box::new(move |channels: Vec<capture::SupportedChannel>, ht_choices: Vec<String>| {
-            while let Some(child) = channels_list.first_child() {
-                channels_list.remove(&child);
-            }
-            channel_checks.borrow_mut().clear();
+        *rebuild.borrow_mut() = Some(Box::new(
+            move |channels: Vec<capture::SupportedChannel>, ht_choices: Vec<String>| {
+                while let Some(child) = channels_list.first_child() {
+                    channels_list.remove(&child);
+                }
+                channel_checks.borrow_mut().clear();
 
-            let widths = if ht_choices.is_empty() {
-                "HT20".to_string()
-            } else {
-                ht_choices.join(" ")
-            };
-            let selected_seed = channels_entry
-                .text()
-                .split(',')
-                .filter_map(|v| v.trim().parse::<u16>().ok())
-                .collect::<HashSet<_>>();
-
-            let header = GtkBox::new(Orientation::Horizontal, 10);
-            header.append(&header_cell("Use".to_string(), SEL_COL_USE));
-            header.append(&header_cell("Channel".to_string(), SEL_COL_CHANNEL));
-            header.append(&header_cell("Freq MHz".to_string(), SEL_COL_FREQ));
-            header.append(&header_cell("Band".to_string(), SEL_COL_BAND));
-            header.append(&header_cell("Widths".to_string(), SEL_COL_WIDTHS));
-            channels_list.append(&header);
-
-            if channels.is_empty() {
-                let empty = Label::new(Some("No channel capability data available."));
-                empty.set_xalign(0.0);
-                channels_list.append(&empty);
-                return;
-            }
-
-            let mut default_lock_channel: Option<u16> = None;
-            for ch in channels {
-                let row = GtkBox::new(Orientation::Horizontal, 10);
-                let check = CheckButton::new();
-                let should_default_select = if selected_seed.is_empty() {
-                    ch.enabled
+                let widths = if ht_choices.is_empty() {
+                    "HT20".to_string()
                 } else {
-                    selected_seed.contains(&ch.channel)
+                    ht_choices.join(" ")
                 };
-                check.set_active(should_default_select);
-                check.set_sensitive(ch.enabled);
-                check.set_halign(gtk::Align::Center);
-                let check_cell = GtkBox::new(Orientation::Horizontal, 0);
-                check_cell.set_halign(gtk::Align::Center);
-                check_cell.set_size_request(SEL_COL_USE * TABLE_CHAR_WIDTH_PX, -1);
-                check_cell.append(&check);
-                row.append(&check_cell);
-                row.append(&label_cell(ch.channel.to_string(), SEL_COL_CHANNEL));
-                row.append(&label_cell(
-                    channel_frequency_mhz(&ch)
-                        .map(|f| f.to_string())
-                        .unwrap_or_else(|| "-".to_string()),
-                    SEL_COL_FREQ,
-                ));
-                row.append(&label_cell(channel_capability_band_label(&ch), SEL_COL_BAND));
-                row.append(&label_cell(
-                    if ch.enabled {
-                        widths.clone()
+                let selected_seed = channels_entry
+                    .text()
+                    .split(',')
+                    .filter_map(|v| v.trim().parse::<u16>().ok())
+                    .collect::<HashSet<_>>();
+
+                let header = GtkBox::new(Orientation::Horizontal, 10);
+                header.append(&header_cell("Use".to_string(), SEL_COL_USE));
+                header.append(&header_cell("Channel".to_string(), SEL_COL_CHANNEL));
+                header.append(&header_cell("Freq MHz".to_string(), SEL_COL_FREQ));
+                header.append(&header_cell("Band".to_string(), SEL_COL_BAND));
+                header.append(&header_cell("Widths".to_string(), SEL_COL_WIDTHS));
+                channels_list.append(&header);
+
+                if channels.is_empty() {
+                    let empty = Label::new(Some("No channel capability data available."));
+                    empty.set_xalign(0.0);
+                    channels_list.append(&empty);
+                    return;
+                }
+
+                let mut default_lock_channel: Option<u16> = None;
+                for ch in channels {
+                    let row = GtkBox::new(Orientation::Horizontal, 10);
+                    let check = CheckButton::new();
+                    let should_default_select = if selected_seed.is_empty() {
+                        ch.enabled
                     } else {
-                        format!("{widths} | disabled")
-                    },
-                    SEL_COL_WIDTHS,
-                ));
+                        selected_seed.contains(&ch.channel)
+                    };
+                    check.set_active(should_default_select);
+                    check.set_sensitive(ch.enabled);
+                    check.set_halign(gtk::Align::Center);
+                    let check_cell = GtkBox::new(Orientation::Horizontal, 0);
+                    check_cell.set_halign(gtk::Align::Center);
+                    check_cell.set_size_request(SEL_COL_USE * TABLE_CHAR_WIDTH_PX, -1);
+                    check_cell.append(&check);
+                    row.append(&check_cell);
+                    row.append(&label_cell(ch.channel.to_string(), SEL_COL_CHANNEL));
+                    row.append(&label_cell(
+                        channel_frequency_mhz(&ch)
+                            .map(|f| f.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        SEL_COL_FREQ,
+                    ));
+                    row.append(&label_cell(
+                        channel_capability_band_label(&ch),
+                        SEL_COL_BAND,
+                    ));
+                    row.append(&label_cell(
+                        if ch.enabled {
+                            widths.clone()
+                        } else {
+                            format!("{widths} | disabled")
+                        },
+                        SEL_COL_WIDTHS,
+                    ));
 
-                let sync = sync_channels_entry_from_checks.clone();
-                check.connect_toggled(move |_| {
-                    if let Some(cb) = sync.borrow().as_ref() {
-                        cb();
+                    let sync = sync_channels_entry_from_checks.clone();
+                    check.connect_toggled(move |_| {
+                        if let Some(cb) = sync.borrow().as_ref() {
+                            cb();
+                        }
+                    });
+
+                    if should_default_select && default_lock_channel.is_none() {
+                        default_lock_channel = Some(ch.channel);
                     }
-                });
-
-                if should_default_select && default_lock_channel.is_none() {
-                    default_lock_channel = Some(ch.channel);
+                    channel_checks.borrow_mut().push((ch.channel, check));
+                    channels_list.append(&row);
                 }
-                channel_checks.borrow_mut().push((ch.channel, check));
-                channels_list.append(&row);
-            }
 
-            if let Some(cb) = sync_channels_entry_from_checks.borrow().as_ref() {
-                cb();
-            }
-            if lock_channel_entry.text().trim().is_empty() {
-                if let Some(ch) = default_lock_channel {
-                    lock_channel_entry.set_text(&ch.to_string());
+                if let Some(cb) = sync_channels_entry_from_checks.borrow().as_ref() {
+                    cb();
                 }
-            }
-        }));
+                if lock_channel_entry.text().trim().is_empty() {
+                    if let Some(ch) = default_lock_channel {
+                        lock_channel_entry.set_text(&ch.to_string());
+                    }
+                }
+            },
+        ));
     }
 
     let apply_interface_capability = Rc::new(RefCell::new(None::<Box<dyn Fn()>>));
@@ -11593,7 +11748,9 @@ mod tests {
         }
 
         let columns = table_filter_columns(&layout, ap_column_label);
-        assert!(columns.iter().any(|(id, _, width)| id == "ssid" && *width == 23));
+        assert!(columns
+            .iter()
+            .any(|(id, _, width)| id == "ssid" && *width == 23));
         assert!(!columns.iter().any(|(id, _, _)| id == "bssid"));
     }
 

@@ -61,6 +61,11 @@ impl Default for BluetoothScanConfig {
 #[derive(Debug, Clone)]
 pub enum BluetoothEvent {
     DeviceSeen(BluetoothDeviceRecord),
+    EnumerationStatus {
+        mac: String,
+        message: String,
+        is_error: bool,
+    },
     Log(String),
 }
 
@@ -3234,9 +3239,6 @@ mod tests {
             "AA:BB:CC:DD:EE:FF",
             "AA:BB:CC:DD:EE:FF"
         ));
-        assert!(!is_placeholder_scan_name(
-            "AA:BB:CC:DD:EE:FF",
-            "My Tracker"
-        ));
+        assert!(!is_placeholder_scan_name("AA:BB:CC:DD:EE:FF", "My Tracker"));
     }
 }

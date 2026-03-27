@@ -404,6 +404,15 @@ fn run_bluetooth_test(options: &BluetoothTestOptions) -> Result<()> {
                     println!("[scan] {}", message);
                 }
             }
+            Ok(BluetoothEvent::EnumerationStatus {
+                mac,
+                message,
+                is_error,
+            }) => {
+                if is_error {
+                    println!("[enumeration] {}: {}", mac, message);
+                }
+            }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
