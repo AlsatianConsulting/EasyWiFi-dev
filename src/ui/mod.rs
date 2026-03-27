@@ -656,6 +656,54 @@ impl AppState {
         Ok(())
     }
 
+    fn export_session_snapshots(&mut self) {
+        let mut failures = Vec::new();
+
+        if let Err(err) = self.exporter.export_access_points_csv(&self.access_points) {
+            failures.push(format!("ap csv: {err}"));
+        }
+        if let Err(err) = self.exporter.export_clients_csv(&self.clients) {
+            failures.push(format!("client csv: {err}"));
+        }
+        if let Err(err) = self.exporter.export_location_logs_csv(
+            &self.access_points,
+            &self.clients,
+            &self.bluetooth_devices,
+        ) {
+            failures.push(format!("location csv: {err}"));
+        }
+        if let Err(err) = self.exporter.export_location_logs_kml(
+            &self.access_points,
+            &self.clients,
+            &self.bluetooth_devices,
+        ) {
+            failures.push(format!("location kml: {err}"));
+        }
+        if let Err(err) = self.exporter.export_location_logs_kmz(
+            &self.access_points,
+            &self.clients,
+            &self.bluetooth_devices,
+        ) {
+            failures.push(format!("location kmz: {err}"));
+        }
+        if let Err(err) = self.exporter.export_summary_json(
+            &self.access_points,
+            &self.clients,
+            &self.bluetooth_devices,
+        ) {
+            failures.push(format!("summary json: {err}"));
+        }
+
+        if failures.is_empty() {
+            self.push_status("session artifacts refreshed (CSV/KML/KMZ/summary)".to_string());
+        } else {
+            self.push_status(format!(
+                "session artifact refresh incomplete: {}",
+                failures.join(" | ")
+            ));
+        }
+    }
+
     fn apply_capture_event(&mut self, event: CaptureEvent) -> Result<UiRefreshHint> {
         match event {
             CaptureEvent::AccessPointSeen(mut ap) => {
@@ -4448,6 +4496,32 @@ fn bind_poll_loop(
             for line in completion.status_lines {
                 s.push_status(line);
             }
+
+            // Drain any residual events buffered between stop request and runtime shutdown
+            // so on-stop exports reflect the final observed state.
+            loop {
+                let events = drain_capture_events_batch(&receiver, MAX_CAPTURE_EVENTS_PER_TICK);
+                if events.is_empty() {
+                    break;
+                }
+                for event in events {
+                    refresh.merge(s.apply_capture_event(event).unwrap_or_default());
+                }
+            }
+            loop {
+                let events = drain_bluetooth_events_batch(
+                    &bluetooth_receiver,
+                    MAX_BLUETOOTH_EVENTS_PER_TICK,
+                );
+                if events.is_empty() {
+                    break;
+                }
+                for event in events {
+                    refresh.merge(s.apply_bluetooth_event(event).unwrap_or_default());
+                }
+            }
+
+            s.export_session_snapshots();
             if let Some(message) = restart_message {
                 s.push_status(message);
                 s.start_scanning();
