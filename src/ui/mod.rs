@@ -94,6 +94,7 @@ enum PersistenceCommand {
     UpsertAccessPoint(AccessPointRecord),
     UpsertClient(ClientRecord),
     UpsertBluetoothDevice(BluetoothDeviceRecord),
+    ClearBluetoothHistory,
     AddObservation {
         device_type: String,
         device_id: String,
@@ -179,6 +180,18 @@ impl AppState {
             let keep_from = self.status_lines.len() - 12;
             self.status_lines = self.status_lines.split_off(keep_from);
         }
+    }
+
+    fn clear_bluetooth_history(&mut self) {
+        self.bluetooth_devices.clear();
+        self.last_observation_by_device
+            .retain(|key, _| !key.starts_with("bluetooth:"));
+        self.last_storage_persist_by_device
+            .retain(|key, _| !key.starts_with("bluetooth:"));
+        self.alerted_watch_entities
+            .retain(|key| !key.starts_with("bluetooth:"));
+        self.enqueue_persistence(PersistenceCommand::ClearBluetoothHistory);
+        self.push_status("cleared bluetooth history".to_string());
     }
 
     fn toggle_table_sort(&mut self, table: SortableTable, column_id: impl Into<String>) {
@@ -1007,6 +1020,9 @@ fn start_persistence_worker(storage: StorageEngine) -> Sender<PersistenceCommand
                 }
                 PersistenceCommand::UpsertBluetoothDevice(device) => {
                     let _ = storage.upsert_bluetooth_device(&device);
+                }
+                PersistenceCommand::ClearBluetoothHistory => {
+                    let _ = storage.clear_bluetooth_history();
                 }
                 PersistenceCommand::AddObservation {
                     device_type,
@@ -3108,6 +3124,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_detail_view = state.borrow().settings.bluetooth_detail_view.clone();
     let bluetooth_enumerate_btn = Button::with_label("Connect & Enumerate");
     let bluetooth_disconnect_btn = Button::with_label("Disconnect");
+    let bluetooth_clear_history_btn = Button::with_label("Clear History");
 
     let bluetooth_geiger_rssi = Label::new(Some("RSSI: -- dBm"));
     bluetooth_geiger_rssi.set_xalign(0.0);
@@ -3138,6 +3155,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_detail_actions = GtkBox::new(Orientation::Horizontal, 6);
     bluetooth_detail_actions.append(&bluetooth_enumerate_btn);
     bluetooth_detail_actions.append(&bluetooth_disconnect_btn);
+    bluetooth_detail_actions.append(&bluetooth_clear_history_btn);
     bluetooth_detail_box.append(&bluetooth_detail_actions);
     let bluetooth_identity_expander = append_detail_section(
         &bluetooth_detail_box,
@@ -3644,6 +3662,26 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                     }
                 }
             });
+        });
+    }
+
+    {
+        let state = state.clone();
+        let bluetooth_geiger_state = bluetooth_geiger_state.clone();
+        let bluetooth_geiger_rssi = bluetooth_geiger_rssi.clone();
+        let bluetooth_geiger_tone = bluetooth_geiger_tone.clone();
+        let bluetooth_geiger_progress = bluetooth_geiger_progress.clone();
+        bluetooth_clear_history_btn.connect_clicked(move |_| {
+            if let Some(stop) = bluetooth_geiger_state.borrow_mut().stop.take() {
+                stop.store(true, Ordering::Relaxed);
+            }
+            bluetooth_geiger_state.borrow_mut().receiver = None;
+            bluetooth_geiger_state.borrow_mut().target_mac = None;
+            bluetooth_geiger_rssi.set_text("RSSI: -- dBm");
+            bluetooth_geiger_tone.set_text("Tone: -- Hz");
+            bluetooth_geiger_progress.set_fraction(0.0);
+            bluetooth_geiger_progress.set_text(Some("No target"));
+            state.borrow_mut().clear_bluetooth_history();
         });
     }
 
