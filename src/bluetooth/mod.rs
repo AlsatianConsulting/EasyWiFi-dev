@@ -1539,30 +1539,40 @@ fn resolve_adapter_path(controller: Option<&str>) -> Result<String> {
     }
 
     if let Some(controller) = controller.map(str::trim).filter(|value| !value.is_empty()) {
-        let normalized_controller = normalize_mac(controller.to_string());
-
         for path in &paths {
-            if path
-                .rsplit('/')
-                .next()
-                .map(|name| name.eq_ignore_ascii_case(controller))
-                .unwrap_or(false)
-            {
-                return Ok(path.clone());
-            }
-
-            if let Some(address) = busctl_get_string_property(path, "org.bluez.Adapter1", "Address")
+            let address = busctl_get_string_property(path, "org.bluez.Adapter1", "Address")
                 .ok()
-                .flatten()
-            {
-                if normalize_mac(address) == normalized_controller {
-                    return Ok(path.clone());
-                }
+                .flatten();
+            if controller_matches_adapter(controller, path, address.as_deref()) {
+                return Ok(path.clone());
             }
         }
     }
 
     Ok(paths[0].clone())
+}
+
+fn controller_matches_adapter(controller: &str, path: &str, address: Option<&str>) -> bool {
+    let normalized_controller = normalize_mac(controller.trim().to_string());
+    if normalized_controller.is_empty() {
+        return false;
+    }
+
+    if adapter_name_from_path(path)
+        .map(|name| name.eq_ignore_ascii_case(controller.trim()))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    address
+        .map(|value| normalize_mac(value.to_string()))
+        .map(|normalized_address| normalized_address == normalized_controller)
+        .unwrap_or(false)
+}
+
+fn adapter_name_from_path(path: &str) -> Option<&str> {
+    path.rsplit('/').next().filter(|value| !value.is_empty())
 }
 
 fn enumerate_active_details(
@@ -2938,9 +2948,9 @@ fn manifest_asset(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        appearance_name, decode_characteristic_value, decode_descriptor_value, fallback_uuid_name,
-        is_placeholder_scan_name, merge_resolution_labels, normalize_assigned_uuid,
-        parse_company_id, parse_scan_output,
+        appearance_name, controller_matches_adapter, decode_characteristic_value,
+        decode_descriptor_value, fallback_uuid_name, is_placeholder_scan_name,
+        merge_resolution_labels, normalize_assigned_uuid, parse_company_id, parse_scan_output,
         parse_sig_uuid_map_from_assigned_numbers_html, parse_tab_separated_mappings,
         parse_uuid_line, resolve_bluez_targets, resolve_ubertooth_targets,
     };
@@ -3112,6 +3122,33 @@ mod tests {
             resolve_bluez_targets(Some("AA:BB:CC:DD:EE:FF")),
             vec![Some("AA:BB:CC:DD:EE:FF".to_string())]
         );
+    }
+
+    #[test]
+    fn controller_match_accepts_hci_name() {
+        assert!(controller_matches_adapter(
+            "hci1",
+            "/org/bluez/hci1",
+            Some("00:C0:CA:B5:85:FC")
+        ));
+    }
+
+    #[test]
+    fn controller_match_accepts_mac_address_case_insensitive() {
+        assert!(controller_matches_adapter(
+            "00:c0:ca:b5:85:fc",
+            "/org/bluez/hci1",
+            Some("00:C0:CA:B5:85:FC")
+        ));
+    }
+
+    #[test]
+    fn controller_match_rejects_other_adapter() {
+        assert!(!controller_matches_adapter(
+            "00:C0:CA:B5:85:FC",
+            "/org/bluez/hci0",
+            Some("C4:75:AB:8F:28:15")
+        ));
     }
 
     #[test]
