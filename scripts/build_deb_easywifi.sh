@@ -33,7 +33,7 @@ install -m755 "target/release/easywifi-helper" "$STAGE_DIR/usr/bin/easywifi-help
 install -m644 "packaging/easywifi.desktop" "$STAGE_DIR/usr/share/applications/easywifi.desktop"
 install -m644 "README.md" "$STAGE_DIR/usr/share/doc/${PACKAGE_NAME}/README.md"
 
-for file in assets/bt_company_ids.csv assets/bt_service_uuids.csv assets/oui.csv; do
+for file in assets/bt_company_ids.csv assets/bt_service_uuids.csv assets/bt_uuid_resolver_overrides.csv assets/oui.csv; do
     if [[ -f "$file" ]]; then
         install -m644 "$file" "$STAGE_DIR/usr/share/${PACKAGE_NAME}/assets/$(basename "$file")"
     fi

@@ -166,6 +166,7 @@ impl SigResolver {
         ));
         resolver.load_company_csv(manifest_asset("bt_company_ids.csv"));
         resolver.load_uuid_csv(manifest_asset("bt_service_uuids.csv"));
+        resolver.load_uuid_csv(manifest_asset("bt_uuid_resolver_overrides.csv"));
         resolver
     }
 
@@ -197,22 +198,9 @@ impl SigResolver {
         let Ok(raw) = fs::read_to_string(path) else {
             return;
         };
-        for line in raw.lines().skip(1) {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let mut parts = line.splitn(2, ',');
-            let Some(uuid_raw) = parts.next() else {
-                continue;
-            };
-            let Some(name_raw) = parts.next() else {
-                continue;
-            };
-            let uuid = normalize_assigned_uuid(uuid_raw);
-            let name = name_raw.trim().trim_matches('"');
+        for (uuid, name) in parse_uuid_mappings_csv(&raw) {
             if !uuid.is_empty() && !name.is_empty() {
-                self.insert_uuid_name(uuid, name.to_string());
+                self.insert_uuid_name(uuid, name);
             }
         }
     }
@@ -2068,6 +2056,63 @@ fn parse_tab_separated_mappings(raw: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+fn parse_uuid_mappings_csv(raw: &str) -> Vec<(String, String)> {
+    let mut out = Vec::<(String, String)>::new();
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .comment(Some(b'#'))
+        .flexible(true)
+        .from_reader(raw.as_bytes());
+
+    for row in reader.records() {
+        let Ok(record) = row else {
+            continue;
+        };
+        if record.is_empty() {
+            continue;
+        }
+        let uuid_raw = record.get(0).map(str::trim).unwrap_or_default();
+        let uuid = normalize_assigned_uuid(uuid_raw);
+        if !normalized_assigned_uuid_like(&uuid) {
+            continue;
+        }
+
+        let col1 = record
+            .get(1)
+            .map(str::trim)
+            .unwrap_or_default()
+            .trim_matches('"');
+        let col2 = record
+            .get(2)
+            .map(str::trim)
+            .unwrap_or_default()
+            .trim_matches('"');
+        let preferred_name = if !col2.is_empty() && uuid_short_alias_like(col1) {
+            col2
+        } else {
+            col1
+        };
+        let name = collapse_whitespace(preferred_name);
+        if !name.is_empty() {
+            out.push((uuid, name));
+        }
+    }
+
+    out
+}
+
+fn uuid_short_alias_like(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let token = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    (token.len() == 4 || token.len() == 8) && token.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
 fn should_read_characteristic_value(uuid: &str) -> bool {
     matches!(
         normalize_assigned_uuid(uuid).as_str(),
@@ -2999,7 +3044,7 @@ mod tests {
         decode_descriptor_value, fallback_uuid_name, is_placeholder_scan_name,
         merge_resolution_labels, normalize_assigned_uuid, parse_company_id, parse_scan_output,
         parse_sig_uuid_map_from_assigned_numbers_html, parse_tab_separated_mappings,
-        parse_uuid_line, resolve_bluez_targets, resolve_ubertooth_targets,
+        parse_uuid_line, parse_uuid_mappings_csv, resolve_bluez_targets, resolve_ubertooth_targets,
     };
 
     #[test]
@@ -3036,6 +3081,32 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].0, "2A19");
         assert_eq!(rows[1].1, "Client Characteristic Configuration");
+    }
+
+    #[test]
+    fn parses_uuid_csv_with_short_alias_name_column_layout() {
+        let rows = parse_uuid_mappings_csv(
+            r#"UUID (128-bit canonical form),Short form (16/32-bit if applicable, else blank),Name,Type
+"0000185A-0000-1000-8000-00805F9B34FB","0x185A","Industrial Measurement Device","Service"
+"0000FCD2-0000-1000-8000-00805F9B34FB","0xFCD2","Allterco Robotics (Member Service UUID)","Member Service"
+"03B80E5A-EDE8-4B33-A751-6CE34EC4C700","","BLE-MIDI Service","Vendor Custom"
+"#,
+        );
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            rows[0],
+            (
+                "0000185a-0000-1000-8000-00805f9b34fb".to_string(),
+                "Industrial Measurement Device".to_string()
+            )
+        );
+        assert_eq!(
+            rows[2],
+            (
+                "03b80e5a-ede8-4b33-a751-6ce34ec4c700".to_string(),
+                "BLE-MIDI Service".to_string()
+            )
+        );
     }
 
     #[test]
