@@ -1538,21 +1538,28 @@ fn resolve_adapter_path(controller: Option<&str>) -> Result<String> {
         anyhow::bail!("no BlueZ adapters found");
     }
 
-    if let Some(controller) = controller {
+    if let Some(controller) = controller.map(str::trim).filter(|value| !value.is_empty()) {
+        let normalized_controller = normalize_mac(controller.to_string());
+
         for path in &paths {
-            if busctl_get_string_property(path, "org.bluez.Adapter1", "Address")
-                .ok()
-                .flatten()
-                .as_deref()
-                == Some(controller)
+            if path
+                .rsplit('/')
+                .next()
+                .map(|name| name.eq_ignore_ascii_case(controller))
+                .unwrap_or(false)
             {
                 return Ok(path.clone());
             }
+
+            if let Some(address) = busctl_get_string_property(path, "org.bluez.Adapter1", "Address")
+                .ok()
+                .flatten()
+            {
+                if normalize_mac(address) == normalized_controller {
+                    return Ok(path.clone());
+                }
+            }
         }
-        anyhow::bail!(
-            "selected bluetooth controller {} is not available",
-            controller
-        );
     }
 
     Ok(paths[0].clone())
