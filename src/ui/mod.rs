@@ -300,7 +300,91 @@ impl AppState {
             )
         };
 
-        format!("{wifi_line}\n{bluetooth_line}")
+        format!(
+            "{wifi_line}\n{}\n{bluetooth_line}\n{}",
+            self.wifi_adapter_activity_summary(),
+            self.bluetooth_adapter_activity_summary()
+        )
+    }
+
+    fn wifi_adapter_activity_summary(&self) -> String {
+        let mut ap_counts: HashMap<String, usize> = HashMap::new();
+        let mut client_counts: HashMap<String, usize> = HashMap::new();
+
+        for ap in &self.access_points {
+            let adapters = if ap.source_adapters.is_empty() {
+                vec!["unknown".to_string()]
+            } else {
+                ap.source_adapters.clone()
+            };
+            let unique = adapters.into_iter().collect::<HashSet<_>>();
+            for adapter in unique {
+                *ap_counts.entry(adapter).or_insert(0) += 1;
+            }
+        }
+
+        for client in &self.clients {
+            let adapters = if client.source_adapters.is_empty() {
+                vec!["unknown".to_string()]
+            } else {
+                client.source_adapters.clone()
+            };
+            let unique = adapters.into_iter().collect::<HashSet<_>>();
+            for adapter in unique {
+                *client_counts.entry(adapter).or_insert(0) += 1;
+            }
+        }
+
+        let mut adapters = ap_counts
+            .keys()
+            .chain(client_counts.keys())
+            .cloned()
+            .collect::<Vec<_>>();
+        adapters.sort();
+        adapters.dedup();
+        if adapters.is_empty() {
+            return "Wi-Fi adapters: no AP/client data yet".to_string();
+        }
+
+        let parts = adapters
+            .into_iter()
+            .map(|adapter| {
+                format!(
+                    "{} aps={} clients={}",
+                    adapter,
+                    ap_counts.get(&adapter).copied().unwrap_or(0),
+                    client_counts.get(&adapter).copied().unwrap_or(0)
+                )
+            })
+            .collect::<Vec<_>>();
+        format!("Wi-Fi adapters: {}", parts.join(" | "))
+    }
+
+    fn bluetooth_adapter_activity_summary(&self) -> String {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for device in &self.bluetooth_devices {
+            let adapters = if device.source_adapters.is_empty() {
+                vec!["unknown".to_string()]
+            } else {
+                device.source_adapters.clone()
+            };
+            let unique = adapters.into_iter().collect::<HashSet<_>>();
+            for adapter in unique {
+                *counts.entry(adapter).or_insert(0) += 1;
+            }
+        }
+
+        if counts.is_empty() {
+            return "Bluetooth adapters: no device data yet".to_string();
+        }
+
+        let mut adapters = counts.keys().cloned().collect::<Vec<_>>();
+        adapters.sort();
+        let parts = adapters
+            .into_iter()
+            .map(|adapter| format!("{} devices={}", adapter, counts[&adapter]))
+            .collect::<Vec<_>>();
+        format!("Bluetooth adapters: {}", parts.join(" | "))
     }
 
     fn maybe_run_scan_watchdog(&mut self) -> bool {
