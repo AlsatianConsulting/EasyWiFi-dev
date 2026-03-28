@@ -571,8 +571,29 @@ impl AppState {
         }
     }
 
+    fn status_header_line(&self) -> String {
+        if self.scan_start_in_progress {
+            "starting scans...".to_string()
+        } else if self.scan_stop_in_progress {
+            "stopping scans...".to_string()
+        } else {
+            match (
+                self.capture_runtime.is_some(),
+                self.bluetooth_runtime.is_some(),
+            ) {
+                (true, true) => "scanning active (Wi-Fi + Bluetooth)".to_string(),
+                (true, false) => "scanning active (Wi-Fi only)".to_string(),
+                (false, true) => "scanning active (Bluetooth only)".to_string(),
+                (false, false) => "scanning idle (click Start)".to_string(),
+            }
+        }
+    }
+
     fn status_text(&self) -> String {
-        self.status_lines.join("\n")
+        let mut lines = Vec::with_capacity(self.status_lines.len() + 1);
+        lines.push(self.status_header_line());
+        lines.extend(self.status_lines.iter().cloned());
+        lines.join("\n")
     }
 
     fn gps_status_text(&self) -> String {
@@ -2137,7 +2158,7 @@ fn build_ui(app: &Application) -> Result<()> {
         gps_track: existing_gps_track,
         last_gps_track_point_at: None,
         status_lines: {
-            let mut lines = vec!["scanning idle (click Start)".to_string()];
+            let mut lines = Vec::new();
             if let Some(line) = settings_status_line {
                 lines.push(line);
             }
