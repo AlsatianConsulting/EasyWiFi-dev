@@ -157,6 +157,54 @@ fn resolve_ubertooth_targets(selection: Option<&str>) -> Vec<Option<String>> {
     }
 }
 
+fn bluez_crash_blacklist_path() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|base| {
+        base.join("EasyWiFi")
+            .join("runtime")
+            .join("bluez_scan_crash_blacklist.txt")
+    })
+}
+
+fn load_bluez_scan_crash_blacklist() -> HashSet<String> {
+    let Some(path) = bluez_crash_blacklist_path() else {
+        return HashSet::new();
+    };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return HashSet::new();
+    };
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect::<HashSet<_>>()
+}
+
+fn save_bluez_scan_crash_blacklist(entries: &HashSet<String>) {
+    let Some(path) = bluez_crash_blacklist_path() else {
+        return;
+    };
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let mut sorted = entries
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    sorted.sort();
+    sorted.dedup();
+    let content = if sorted.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", sorted.join("\n"))
+    };
+    let _ = fs::write(path, content);
+}
+
 #[derive(Debug, Clone)]
 struct SigResolver {
     company_names: HashMap<u16, String>,
@@ -1028,7 +1076,11 @@ fn run_scan_loop(
     } else {
         Vec::new()
     };
-    let mut disabled_bluez_targets = HashSet::new();
+    let mut disabled_bluez_targets = if use_bluez {
+        load_bluez_scan_crash_blacklist()
+    } else {
+        HashSet::new()
+    };
     let ubertooth_targets = if use_ubertooth {
         resolve_ubertooth_targets(config.ubertooth_device.as_deref())
     } else {
@@ -1049,6 +1101,17 @@ fn run_scan_loop(
             "BlueZ scan backend active (controllers: {label}, timeout={}s, pause={}ms)",
             scan_timeout, config.pause_ms
         )));
+        for target in &bluez_targets {
+            let target_key = target
+                .as_deref()
+                .map(str::to_string)
+                .unwrap_or_else(|| "default".to_string());
+            if disabled_bluez_targets.contains(&target_key) {
+                let _ = sender.send(BluetoothEvent::Log(format!(
+                    "BlueZ controller {target_key} previously crashed during scan; skipping it and using fallback controller(s)"
+                )));
+            }
+        }
     }
     if use_ubertooth {
         let label = if ubertooth_targets.is_empty() {
@@ -1168,6 +1231,7 @@ fn run_scan_loop(
                         if controller.is_some() && err_text.to_ascii_uppercase().contains("SIGSEGV")
                         {
                             disabled_bluez_targets.insert(controller_key.clone());
+                            save_bluez_scan_crash_blacklist(&disabled_bluez_targets);
                             let _ = sender.send(BluetoothEvent::Log(format!(
                                 "BlueZ controller {} crashed during scan; disabling it and falling back to default controller",
                                 controller_key
