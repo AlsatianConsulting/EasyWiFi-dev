@@ -45,6 +45,14 @@ Multi-adapter checks include:
 
 ## Live Validation Notes (This Host)
 
+Release candidate soak (2026-03-30):
+
+1. 60-minute GUI soak completed with Wi-Fi + Bluetooth enabled.
+2. Liveness held at start, midpoint, and end with no app crash observed.
+3. Stop/export completed with session log markers `snapshot export start` and `snapshot export complete`.
+4. Export summary populated with AP/client/bluetooth records and observed flags including `HomeNetwork` and `ResMed`.
+5. Session artifact reference: `session_20260330_184007_1f0fc305-726f-4af5-83af-31174463bf80`.
+
 Wi-Fi:
 
 1. Monitor-mode path validated on `wlx1cbfcef8e928`.

@@ -92,3 +92,4 @@ See:
 
 - `docs/LIMITATIONS.md`
 - `docs/VALIDATION.md`
+- `CHANGELOG.md`
