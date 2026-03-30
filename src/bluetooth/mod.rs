@@ -205,6 +205,34 @@ fn save_bluez_scan_crash_blacklist(entries: &HashSet<String>) {
     let _ = fs::write(path, content);
 }
 
+const BLUEZ_FAILURE_CIRCUIT_THRESHOLD: u32 = 3;
+const BLUEZ_FAILURE_BACKOFF_BASE_SECS: u64 = 10;
+const BLUEZ_FAILURE_BACKOFF_MAX_SECS: u64 = 180;
+
+fn bluez_error_looks_like_process_crash(err_text: &str) -> bool {
+    let upper = err_text.to_ascii_uppercase();
+    upper.contains("SIGSEGV")
+        || upper.contains("CORE DUMPED")
+        || upper.contains("FREE(): INVALID POINTER")
+        || upper.contains("DOUBLE FREE")
+        || upper.contains("SIGABRT")
+        || upper.contains("MALLOC")
+}
+
+fn bluez_failure_backoff_duration(consecutive_failures: u32) -> Duration {
+    if consecutive_failures <= BLUEZ_FAILURE_CIRCUIT_THRESHOLD {
+        return Duration::from_secs(BLUEZ_FAILURE_BACKOFF_BASE_SECS);
+    }
+    let steps = consecutive_failures
+        .saturating_sub(BLUEZ_FAILURE_CIRCUIT_THRESHOLD)
+        .min(6);
+    let multiplier = 1u64 << steps;
+    let secs = BLUEZ_FAILURE_BACKOFF_BASE_SECS
+        .saturating_mul(multiplier)
+        .min(BLUEZ_FAILURE_BACKOFF_MAX_SECS);
+    Duration::from_secs(secs)
+}
+
 #[derive(Debug, Clone)]
 struct SigResolver {
     company_names: HashMap<u16, String>,
@@ -1081,6 +1109,8 @@ fn run_scan_loop(
     } else {
         HashSet::new()
     };
+    let mut bluez_consecutive_failures: HashMap<String, u32> = HashMap::new();
+    let mut bluez_backoff_until: HashMap<String, Instant> = HashMap::new();
     let ubertooth_targets = if use_ubertooth {
         resolve_ubertooth_targets(config.ubertooth_device.as_deref())
     } else {
@@ -1212,29 +1242,53 @@ fn run_scan_loop(
                 if disabled_bluez_targets.contains(&controller_key) {
                     continue;
                 }
+                if let Some(block_until) = bluez_backoff_until.get(&controller_key).copied() {
+                    if Instant::now() < block_until {
+                        continue;
+                    }
+                    bluez_backoff_until.remove(&controller_key);
+                }
                 match run_scan_once_interruptible(
                     scan_timeout,
                     controller.as_deref(),
                     Some(&stop_flag),
                 ) {
-                    Ok(hits) => process_hits(
-                        hits,
-                        false,
-                        &bluetooth_source_label("bluez", controller.as_deref()),
-                        controller.as_deref(),
-                    ),
+                    Ok(hits) => {
+                        bluez_consecutive_failures.remove(&controller_key);
+                        bluez_backoff_until.remove(&controller_key);
+                        process_hits(
+                            hits,
+                            false,
+                            &bluetooth_source_label("bluez", controller.as_deref()),
+                            controller.as_deref(),
+                        )
+                    }
                     Err(err) => {
                         if stop_flag.load(Ordering::Relaxed) {
                             break;
                         }
                         let err_text = err.to_string();
-                        if controller.is_some() && err_text.to_ascii_uppercase().contains("SIGSEGV")
-                        {
+                        if controller.is_some() && bluez_error_looks_like_process_crash(&err_text) {
                             disabled_bluez_targets.insert(controller_key.clone());
                             save_bluez_scan_crash_blacklist(&disabled_bluez_targets);
                             let _ = sender.send(BluetoothEvent::Log(format!(
                                 "BlueZ controller {} crashed during scan; disabling it and falling back to default controller",
                                 controller_key
+                            )));
+                        }
+                        let failures = bluez_consecutive_failures
+                            .entry(controller_key.clone())
+                            .and_modify(|count| *count = count.saturating_add(1))
+                            .or_insert(1);
+                        if *failures >= BLUEZ_FAILURE_CIRCUIT_THRESHOLD {
+                            let backoff = bluez_failure_backoff_duration(*failures);
+                            bluez_backoff_until
+                                .insert(controller_key.clone(), Instant::now() + backoff);
+                            let _ = sender.send(BluetoothEvent::Log(format!(
+                                "BlueZ controller {} hit {} consecutive scan failures; pausing scans on this controller for {}s",
+                                controller_key,
+                                *failures,
+                                backoff.as_secs()
                             )));
                         }
                         let _ = sender.send(BluetoothEvent::Log(format!(
@@ -3304,9 +3358,10 @@ fn manifest_asset(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        appearance_name, controller_matches_adapter, decode_characteristic_value,
-        decode_descriptor_value, fallback_uuid_name, is_placeholder_scan_name,
-        merge_resolution_labels, normalize_assigned_uuid, parse_company_id, parse_scan_output,
+        appearance_name, bluez_error_looks_like_process_crash, bluez_failure_backoff_duration,
+        controller_matches_adapter, decode_characteristic_value, decode_descriptor_value,
+        fallback_uuid_name, is_placeholder_scan_name, merge_resolution_labels,
+        normalize_assigned_uuid, parse_company_id, parse_scan_output,
         parse_sig_uuid_map_from_assigned_numbers_html, parse_tab_separated_mappings,
         parse_uuid_line, parse_uuid_mappings_csv, resolve_bluez_targets, resolve_ubertooth_targets,
     };
@@ -3570,5 +3625,26 @@ mod tests {
             "AA:BB:CC:DD:EE:FF"
         ));
         assert!(!is_placeholder_scan_name("AA:BB:CC:DD:EE:FF", "My Tracker"));
+    }
+
+    #[test]
+    fn bluez_crash_detector_matches_common_crash_strings() {
+        assert!(bluez_error_looks_like_process_crash(
+            "bluetoothctl scan on exited with status signal: 11 (SIGSEGV) (core dumped)"
+        ));
+        assert!(bluez_error_looks_like_process_crash(
+            "free(): invalid pointer"
+        ));
+        assert!(!bluez_error_looks_like_process_crash(
+            "No default controller available"
+        ));
+    }
+
+    #[test]
+    fn bluez_failure_backoff_grows_and_caps() {
+        assert_eq!(bluez_failure_backoff_duration(3).as_secs(), 10);
+        assert_eq!(bluez_failure_backoff_duration(4).as_secs(), 20);
+        assert_eq!(bluez_failure_backoff_duration(5).as_secs(), 40);
+        assert_eq!(bluez_failure_backoff_duration(10).as_secs(), 180);
     }
 }
