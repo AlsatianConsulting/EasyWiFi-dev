@@ -84,6 +84,8 @@ const DEFAULT_TABLE_PAGE_SIZE: usize = 50;
 const TABLE_PAGE_SIZE_OPTIONS: &[usize] = &[25, 50, 100, 200];
 const DEFAULT_WINDOW_WIDTH: i32 = 1500;
 const DEFAULT_WINDOW_HEIGHT: i32 = 950;
+const MIN_WINDOW_WIDTH: i32 = 1200;
+const MIN_WINDOW_HEIGHT: i32 = 760;
 const DEFAULT_CONTENT_PANE_POSITION: i32 = 760;
 const DEFAULT_AP_ROOT_POSITION: i32 = 330;
 const DEFAULT_AP_SUMMARY_ROW_POSITION: i32 = 760;
@@ -1997,6 +1999,7 @@ fn build_ui(app: &Application) -> Result<()> {
         .default_width(DEFAULT_WINDOW_WIDTH)
         .default_height(DEFAULT_WINDOW_HEIGHT)
         .build();
+    window.set_size_request(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
     let output_dir = {
         let fallback = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         fallback.join("output")
@@ -2285,7 +2288,16 @@ fn build_ui(app: &Application) -> Result<()> {
         window.add_controller(key_controller);
     }
 
-    window.set_child(Some(&root));
+    let root_scrolled = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .min_content_width(MIN_WINDOW_WIDTH)
+        .min_content_height(MIN_WINDOW_HEIGHT)
+        .child(&root)
+        .build();
+    window.set_child(Some(&root_scrolled));
     apply_view_visibility(
         &state.borrow().settings,
         &content_paned,
