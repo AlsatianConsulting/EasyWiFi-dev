@@ -10192,13 +10192,6 @@ fn open_interface_settings_dialog_inner(
     ht_row.append(&ht_label);
     ht_row.append(&lock_ht_button_box);
 
-    let hop_ht_row = GtkBox::new(Orientation::Horizontal, 8);
-    let hop_ht_label = Label::new(Some("Hop Bandwidth"));
-    hop_ht_label.set_xalign(0.0);
-    hop_ht_label.set_width_chars(18);
-    hop_ht_row.append(&hop_ht_label);
-    hop_ht_row.append(&hop_ht_button_box);
-
     let wifi_row = GtkBox::new(Orientation::Horizontal, 8);
     let wifi_label = Label::new(Some("Wi-Fi"));
     wifi_label.set_xalign(0.0);
@@ -10250,7 +10243,6 @@ fn open_interface_settings_dialog_inner(
     root.append(&band_row);
     root.append(&lock_row);
     root.append(&ht_row);
-    root.append(&hop_ht_row);
     root.append(&wifi_row);
     root.append(&bluetooth_row);
     root.append(&bluetooth_controller_row);
@@ -10706,7 +10698,6 @@ fn open_interface_settings_dialog_inner(
         let band_row = band_row.clone();
         let lock_row = lock_row.clone();
         let ht_row = ht_row.clone();
-        let hop_ht_row = hop_ht_row.clone();
         let wifi_scan_check = wifi_scan_check.clone();
         let update_mode = update_mode_visibility.clone();
         *update_mode.borrow_mut() = Some(Box::new(move || {
@@ -10718,7 +10709,6 @@ fn open_interface_settings_dialog_inner(
                 band_row.set_visible(false);
                 lock_row.set_visible(false);
                 ht_row.set_visible(false);
-                hop_ht_row.set_visible(false);
                 return;
             }
             let mode = mode_combo
@@ -10732,7 +10722,6 @@ fn open_interface_settings_dialog_inner(
                     band_row.set_visible(true);
                     lock_row.set_visible(false);
                     ht_row.set_visible(false);
-                    hop_ht_row.set_visible(false);
                 }
                 "locked" => {
                     channels_table_row.set_visible(false);
@@ -10740,7 +10729,6 @@ fn open_interface_settings_dialog_inner(
                     band_row.set_visible(false);
                     lock_row.set_visible(true);
                     ht_row.set_visible(true);
-                    hop_ht_row.set_visible(false);
                 }
                 _ => {
                     channels_table_row.set_visible(true);
@@ -10748,7 +10736,6 @@ fn open_interface_settings_dialog_inner(
                     band_row.set_visible(false);
                     lock_row.set_visible(false);
                     ht_row.set_visible(false);
-                    hop_ht_row.set_visible(true);
                 }
             }
         }));
