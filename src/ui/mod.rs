@@ -2009,10 +2009,6 @@ fn build_ui(app: &Application) -> Result<()> {
         .default_height(DEFAULT_WINDOW_HEIGHT)
         .build();
     window.set_size_request(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
-    if is_small_display() {
-        window.set_default_size(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
-        window.set_resizable(false);
-    }
     let output_dir = {
         let fallback = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         fallback.join("output")
@@ -2329,6 +2325,8 @@ fn build_ui(app: &Application) -> Result<()> {
         if s.settings.window_fullscreen {
             window.fullscreen();
         } else if s.settings.window_maximized {
+            window.maximize();
+        } else if is_small_display() {
             window.maximize();
         }
     }
