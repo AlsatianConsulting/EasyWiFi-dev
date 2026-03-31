@@ -3345,8 +3345,16 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_header_holder = GtkBox::new(Orientation::Vertical, 0);
     ap_header_holder.append(&ap_table_header(&ap_layout, &ap_sort, state.clone()));
     ap_header_holder.append(&ap_pagination.filter_bar);
+    let ap_header_scrolled = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(false)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .child(&ap_header_holder)
+        .build();
+    ap_header_scrolled.set_hadjustment(Some(&ap_scrolled.hadjustment()));
     let ap_top = GtkBox::new(Orientation::Vertical, 4);
-    ap_top.append(&ap_header_holder);
+    ap_top.append(&ap_header_scrolled);
     ap_top.append(&ap_scrolled);
     ap_top.append(&ap_pagination_row);
 
