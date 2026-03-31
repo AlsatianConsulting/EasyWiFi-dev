@@ -2255,7 +2255,6 @@ fn build_ui(app: &Application) -> Result<()> {
     notebook.set_vexpand(true);
     let content_paned = Paned::new(Orientation::Vertical);
     content_paned.set_wide_handle(true);
-    content_paned.set_size_request(1400, -1);
     content_paned.set_position(DEFAULT_CONTENT_PANE_POSITION);
     content_paned.set_resize_start_child(true);
     content_paned.set_resize_end_child(true);
@@ -2285,7 +2284,7 @@ fn build_ui(app: &Application) -> Result<()> {
     let content_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&content_paned)
         .build();
@@ -3291,14 +3290,12 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     };
 
     let ap_list = ListBox::new();
-    ap_list.set_size_request(1400, -1);
     ap_list.set_selection_mode(gtk::SelectionMode::Single);
     attach_listbox_click_selection(&ap_list);
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
-        .min_content_width(1200)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&ap_list)
         .build();
     let (ap_pagination_row, ap_pagination) = build_table_pagination_controls(
@@ -3341,8 +3338,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_detail_scroll = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
-        .min_content_width(1200)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .min_content_height(250)
         .child(&ap_detail_label)
         .build();
@@ -3397,13 +3393,11 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         state.clone(),
     ));
     let ap_assoc_list = ListBox::new();
-    ap_assoc_list.set_size_request(1400, -1);
     attach_listbox_click_selection(&ap_assoc_list);
     let ap_assoc_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
-        .min_content_width(1200)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&ap_assoc_list)
         .build();
     let (ap_assoc_pagination_row, ap_assoc_pagination) = build_table_pagination_controls(
@@ -3439,7 +3433,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     notebook.append_page(&ap_root, Some(&Label::new(Some("Access Points"))));
 
     let client_list = ListBox::new();
-    client_list.set_size_request(1400, -1);
     client_list.set_selection_mode(gtk::SelectionMode::Single);
     attach_listbox_click_selection(&client_list);
     let client_selection_suppressed = Rc::new(RefCell::new(false));
@@ -3447,8 +3440,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
-        .min_content_width(1200)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&client_list)
         .build();
     let (client_pagination_row, client_pagination) = build_table_pagination_controls(
@@ -3488,8 +3480,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_detail_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
-        .min_content_width(1200)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .min_content_height(260)
         .child(&client_detail_box)
         .build();
@@ -3677,7 +3668,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_geiger_state = Rc::new(RefCell::new(BluetoothGeigerUiState::default()));
 
     let bluetooth_list = ListBox::new();
-    bluetooth_list.set_size_request(1400, -1);
     bluetooth_list.set_selection_mode(gtk::SelectionMode::Single);
     attach_listbox_click_selection(&bluetooth_list);
     let bluetooth_selection_suppressed = Rc::new(RefCell::new(false));
@@ -3691,8 +3681,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
-        .min_content_width(1200)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&bluetooth_list)
         .build();
     let (bluetooth_pagination_row, bluetooth_pagination) = build_table_pagination_controls(
@@ -3797,8 +3786,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_detail_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
-        .min_content_width(1200)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .min_content_height(220)
         .child(&bluetooth_detail_box)
         .build();
@@ -3957,6 +3945,20 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             *ap_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
         });
     }
+    {
+        let window = window.clone();
+        let state = state.clone();
+        ap_list.connect_row_activated(move |_, row| {
+            let key = row.widget_name().to_string();
+            let ap = {
+                let s = state.borrow();
+                s.access_points.iter().find(|entry| entry.bssid == key).cloned()
+            };
+            if let Some(ap) = ap {
+                open_ap_details_dialog(&window, &ap);
+            }
+        });
+    }
 
     {
         let state = state.clone();
@@ -3996,6 +3998,40 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 return;
             }
             *client_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
+        });
+    }
+    {
+        let window = window.clone();
+        let state = state.clone();
+        client_list.connect_row_activated(move |_, row| {
+            let key = row.widget_name().to_string();
+            let (client, aps) = {
+                let s = state.borrow();
+                (
+                    s.clients.iter().find(|entry| entry.mac == key).cloned(),
+                    s.access_points.clone(),
+                )
+            };
+            if let Some(client) = client {
+                open_client_details_dialog(&window, &client, &aps);
+            }
+        });
+    }
+    {
+        let window = window.clone();
+        let state = state.clone();
+        ap_assoc_list.connect_row_activated(move |_, row| {
+            let key = row.widget_name().to_string();
+            let (client, aps) = {
+                let s = state.borrow();
+                (
+                    s.clients.iter().find(|entry| entry.mac == key).cloned(),
+                    s.access_points.clone(),
+                )
+            };
+            if let Some(client) = client {
+                open_client_details_dialog(&window, &client, &aps);
+            }
         });
     }
 
@@ -4135,6 +4171,23 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
                 return;
             }
             *bluetooth_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
+        });
+    }
+    {
+        let window = window.clone();
+        let state = state.clone();
+        bluetooth_list.connect_row_activated(move |_, row| {
+            let key = row.widget_name().to_string();
+            let device = {
+                let s = state.borrow();
+                s.bluetooth_devices
+                    .iter()
+                    .find(|entry| entry.mac == key)
+                    .cloned()
+            };
+            if let Some(device) = device {
+                open_bluetooth_details_dialog(&window, &device);
+            }
         });
     }
 
@@ -4306,6 +4359,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         wifi_geiger_state.clone(),
     );
     attach_bluetooth_context_menu(
+        window,
         &bluetooth_list,
         state.clone(),
         bluetooth_geiger_state.clone(),
@@ -6466,6 +6520,7 @@ fn refresh_assoc_client_list(
         paged_indices(total_items, pagination.current_page.get(), page_size);
     for client in filtered.iter().skip(start).take(end.saturating_sub(start)) {
         let row = ListBoxRow::new();
+        row.set_widget_name(&client.mac);
         attach_row_click_selection(&row, list, None);
         set_row_alert_classes(&row, None, &no_watchlist_classes, false);
         let line = GtkBox::new(Orientation::Horizontal, 14);
@@ -8759,6 +8814,7 @@ fn attach_client_context_menu(
 }
 
 fn attach_bluetooth_context_menu(
+    window: &ApplicationWindow,
     bluetooth_list: &ListBox,
     state: Rc<RefCell<AppState>>,
     bluetooth_geiger_state: Rc<RefCell<BluetoothGeigerUiState>>,
@@ -8766,13 +8822,26 @@ fn attach_bluetooth_context_menu(
     let popover = Popover::new();
     popover.set_parent(bluetooth_list);
     let box_ = GtkBox::new(Orientation::Vertical, 4);
+    let view_btn = Button::with_label("View Details");
     let locate_btn = Button::with_label("Locate Device");
     let enumerate_btn = Button::with_label("Connect & Enumerate");
     let disconnect_btn = Button::with_label("Disconnect");
+    box_.append(&view_btn);
     box_.append(&locate_btn);
     box_.append(&enumerate_btn);
     box_.append(&disconnect_btn);
     popover.set_child(Some(&box_));
+
+    {
+        let window = window.clone();
+        let state = state.clone();
+        let bluetooth_list = bluetooth_list.clone();
+        view_btn.connect_clicked(move |_| {
+            if let Some(device) = selected_bluetooth(&state, &bluetooth_list) {
+                open_bluetooth_details_dialog(&window, &device);
+            }
+        });
+    }
 
     {
         let state = state.clone();
@@ -9179,6 +9248,44 @@ fn open_client_details_dialog(
     label.set_wrap(true);
     label.set_selectable(true);
     area.append(&label);
+    dialog.connect_response(|d, _| d.close());
+    dialog.present();
+}
+
+fn open_bluetooth_details_dialog(window: &ApplicationWindow, device: &BluetoothDeviceRecord) {
+    let dialog = Dialog::builder()
+        .transient_for(window)
+        .modal(true)
+        .title("Bluetooth Details")
+        .default_width(760)
+        .default_height(560)
+        .build();
+
+    dialog.add_button("Close", ResponseType::Close);
+    let area = dialog.content_area();
+    let detail_text = format!(
+        "Identity\n{}\n\nPassive Broadcast Data\n{}\n\nActive Enumeration Summary\n{}\n\nReadable Attributes\n{}\n\nServices\n{}\n\nCharacteristics\n{}\n\nDescriptors\n{}",
+        format_bluetooth_identity_section(device),
+        format_bluetooth_passive_section(device),
+        format_bluetooth_active_summary(device),
+        format_bluetooth_readable_attributes(device),
+        format_bluetooth_services(device),
+        format_bluetooth_characteristics(device),
+        format_bluetooth_descriptors(device)
+    );
+    let label = Label::new(Some(&detail_text));
+    label.set_xalign(0.0);
+    label.set_yalign(0.0);
+    label.set_wrap(true);
+    label.set_selectable(true);
+    let scroll = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .child(&label)
+        .build();
+    area.append(&scroll);
     dialog.connect_response(|d, _| d.close());
     dialog.present();
 }
