@@ -3291,6 +3291,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     };
 
     let ap_list = ListBox::new();
+    ap_list.set_size_request(1400, -1);
     ap_list.set_selection_mode(gtk::SelectionMode::Single);
     attach_listbox_click_selection(&ap_list);
     let ap_scrolled = ScrolledWindow::builder()
@@ -3396,6 +3397,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         state.clone(),
     ));
     let ap_assoc_list = ListBox::new();
+    ap_assoc_list.set_size_request(1400, -1);
     attach_listbox_click_selection(&ap_assoc_list);
     let ap_assoc_scrolled = ScrolledWindow::builder()
         .vexpand(true)
@@ -3437,6 +3439,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     notebook.append_page(&ap_root, Some(&Label::new(Some("Access Points"))));
 
     let client_list = ListBox::new();
+    client_list.set_size_request(1400, -1);
     client_list.set_selection_mode(gtk::SelectionMode::Single);
     attach_listbox_click_selection(&client_list);
     let client_selection_suppressed = Rc::new(RefCell::new(false));
@@ -3674,6 +3677,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_geiger_state = Rc::new(RefCell::new(BluetoothGeigerUiState::default()));
 
     let bluetooth_list = ListBox::new();
+    bluetooth_list.set_size_request(1400, -1);
     bluetooth_list.set_selection_mode(gtk::SelectionMode::Single);
     attach_listbox_click_selection(&bluetooth_list);
     let bluetooth_selection_suppressed = Rc::new(RefCell::new(false));
