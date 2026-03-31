@@ -3295,7 +3295,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&ap_list)
         .build();
     let (ap_pagination_row, ap_pagination) = build_table_pagination_controls(
@@ -3338,7 +3338,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_detail_scroll = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Always)
         .min_content_height(250)
         .child(&ap_detail_label)
         .build();
@@ -3397,7 +3397,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_assoc_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&ap_assoc_list)
         .build();
     let (ap_assoc_pagination_row, ap_assoc_pagination) = build_table_pagination_controls(
@@ -3440,7 +3440,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&client_list)
         .build();
     let (client_pagination_row, client_pagination) = build_table_pagination_controls(
@@ -3480,7 +3480,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_detail_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Always)
         .min_content_height(260)
         .child(&client_detail_box)
         .build();
@@ -3544,6 +3544,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
 
     let ap_detail_notebook = Notebook::new();
+    ap_detail_notebook.set_scrollable(true);
     ap_detail_notebook.append_page(&ap_detail_box, Some(&Label::new(Some("Details"))));
     ap_detail_notebook.append_page(
         &ap_geiger_scrolled,
@@ -3647,6 +3648,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
 
     let client_detail_notebook = Notebook::new();
+    client_detail_notebook.set_scrollable(true);
     client_detail_notebook.append_page(&client_detail_scrolled, Some(&Label::new(Some("Details"))));
     client_detail_notebook.append_page(
         &client_geiger_scrolled,
@@ -3681,7 +3683,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&bluetooth_list)
         .build();
     let (bluetooth_pagination_row, bluetooth_pagination) = build_table_pagination_controls(
@@ -3786,7 +3788,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_detail_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Always)
         .min_content_height(220)
         .child(&bluetooth_detail_box)
         .build();
@@ -3938,9 +3940,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     {
         let ap_selection_suppressed = ap_selection_suppressed.clone();
         let ap_selected_key = ap_selected_key.clone();
+        let ap_detail_notebook = ap_detail_notebook.clone();
         ap_list.connect_row_selected(move |_, row| {
             if *ap_selection_suppressed.borrow() {
                 return;
+            }
+            if row.is_some() {
+                ap_detail_notebook.set_current_page(Some(0));
             }
             *ap_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
         });
@@ -3993,9 +3999,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     {
         let client_selection_suppressed = client_selection_suppressed.clone();
         let client_selected_key = client_selected_key.clone();
+        let client_detail_notebook = client_detail_notebook.clone();
         client_list.connect_row_selected(move |_, row| {
             if *client_selection_suppressed.borrow() {
                 return;
+            }
+            if row.is_some() {
+                client_detail_notebook.set_current_page(Some(0));
             }
             *client_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
         });
