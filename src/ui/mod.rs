@@ -1653,6 +1653,7 @@ struct UiWidgets {
     ap_detail_notebook: Notebook,
     ap_assoc_box: GtkBox,
     ap_header_holder: GtkBox,
+    ap_list_canvas: GtkBox,
     ap_list: ListBox,
     ap_pagination: TablePaginationUi,
     ap_selection_suppressed: Rc<RefCell<bool>>,
@@ -3336,11 +3337,15 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_list.set_selection_mode(gtk::SelectionMode::Single);
     ap_list.set_activate_on_single_click(false);
     attach_listbox_click_selection(&ap_list);
+    let ap_list_canvas = GtkBox::new(Orientation::Horizontal, 0);
+    ap_list_canvas.set_hexpand(false);
+    ap_list_canvas.set_halign(gtk::Align::Start);
+    ap_list_canvas.append(&ap_list);
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Always)
-        .child(&ap_list)
+        .child(&ap_list_canvas)
         .build();
     let (ap_pagination_row, ap_pagination) = build_table_pagination_controls(
         default_rows_per_page,
@@ -4553,6 +4558,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_detail_notebook,
             ap_assoc_box,
             ap_header_holder,
+            ap_list_canvas,
             ap_list,
             ap_pagination,
             ap_selection_suppressed,
@@ -4630,6 +4636,7 @@ fn bind_poll_loop(
         ap_detail_notebook: _ap_detail_notebook,
         ap_assoc_box: _ap_assoc_box,
         ap_header_holder,
+        ap_list_canvas,
         ap_list,
         ap_pagination,
         ap_selection_suppressed,
@@ -4970,6 +4977,7 @@ fn bind_poll_loop(
             let s = state.borrow();
             let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout);
             ap_list.set_size_request(ap_row_width_px, -1);
+            ap_list_canvas.set_size_request(ap_row_width_px, -1);
             ap_header_holder.set_size_request(ap_row_width_px, -1);
             ap_header_holder.set_halign(gtk::Align::Start);
             ap_list.set_halign(gtk::Align::Start);
