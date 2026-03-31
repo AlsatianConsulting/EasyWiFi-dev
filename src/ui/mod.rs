@@ -1658,6 +1658,7 @@ struct UiWidgets {
     ap_selection_suppressed: Rc<RefCell<bool>>,
     ap_selected_key: Rc<RefCell<Option<String>>>,
     ap_detail_label: Label,
+    ap_detail_scroll: ScrolledWindow,
     ap_notes_view: TextView,
     ap_assoc_header_holder: GtkBox,
     ap_assoc_list: ListBox,
@@ -3436,7 +3437,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_assoc_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
+        .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&ap_assoc_list)
         .build();
     let (ap_assoc_pagination_row, ap_assoc_pagination) = build_table_pagination_controls(
@@ -3449,6 +3450,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_assoc_box.append(&ap_assoc_header_holder);
     ap_assoc_box.append(&ap_assoc_scrolled);
     ap_assoc_box.append(&ap_assoc_pagination_row);
+    let ap_assoc_outer_scrolled = ScrolledWindow::builder()
+        .vexpand(true)
+        .hexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::Always)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .child(&ap_assoc_box)
+        .build();
 
     let ap_bottom = Paned::new(Orientation::Horizontal);
     ap_bottom.set_wide_handle(true);
@@ -3457,7 +3465,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_bottom.set_resize_end_child(false);
     ap_bottom.set_shrink_start_child(true);
     ap_bottom.set_shrink_end_child(true);
-    ap_bottom.set_end_child(Some(&ap_assoc_box));
+    ap_bottom.set_end_child(Some(&ap_assoc_outer_scrolled));
 
     let ap_root = Paned::new(Orientation::Vertical);
     ap_root.set_wide_handle(true);
@@ -4534,6 +4542,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_selection_suppressed,
             ap_selected_key,
             ap_detail_label,
+            ap_detail_scroll,
             ap_notes_view,
             ap_assoc_header_holder,
             ap_assoc_list,
@@ -4610,6 +4619,7 @@ fn bind_poll_loop(
         ap_selection_suppressed,
         ap_selected_key,
         ap_detail_label,
+        ap_detail_scroll,
         ap_notes_view,
         ap_assoc_header_holder,
         ap_assoc_list,
@@ -5026,6 +5036,10 @@ fn bind_poll_loop(
                     }
                     if detail_changed {
                         ap_detail_label.set_text(&format_ap_detail_text(ap));
+                        let ap_detail_hadj = ap_detail_scroll.hadjustment();
+                        if ap_detail_hadj.value() != 0.0 {
+                            ap_detail_hadj.set_value(0.0);
+                        }
                         set_detail_watchlist_highlight(
                             &ap_detail_label,
                             ap_watchlist_match(ap, &s.settings.watchlists).is_some(),
@@ -5078,6 +5092,10 @@ fn bind_poll_loop(
                     }
                 } else if ap_selection_changed || last_ap_detail_signature.borrow().is_some() {
                     ap_detail_label.set_text("");
+                    let ap_detail_hadj = ap_detail_scroll.hadjustment();
+                    if ap_detail_hadj.value() != 0.0 {
+                        ap_detail_hadj.set_value(0.0);
+                    }
                     set_detail_watchlist_highlight(&ap_detail_label, false);
                     ap_notes_view.buffer().set_text("");
                     *ap_selected_packet_mix.borrow_mut() = PacketTypeBreakdown::default();
@@ -5089,6 +5107,10 @@ fn bind_poll_loop(
                 }
             } else if ap_selection_changed || last_ap_detail_signature.borrow().is_some() {
                 ap_detail_label.set_text("");
+                let ap_detail_hadj = ap_detail_scroll.hadjustment();
+                if ap_detail_hadj.value() != 0.0 {
+                    ap_detail_hadj.set_value(0.0);
+                }
                 set_detail_watchlist_highlight(&ap_detail_label, false);
                 ap_notes_view.buffer().set_text("");
                 *ap_selected_packet_mix.borrow_mut() = PacketTypeBreakdown::default();
