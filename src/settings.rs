@@ -67,6 +67,10 @@ pub fn default_show_ap_inline_channel_usage() -> bool {
     false
 }
 
+pub fn default_dark_mode() -> bool {
+    false
+}
+
 pub fn default_default_rows_per_page() -> usize {
     200
 }
@@ -881,6 +885,8 @@ pub struct AppSettings {
     pub show_column_filters: bool,
     #[serde(default = "default_show_ap_inline_channel_usage")]
     pub show_ap_inline_channel_usage: bool,
+    #[serde(default = "default_dark_mode")]
+    pub dark_mode: bool,
     #[serde(default = "default_default_rows_per_page")]
     pub default_rows_per_page: usize,
     #[serde(default = "default_oui_source_path")]
@@ -953,6 +959,7 @@ impl Default for AppSettings {
             show_device_pane: default_show_device_pane(),
             show_column_filters: default_show_column_filters(),
             show_ap_inline_channel_usage: default_show_ap_inline_channel_usage(),
+            dark_mode: default_dark_mode(),
             default_rows_per_page: default_default_rows_per_page(),
             oui_source_path: default_oui_source_path(),
             wifi_packet_header_mode: default_wifi_packet_header_mode(),
@@ -1054,6 +1061,7 @@ mod tests {
         settings.show_status_bar = true;
         settings.show_column_filters = false;
         settings.show_ap_inline_channel_usage = true;
+        settings.dark_mode = true;
         settings.default_rows_per_page = 100;
         settings.bluetooth_enabled = false;
         settings.enable_wifi_frame_parsing = true;
@@ -1066,6 +1074,7 @@ mod tests {
         assert!(loaded.show_status_bar);
         assert!(!loaded.show_column_filters);
         assert!(loaded.show_ap_inline_channel_usage);
+        assert!(loaded.dark_mode);
         assert_eq!(loaded.default_rows_per_page, 100);
         assert!(!loaded.bluetooth_enabled);
         assert!(loaded.enable_wifi_frame_parsing);

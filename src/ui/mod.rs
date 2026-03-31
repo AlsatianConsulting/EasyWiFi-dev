@@ -90,7 +90,7 @@ const DEFAULT_CONTENT_PANE_POSITION: i32 = 520;
 const DEFAULT_AP_ROOT_POSITION: i32 = 290;
 const DEFAULT_AP_SUMMARY_ROW_POSITION: i32 = 420;
 const DEFAULT_AP_DETAIL_SECTIONS_POSITION: i32 = 350;
-const DEFAULT_AP_BOTTOM_POSITION: i32 = 430;
+const DEFAULT_AP_BOTTOM_POSITION: i32 = 500;
 const DEFAULT_CLIENT_ROOT_POSITION: i32 = 300;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 360;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 300;
@@ -2062,6 +2062,7 @@ fn build_ui(app: &Application) -> Result<()> {
     if !TABLE_PAGE_SIZE_OPTIONS.contains(&settings.default_rows_per_page) {
         settings.default_rows_per_page = DEFAULT_TABLE_PAGE_SIZE;
     }
+    apply_dark_mode_preference(settings.dark_mode);
     let watchlist_css_provider = install_ui_css();
     apply_watchlist_css(&watchlist_css_provider, &settings.watchlists);
 
@@ -2857,6 +2858,12 @@ fn apply_view_visibility(
         .set_position(DEFAULT_BLUETOOTH_BOTTOM_POSITION);
 }
 
+fn apply_dark_mode_preference(enabled: bool) {
+    if let Some(gtk_settings) = gtk::Settings::default() {
+        gtk_settings.set_gtk_application_prefer_dark_theme(enabled);
+    }
+}
+
 fn apply_view_preferences(
     state: &Rc<RefCell<AppState>>,
     content_paned: &Paned,
@@ -3417,7 +3424,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_bottom.set_wide_handle(true);
     ap_bottom.set_position(DEFAULT_AP_BOTTOM_POSITION);
     ap_bottom.set_resize_start_child(true);
-    ap_bottom.set_resize_end_child(true);
+    ap_bottom.set_resize_end_child(false);
     ap_bottom.set_shrink_start_child(true);
     ap_bottom.set_shrink_end_child(true);
     ap_bottom.set_end_child(Some(&ap_assoc_box));
@@ -11468,6 +11475,8 @@ fn open_preferences_window(
     show_detail_pane_check.set_active(settings_snapshot.show_detail_pane);
     let show_device_pane_check = CheckButton::with_label("Device Pane");
     show_device_pane_check.set_active(settings_snapshot.show_device_pane);
+    let dark_mode_check = CheckButton::with_label("Dark Mode");
+    dark_mode_check.set_active(settings_snapshot.dark_mode);
 
     let ap_columns = Rc::new(RefCell::new(
         settings_snapshot.ap_table_layout.columns.clone(),
@@ -11490,6 +11499,7 @@ fn open_preferences_window(
     view_page.append(&show_status_bar_check);
     view_page.append(&show_detail_pane_check);
     view_page.append(&show_device_pane_check);
+    view_page.append(&dark_mode_check);
 
     let general_page = page(&stack, "general", "General");
     general_page.append(&section_heading("General"));
@@ -11871,6 +11881,7 @@ fn open_preferences_window(
                 let mut full_restart_needed = false;
                 let mut bluetooth_restart_needed = false;
                 let mut applied_messages = Vec::new();
+                let mut dark_mode_changed = false;
 
                 let view_changed = {
                     let mut s = state.borrow_mut();
@@ -11878,6 +11889,18 @@ fn open_preferences_window(
                         != show_status_bar_check.is_active()
                         || s.settings.show_detail_pane != show_detail_pane_check.is_active()
                         || s.settings.show_device_pane != show_device_pane_check.is_active();
+                    if s.settings.dark_mode != dark_mode_check.is_active() {
+                        s.settings.dark_mode = dark_mode_check.is_active();
+                        dark_mode_changed = true;
+                        applied_messages.push(format!(
+                            "dark mode {}",
+                            if s.settings.dark_mode {
+                                "enabled"
+                            } else {
+                                "disabled"
+                            }
+                        ));
+                    }
 
                     if s.settings.default_rows_per_page != requested_rows {
                         s.settings.default_rows_per_page = requested_rows;
@@ -12026,6 +12049,9 @@ fn open_preferences_window(
                     Some(show_detail_pane_check.is_active()),
                     Some(show_device_pane_check.is_active()),
                 );
+                if dark_mode_changed {
+                    apply_dark_mode_preference(dark_mode_check.is_active());
+                }
                 state.borrow_mut().save_settings_to_disk();
                 if view_changed {
                     if let Some(app) = window.application() {
