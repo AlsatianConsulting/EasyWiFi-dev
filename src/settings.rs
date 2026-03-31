@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -745,6 +746,8 @@ pub enum ChannelSelectionMode {
         dwell_ms: u64,
         #[serde(default = "default_hop_ht_mode")]
         ht_mode: String,
+        #[serde(default)]
+        channel_ht_modes: BTreeMap<u16, String>,
     },
     HopBand {
         band: crate::model::SpectrumBand,
@@ -763,6 +766,7 @@ impl Default for ChannelSelectionMode {
             channels: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 36, 40, 44, 48],
             dwell_ms: 200,
             ht_mode: default_hop_ht_mode(),
+            channel_ht_modes: BTreeMap::new(),
         }
     }
 }

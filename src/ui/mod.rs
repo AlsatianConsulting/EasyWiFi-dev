@@ -32,7 +32,7 @@ use gtk::{
 };
 use gtk4 as gtk;
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -2065,6 +2065,7 @@ fn build_ui(app: &Application) -> Result<()> {
                 channels: vec![1, 6, 11, 36, 40, 44, 48],
                 dwell_ms: 200,
                 ht_mode: default_hop_ht_mode(),
+                channel_ht_modes: BTreeMap::new(),
             },
             enabled: true,
         }]
@@ -2751,12 +2752,19 @@ fn describe_channel_mode(mode: &ChannelSelectionMode) -> String {
             channels,
             dwell_ms,
             ht_mode,
+            channel_ht_modes,
         } => {
+            let mixed = channel_ht_modes
+                .values()
+                .collect::<HashSet<_>>()
+                .len()
+                > 1;
             format!(
-                "Hop Specific [{} channels @ {} ms, {}]",
+                "Hop Specific [{} channels @ {} ms, {}{}]",
                 channels.len(),
                 dwell_ms,
-                ht_mode
+                ht_mode,
+                if mixed { ", mixed" } else { "" }
             )
         }
     }
@@ -10077,6 +10085,8 @@ fn open_interface_settings_dialog_inner(
     let clear_channels_btn = Button::with_label("Clear");
     let show_channels_btn = Button::with_label("Show Device Channels");
     let channel_checks = Rc::new(RefCell::new(Vec::<(u16, CheckButton)>::new()));
+    let hop_channel_mode_controls = Rc::new(RefCell::new(HashMap::<u16, ComboBoxText>::new()));
+    let hop_channel_mode_overrides = Rc::new(RefCell::new(BTreeMap::<u16, String>::new()));
     let channels_list = GtkBox::new(Orientation::Vertical, 4);
     let channels_scrolled = ScrolledWindow::builder()
         .hexpand(true)
@@ -10395,12 +10405,15 @@ fn open_interface_settings_dialog_inner(
         const SEL_COL_CHANNEL: i32 = 12;
         const SEL_COL_FREQ: i32 = 14;
         const SEL_COL_BAND: i32 = 12;
-        const SEL_COL_WIDTHS: i32 = 44;
+        const SEL_COL_MODE: i32 = 20;
 
         let channels_list = channels_list.clone();
         let channel_checks = channel_checks.clone();
+        let hop_channel_mode_controls = hop_channel_mode_controls.clone();
+        let hop_channel_mode_overrides = hop_channel_mode_overrides.clone();
         let channels_entry = channels_entry.clone();
         let lock_channel_entry = lock_channel_entry.clone();
+        let hop_ht_combo = hop_ht_combo.clone();
         let sync_channels_entry_from_checks = sync_channels_entry_from_checks.clone();
         let rebuild = rebuild_channel_table.clone();
         *rebuild.borrow_mut() = Some(Box::new(
@@ -10409,12 +10422,8 @@ fn open_interface_settings_dialog_inner(
                     channels_list.remove(&child);
                 }
                 channel_checks.borrow_mut().clear();
+                hop_channel_mode_controls.borrow_mut().clear();
 
-                let widths = if ht_choices.is_empty() {
-                    "HT20".to_string()
-                } else {
-                    ht_choices.join(" ")
-                };
                 let selected_seed = channels_entry
                     .text()
                     .split(',')
@@ -10426,7 +10435,7 @@ fn open_interface_settings_dialog_inner(
                 header.append(&header_cell("Channel".to_string(), SEL_COL_CHANNEL));
                 header.append(&header_cell("Freq MHz".to_string(), SEL_COL_FREQ));
                 header.append(&header_cell("Band".to_string(), SEL_COL_BAND));
-                header.append(&header_cell("Widths".to_string(), SEL_COL_WIDTHS));
+                header.append(&header_cell("Bandwidth".to_string(), SEL_COL_MODE));
                 channels_list.append(&header);
 
                 if channels.is_empty() {
@@ -10464,14 +10473,36 @@ fn open_interface_settings_dialog_inner(
                         channel_capability_band_label(&ch),
                         SEL_COL_BAND,
                     ));
-                    row.append(&label_cell(
-                        if ch.enabled {
-                            widths.clone()
-                        } else {
-                            format!("{widths} | disabled")
-                        },
-                        SEL_COL_WIDTHS,
-                    ));
+                    let mode_combo = ComboBoxText::new();
+                    for mode in &ht_choices {
+                        mode_combo.append(Some(mode), mode);
+                    }
+                    let default_mode = hop_channel_mode_overrides
+                        .borrow()
+                        .get(&ch.channel)
+                        .cloned()
+                        .or_else(|| hop_ht_combo.active_id().map(|v| v.to_string()))
+                        .unwrap_or_else(default_hop_ht_mode);
+                    if !mode_combo.set_active_id(Some(&default_mode)) {
+                        mode_combo.set_active_id(Some("HT20"));
+                    }
+                    mode_combo.set_sensitive(ch.enabled);
+                    let mode_cell = GtkBox::new(Orientation::Horizontal, 0);
+                    mode_cell.set_size_request(SEL_COL_MODE * TABLE_CHAR_WIDTH_PX, -1);
+                    mode_cell.append(&mode_combo);
+                    row.append(&mode_cell);
+
+                    {
+                        let hop_channel_mode_overrides = hop_channel_mode_overrides.clone();
+                        let channel = ch.channel;
+                        mode_combo.connect_changed(move |combo| {
+                            if let Some(selected) = combo.active_id() {
+                                hop_channel_mode_overrides
+                                    .borrow_mut()
+                                    .insert(channel, selected.to_string());
+                            }
+                        });
+                    }
 
                     let sync = sync_channels_entry_from_checks.clone();
                     check.connect_toggled(move |_| {
@@ -10483,6 +10514,9 @@ fn open_interface_settings_dialog_inner(
                     if should_default_select && default_lock_channel.is_none() {
                         default_lock_channel = Some(ch.channel);
                     }
+                    hop_channel_mode_controls
+                        .borrow_mut()
+                        .insert(ch.channel, mode_combo);
                     channel_checks.borrow_mut().push((ch.channel, check));
                     channels_list.append(&row);
                 }
@@ -10778,6 +10812,24 @@ fn open_interface_settings_dialog_inner(
         });
     }
 
+    {
+        let hop_channel_mode_controls = hop_channel_mode_controls.clone();
+        let hop_channel_mode_overrides = hop_channel_mode_overrides.clone();
+        hop_ht_combo.connect_changed(move |combo| {
+            let Some(selected) = combo.active_id().map(|v| v.to_string()) else {
+                return;
+            };
+            for (channel, control) in hop_channel_mode_controls.borrow().iter() {
+                if control.is_sensitive() {
+                    control.set_active_id(Some(&selected));
+                    hop_channel_mode_overrides
+                        .borrow_mut()
+                        .insert(*channel, selected.clone());
+                }
+            }
+        });
+    }
+
     let current_interface = {
         let s = state.borrow();
         (
@@ -10799,6 +10851,7 @@ fn open_interface_settings_dialog_inner(
                 channels,
                 dwell_ms,
                 ht_mode,
+                channel_ht_modes,
             } => {
                 mode_combo.set_active_id(Some("hop_specific"));
                 channels_entry.set_text(
@@ -10810,6 +10863,7 @@ fn open_interface_settings_dialog_inner(
                 );
                 dwell_entry.set_text(&dwell_ms.to_string());
                 hop_ht_combo.set_active_id(Some(ht_mode));
+                *hop_channel_mode_overrides.borrow_mut() = channel_ht_modes.clone();
             }
             ChannelSelectionMode::HopBand {
                 band,
@@ -10896,6 +10950,8 @@ fn open_interface_settings_dialog_inner(
         let lock_channel_entry = lock_channel_entry.clone();
         let lock_ht_combo = lock_ht_combo.clone();
         let hop_ht_combo = hop_ht_combo.clone();
+        let hop_channel_mode_controls = hop_channel_mode_controls.clone();
+        let hop_channel_mode_overrides = hop_channel_mode_overrides.clone();
         let wifi_scan_check = wifi_scan_check.clone();
         let bluetooth_scan_check = bluetooth_scan_check.clone();
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
@@ -11020,13 +11076,35 @@ fn open_interface_settings_dialog_inner(
                     }
                 }
                 _ => ChannelSelectionMode::HopAll {
-                    channels: if sanitized_parsed_channels.is_empty() {
-                        all_channels
-                    } else {
-                        sanitized_parsed_channels
+                    channels: {
+                        if sanitized_parsed_channels.is_empty() {
+                            all_channels.clone()
+                        } else {
+                            sanitized_parsed_channels.clone()
+                        }
                     },
                     dwell_ms,
-                    ht_mode: hop_ht_mode,
+                    ht_mode: hop_ht_mode.clone(),
+                    channel_ht_modes: {
+                        let selected_channels = if sanitized_parsed_channels.is_empty() {
+                            all_channels.clone()
+                        } else {
+                            sanitized_parsed_channels.clone()
+                        };
+                        let mut per_channel = BTreeMap::new();
+                        for channel in selected_channels {
+                            let mode = hop_channel_mode_controls
+                                .borrow()
+                                .get(&channel)
+                                .and_then(|combo| combo.active_id().map(|v| v.to_string()))
+                                .or_else(|| {
+                                    hop_channel_mode_overrides.borrow().get(&channel).cloned()
+                                })
+                                .unwrap_or_else(|| hop_ht_mode.clone());
+                            per_channel.insert(channel, mode);
+                        }
+                        per_channel
+                    },
                 },
             };
 
@@ -12012,6 +12090,7 @@ fn detect_interface_settings() -> Vec<InterfaceSettings> {
                 .collect(),
             dwell_ms: 200,
             ht_mode: default_hop_ht_mode(),
+            channel_ht_modes: BTreeMap::new(),
         },
         enabled: true,
     }]

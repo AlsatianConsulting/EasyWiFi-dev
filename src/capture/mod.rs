@@ -854,11 +854,19 @@ fn initial_channel_request(mode: &ChannelSelectionMode) -> Option<(u16, String)>
     match mode {
         ChannelSelectionMode::Locked { channel, ht_mode } => Some((*channel, ht_mode.clone())),
         ChannelSelectionMode::HopAll {
-            channels, ht_mode, ..
-        } => channels
-            .first()
-            .copied()
-            .map(|channel| (channel, ht_mode.clone())),
+            channels,
+            ht_mode,
+            channel_ht_modes,
+            ..
+        } => channels.first().copied().map(|channel| {
+            (
+                channel,
+                channel_ht_modes
+                    .get(&channel)
+                    .cloned()
+                    .unwrap_or_else(|| ht_mode.clone()),
+            )
+        }),
         ChannelSelectionMode::HopBand { channels, .. } => channels
             .first()
             .copied()
@@ -2036,17 +2044,40 @@ fn run_channel_control_loop(
     sender: Sender<CaptureEvent>,
     stop_flag: Arc<AtomicBool>,
 ) {
-    let (channels, dwell_ms, hop_ht_mode, locked) = match mode {
+    let (hop_targets, dwell_ms, locked) = match mode {
         ChannelSelectionMode::HopAll {
             channels,
             dwell_ms,
             ht_mode,
-        } => (channels, dwell_ms, ht_mode, None),
+            channel_ht_modes,
+        } => (
+            channels
+                .into_iter()
+                .map(|channel| {
+                    (
+                        channel,
+                        channel_ht_modes
+                            .get(&channel)
+                            .cloned()
+                            .unwrap_or_else(|| ht_mode.clone()),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            dwell_ms,
+            None,
+        ),
         ChannelSelectionMode::HopBand {
             channels, dwell_ms, ..
-        } => (channels, dwell_ms, "HT20".to_string(), None),
+        } => (
+            channels
+                .into_iter()
+                .map(|channel| (channel, "HT20".to_string()))
+                .collect::<Vec<_>>(),
+            dwell_ms,
+            None,
+        ),
         ChannelSelectionMode::Locked { channel, ht_mode } => {
-            (vec![channel], 0, ht_mode.clone(), Some((channel, ht_mode)))
+            (vec![(channel, ht_mode.clone())], 0, Some((channel, ht_mode)))
         }
     };
 
@@ -2071,7 +2102,7 @@ fn run_channel_control_loop(
         return;
     }
 
-    if channels.is_empty() {
+    if hop_targets.is_empty() {
         let _ = sender.send(CaptureEvent::Log(format!(
             "channel hopping disabled on {}; no channels selected",
             interface_name
@@ -2083,110 +2114,134 @@ fn run_channel_control_loop(
     }
 
     let dwell = if dwell_ms == 0 { 200 } else { dwell_ms };
-    if is_effective_root() {
-        let mut active_channels = channels.clone();
-        let _ = sender.send(CaptureEvent::Log(format!(
-            "channel hopper running on {} across {} channels at {} ms dwell (direct root mode)",
-            interface_name,
-            active_channels.len(),
-            dwell
-        )));
-        let mut index = 0usize;
-        while !stop_flag.load(Ordering::Relaxed) && !active_channels.is_empty() {
-            let channel = active_channels[index % active_channels.len()];
-            if let Err(err) = set_channel_with_ht_direct(interface_name, channel, &hop_ht_mode) {
-                let _ = sender.send(CaptureEvent::Log(format!(
-                    "channel hop set failed on {} channel {} ({}): {}",
-                    interface_name, channel, hop_ht_mode, err
-                )));
-                active_channels.retain(|candidate| *candidate != channel);
-                if active_channels.is_empty() {
+    let mut active_targets = hop_targets.clone();
+    let uniform_ht_mode = {
+        let mut modes = active_targets
+            .iter()
+            .map(|(_, mode)| mode.as_str())
+            .collect::<HashSet<_>>();
+        if modes.len() == 1 {
+            modes.drain().next().map(str::to_string)
+        } else {
+            None
+        }
+    };
+
+    if !is_effective_root() && uniform_ht_mode.is_some() {
+        let channels = active_targets
+            .iter()
+            .map(|(channel, _)| *channel)
+            .collect::<Vec<_>>();
+        let hop_ht_mode = uniform_ht_mode.unwrap_or_else(|| "HT20".to_string());
+        let mut hopper =
+            match spawn_privileged_channel_hopper(interface_name, dwell, &hop_ht_mode, &channels) {
+                Ok(proc) => {
                     let _ = sender.send(CaptureEvent::Log(format!(
-                        "channel hopper stopped on {}; no valid channels remain after removing channel {}",
-                        interface_name, channel
+                        "channel hopper running on {} across {} channels at {} ms dwell ({})",
+                        interface_name,
+                        channels.len(),
+                        dwell,
+                        hop_ht_mode
                     )));
-                    break;
+                    proc.child
                 }
+                Err(err) => {
+                    let _ = sender.send(CaptureEvent::Log(format!(
+                        "failed to start channel hopper on {}: {}",
+                        interface_name, err
+                    )));
+                    return;
+                }
+            };
+
+        let mut stderr_handle = hopper.stderr.take().map(|mut stderr| {
+            thread::spawn(move || {
+                let mut buf = String::new();
+                let _ = stderr.read_to_string(&mut buf);
+                buf
+            })
+        });
+
+        while !stop_flag.load(Ordering::Relaxed) {
+            if let Ok(Some(status)) = hopper.try_wait() {
+                let stderr_summary = stderr_handle
+                    .take()
+                    .and_then(|handle| handle.join().ok())
+                    .unwrap_or_default()
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .take(4)
+                    .collect::<Vec<_>>()
+                    .join(" | ");
                 let _ = sender.send(CaptureEvent::Log(format!(
-                    "removed invalid channel {} from hopper on {}; {} channels remain",
-                    channel,
+                    "channel hopper exited on {} with {}{}",
                     interface_name,
-                    active_channels.len()
+                    status,
+                    if stderr_summary.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" | {}", stderr_summary)
+                    }
                 )));
-                if index >= active_channels.len() {
-                    index = 0;
-                }
+                return;
             }
-            thread::sleep(Duration::from_millis(dwell));
-            index += 1;
+            thread::sleep(Duration::from_millis(150));
+        }
+
+        let _ = hopper.kill();
+        let _ = hopper.wait();
+        if let Some(handle) = stderr_handle.take() {
+            let _ = handle.join();
         }
         return;
     }
 
-    let mut hopper = match spawn_privileged_channel_hopper(
-        interface_name,
-        dwell,
-        &hop_ht_mode,
-        &channels,
-    ) {
-        Ok(proc) => {
-            let _ = sender.send(CaptureEvent::Log(format!(
-                "channel hopper running on {} across {} channels at {} ms dwell ({})",
-                interface_name,
-                channels.len(),
-                dwell,
-                hop_ht_mode
-            )));
-            proc.child
-        }
-        Err(err) => {
-            let _ = sender.send(CaptureEvent::Log(format!(
-                "failed to start channel hopper on {}: {}",
-                interface_name, err
-            )));
-            return;
-        }
+    let mode_label = if is_effective_root() {
+        "direct root mode"
+    } else {
+        "per-channel bandwidths"
     };
-
-    let mut stderr_handle = hopper.stderr.take().map(|mut stderr| {
-        thread::spawn(move || {
-            let mut buf = String::new();
-            let _ = stderr.read_to_string(&mut buf);
-            buf
-        })
-    });
-
-    while !stop_flag.load(Ordering::Relaxed) {
-        if let Ok(Some(status)) = hopper.try_wait() {
-            let stderr_summary = stderr_handle
-                .take()
-                .and_then(|handle| handle.join().ok())
-                .unwrap_or_default()
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .take(4)
-                .collect::<Vec<_>>()
-                .join(" | ");
+    let _ = sender.send(CaptureEvent::Log(format!(
+        "channel hopper running on {} across {} channels at {} ms dwell ({})",
+        interface_name,
+        active_targets.len(),
+        dwell,
+        mode_label
+    )));
+    let mut index = 0usize;
+    while !stop_flag.load(Ordering::Relaxed) && !active_targets.is_empty() {
+        let (channel, ht_mode) = active_targets[index % active_targets.len()].clone();
+        let set_result = if is_effective_root() {
+            set_channel_with_ht_direct(interface_name, channel, &ht_mode)
+        } else {
+            set_channel_with_ht(interface_name, channel, &ht_mode)
+        };
+        if let Err(err) = set_result {
             let _ = sender.send(CaptureEvent::Log(format!(
-                "channel hopper exited on {} with {}{}",
-                interface_name,
-                status,
-                if stderr_summary.is_empty() {
-                    String::new()
-                } else {
-                    format!(" | {}", stderr_summary)
-                }
+                "channel hop set failed on {} channel {} ({}): {}",
+                interface_name, channel, ht_mode, err
             )));
-            return;
+            active_targets.retain(|(candidate, _)| *candidate != channel);
+            if active_targets.is_empty() {
+                let _ = sender.send(CaptureEvent::Log(format!(
+                    "channel hopper stopped on {}; no valid channels remain after removing channel {}",
+                    interface_name, channel
+                )));
+                break;
+            }
+            let _ = sender.send(CaptureEvent::Log(format!(
+                "removed invalid channel {} from hopper on {}; {} channels remain",
+                channel,
+                interface_name,
+                active_targets.len()
+            )));
+            if index >= active_targets.len() {
+                index = 0;
+            }
         }
-        thread::sleep(Duration::from_millis(150));
-    }
-
-    let _ = hopper.kill();
-    let _ = hopper.wait();
-    if let Some(handle) = stderr_handle.take() {
-        let _ = handle.join();
+        thread::sleep(Duration::from_millis(dwell));
+        index += 1;
     }
 }
 
