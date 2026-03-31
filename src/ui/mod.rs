@@ -28,7 +28,7 @@ use gtk::{
     DrawingArea, Entry, EventControllerKey, Expander, FileChooserAction, FileChooserDialog,
     GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned, Popover,
     ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
-    ToggleButton, Window as GtkWindow,
+    ToggleButton, Window as GtkWindow, Scrollbar,
 };
 use gtk4 as gtk;
 use std::cell::{Cell, RefCell};
@@ -3356,6 +3356,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_top = GtkBox::new(Orientation::Vertical, 4);
     ap_top.append(&ap_header_scrolled);
     ap_top.append(&ap_scrolled);
+    let ap_hscroll = Scrollbar::new(Orientation::Horizontal, Some(&ap_scrolled.hadjustment()));
+    ap_hscroll.set_hexpand(true);
+    ap_top.append(&ap_hscroll);
     ap_top.append(&ap_pagination_row);
 
     let ap_detail_label = Label::new(None);
