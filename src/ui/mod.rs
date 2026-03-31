@@ -10035,7 +10035,14 @@ fn open_interface_settings_dialog_inner(
     root.set_margin_bottom(12);
     root.set_margin_start(12);
     root.set_margin_end(12);
-    settings_window.set_child(Some(&root));
+    let root_scrolled = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .child(&root)
+        .build();
+    settings_window.set_child(Some(&root_scrolled));
 
     let capabilities = detect_wifi_interface_capabilities();
     let capabilities_rc = Rc::new(RefCell::new(capabilities));
