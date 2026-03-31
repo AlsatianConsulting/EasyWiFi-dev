@@ -82,19 +82,19 @@ const WATCHDOG_MAX_CONSECUTIVE_RESTARTS: u8 = 3;
 const TABLE_CHAR_WIDTH_PX: i32 = 10;
 const DEFAULT_TABLE_PAGE_SIZE: usize = 50;
 const TABLE_PAGE_SIZE_OPTIONS: &[usize] = &[25, 50, 100, 200];
-const DEFAULT_WINDOW_WIDTH: i32 = 1280;
-const DEFAULT_WINDOW_HEIGHT: i32 = 900;
+const DEFAULT_WINDOW_WIDTH: i32 = 720;
+const DEFAULT_WINDOW_HEIGHT: i32 = 720;
 const MIN_WINDOW_WIDTH: i32 = 720;
 const MIN_WINDOW_HEIGHT: i32 = 720;
-const DEFAULT_CONTENT_PANE_POSITION: i32 = 520;
-const DEFAULT_AP_ROOT_POSITION: i32 = 290;
-const DEFAULT_AP_SUMMARY_ROW_POSITION: i32 = 420;
-const DEFAULT_AP_DETAIL_SECTIONS_POSITION: i32 = 350;
+const DEFAULT_CONTENT_PANE_POSITION: i32 = 420;
+const DEFAULT_AP_ROOT_POSITION: i32 = 240;
+const DEFAULT_AP_SUMMARY_ROW_POSITION: i32 = 320;
+const DEFAULT_AP_DETAIL_SECTIONS_POSITION: i32 = 260;
 const DEFAULT_AP_BOTTOM_POSITION: i32 = 500;
-const DEFAULT_CLIENT_ROOT_POSITION: i32 = 300;
-const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 360;
-const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 300;
-const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 300;
+const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
+const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 300;
+const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 240;
+const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 240;
 
 fn is_small_display() -> bool {
     let model = std::fs::read_to_string("/proc/device-tree/model")
@@ -2008,6 +2008,10 @@ fn build_ui(app: &Application) -> Result<()> {
         .default_height(DEFAULT_WINDOW_HEIGHT)
         .build();
     window.set_size_request(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
+    if is_small_display() {
+        window.set_default_size(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
+        window.set_resizable(false);
+    }
     let output_dir = {
         let fallback = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         fallback.join("output")
@@ -2320,15 +2324,11 @@ fn build_ui(app: &Application) -> Result<()> {
         &widgets,
     );
     {
-        let mut s = state.borrow_mut();
+        let s = state.borrow_mut();
         if s.settings.window_fullscreen {
             window.fullscreen();
         } else if s.settings.window_maximized {
             window.maximize();
-        } else if is_small_display() {
-            window.fullscreen();
-            s.settings.window_fullscreen = true;
-            s.save_settings_to_disk();
         }
     }
     {
@@ -2852,22 +2852,27 @@ fn apply_view_visibility(
     status_container: &GtkBox,
     widgets: &UiWidgets,
 ) {
-    content_paned.set_position(DEFAULT_CONTENT_PANE_POSITION);
+    let small = is_small_display();
+    content_paned.set_position(if small { 400 } else { DEFAULT_CONTENT_PANE_POSITION });
     status_container.set_visible(settings.show_status_bar);
 
     let show_ap_bottom = settings.show_detail_pane || settings.show_device_pane;
-    widgets.ap_root.set_position(DEFAULT_AP_ROOT_POSITION);
+    widgets
+        .ap_root
+        .set_position(if small { 220 } else { DEFAULT_AP_ROOT_POSITION });
     widgets.ap_root.set_resize_end_child(show_ap_bottom);
     widgets.ap_bottom.set_visible(show_ap_bottom);
     widgets
         .ap_detail_notebook
         .set_visible(settings.show_detail_pane);
     widgets.ap_assoc_box.set_visible(settings.show_device_pane);
-    widgets.ap_bottom.set_position(DEFAULT_AP_BOTTOM_POSITION);
+    widgets
+        .ap_bottom
+        .set_position(if small { 340 } else { DEFAULT_AP_BOTTOM_POSITION });
 
     widgets
         .client_root
-        .set_position(DEFAULT_CLIENT_ROOT_POSITION);
+        .set_position(if small { 220 } else { DEFAULT_CLIENT_ROOT_POSITION });
     widgets
         .client_root
         .set_resize_end_child(settings.show_detail_pane);
@@ -2877,7 +2882,7 @@ fn apply_view_visibility(
 
     widgets
         .bluetooth_root
-        .set_position(DEFAULT_BLUETOOTH_ROOT_POSITION);
+        .set_position(if small { 220 } else { DEFAULT_BLUETOOTH_ROOT_POSITION });
     widgets
         .bluetooth_root
         .set_resize_end_child(settings.show_detail_pane);
@@ -2886,7 +2891,7 @@ fn apply_view_visibility(
         .set_visible(settings.show_detail_pane);
     widgets
         .bluetooth_bottom
-        .set_position(DEFAULT_BLUETOOTH_BOTTOM_POSITION);
+        .set_position(if small { 280 } else { DEFAULT_BLUETOOTH_BOTTOM_POSITION });
 }
 
 fn apply_dark_mode_preference(enabled: bool) {
@@ -4961,6 +4966,16 @@ fn bind_poll_loop(
         let bluetooth_tab_active = active_tab == BLUETOOTH_TAB_INDEX;
         let channel_tab_active = active_tab == CHANNEL_USAGE_TAB_INDEX;
 
+        {
+            let s = state.borrow();
+            let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout);
+            ap_list.set_size_request(ap_row_width_px, -1);
+            ap_header_holder.set_size_request(ap_row_width_px, -1);
+            ap_header_holder.set_halign(gtk::Align::Start);
+            ap_list.set_halign(gtk::Align::Start);
+            ap_list.set_hexpand(false);
+        }
+
         let ap_selected_key_now = ap_selected_key.borrow().clone();
         let client_selected_key_now = client_selected_key.borrow().clone();
         let bluetooth_selected_key_now = bluetooth_selected_key.borrow().clone();
@@ -4996,12 +5011,6 @@ fn bind_poll_loop(
         if ap_tab_active && pending_ap_refresh.get() {
             let now = Instant::now();
             let s = state.borrow();
-            let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout);
-            ap_list.set_size_request(ap_row_width_px, -1);
-            ap_header_holder.set_size_request(ap_row_width_px, -1);
-            ap_header_holder.set_halign(gtk::Align::Start);
-            ap_list.set_halign(gtk::Align::Start);
-            ap_list.set_hexpand(false);
             let should_rebuild = last_ap_list_refresh
                 .borrow()
                 .map(|last| {

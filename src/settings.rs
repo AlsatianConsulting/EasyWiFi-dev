@@ -162,11 +162,11 @@ pub fn default_use_zulu_time() -> bool {
 }
 
 pub fn default_window_width() -> i32 {
-    1280
+    720
 }
 
 pub fn default_window_height() -> i32 {
-    900
+    720
 }
 
 pub fn default_window_maximized() -> bool {
