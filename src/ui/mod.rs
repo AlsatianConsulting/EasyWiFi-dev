@@ -10085,8 +10085,10 @@ fn open_interface_settings_dialog_inner(
     let clear_channels_btn = Button::with_label("Clear");
     let show_channels_btn = Button::with_label("Show Device Channels");
     let channel_checks = Rc::new(RefCell::new(Vec::<(u16, CheckButton)>::new()));
-    let hop_channel_mode_controls = Rc::new(RefCell::new(HashMap::<u16, ComboBoxText>::new()));
-    let hop_channel_mode_overrides = Rc::new(RefCell::new(BTreeMap::<u16, String>::new()));
+    let hop_channel_mode_controls =
+        Rc::new(RefCell::new(HashMap::<u16, Vec<(String, ToggleButton)>>::new()));
+    let hop_channel_mode_overrides =
+        Rc::new(RefCell::new(BTreeMap::<u16, Vec<String>>::new()));
     let channels_list = GtkBox::new(Orientation::Vertical, 4);
     let channels_scrolled = ScrolledWindow::builder()
         .hexpand(true)
@@ -10473,36 +10475,82 @@ fn open_interface_settings_dialog_inner(
                         channel_capability_band_label(&ch),
                         SEL_COL_BAND,
                     ));
-                    let mode_combo = ComboBoxText::new();
-                    for mode in &ht_choices {
-                        mode_combo.append(Some(mode), mode);
-                    }
-                    let default_mode = hop_channel_mode_overrides
+                    let mode_box = GtkBox::new(Orientation::Horizontal, 4);
+                    let default_modes = hop_channel_mode_overrides
                         .borrow()
                         .get(&ch.channel)
                         .cloned()
-                        .or_else(|| hop_ht_combo.active_id().map(|v| v.to_string()))
-                        .unwrap_or_else(default_hop_ht_mode);
-                    if !mode_combo.set_active_id(Some(&default_mode)) {
-                        mode_combo.set_active_id(Some("HT20"));
+                        .unwrap_or_else(|| {
+                            vec![
+                                hop_ht_combo
+                                    .active_id()
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(default_hop_ht_mode),
+                            ]
+                        });
+                    let mut row_mode_buttons = Vec::<(String, ToggleButton)>::new();
+                    for mode in &ht_choices {
+                        let button = ToggleButton::with_label(&format!("[{}]", mode));
+                        button.set_sensitive(ch.enabled);
+                        button.set_active(default_modes.contains(mode));
+                        mode_box.append(&button);
+                        row_mode_buttons.push((mode.clone(), button.clone()));
                     }
-                    mode_combo.set_sensitive(ch.enabled);
-                    let mode_cell = GtkBox::new(Orientation::Horizontal, 0);
-                    mode_cell.set_size_request(SEL_COL_MODE * TABLE_CHAR_WIDTH_PX, -1);
-                    mode_cell.append(&mode_combo);
-                    row.append(&mode_cell);
-
-                    {
+                    if row_mode_buttons.iter().all(|(_, button)| !button.is_active()) {
+                        if let Some((_, first)) = row_mode_buttons.first() {
+                            first.set_active(true);
+                        }
+                    }
+                    for (_mode, button) in row_mode_buttons.iter() {
+                        let peers = row_mode_buttons.clone();
                         let hop_channel_mode_overrides = hop_channel_mode_overrides.clone();
                         let channel = ch.channel;
-                        mode_combo.connect_changed(move |combo| {
-                            if let Some(selected) = combo.active_id() {
-                                hop_channel_mode_overrides
-                                    .borrow_mut()
-                                    .insert(channel, selected.to_string());
+                        button.connect_toggled(move |_| {
+                            let mut selected = peers
+                                .iter()
+                                .filter_map(|(candidate_mode, candidate_button)| {
+                                    if candidate_button.is_active() {
+                                        Some(candidate_mode.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            if selected.is_empty() {
+                                if let Some((_, first)) = peers.first() {
+                                    first.set_active(true);
+                                }
+                                selected = peers
+                                    .iter()
+                                    .filter_map(|(candidate_mode, candidate_button)| {
+                                        if candidate_button.is_active() {
+                                            Some(candidate_mode.clone())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<_>>();
                             }
+                            selected.sort();
+                            selected.dedup();
+                            hop_channel_mode_overrides
+                                .borrow_mut()
+                                .insert(channel, selected);
                         });
                     }
+                    let mut initial_selected = row_mode_buttons
+                        .iter()
+                        .filter_map(|(mode, button)| if button.is_active() { Some(mode.clone()) } else { None })
+                        .collect::<Vec<_>>();
+                    initial_selected.sort();
+                    initial_selected.dedup();
+                    hop_channel_mode_overrides
+                        .borrow_mut()
+                        .insert(ch.channel, initial_selected);
+                    let mode_cell = GtkBox::new(Orientation::Horizontal, 0);
+                    mode_cell.set_size_request(SEL_COL_MODE * TABLE_CHAR_WIDTH_PX, -1);
+                    mode_cell.append(&mode_box);
+                    row.append(&mode_cell);
 
                     let sync = sync_channels_entry_from_checks.clone();
                     check.connect_toggled(move |_| {
@@ -10516,7 +10564,7 @@ fn open_interface_settings_dialog_inner(
                     }
                     hop_channel_mode_controls
                         .borrow_mut()
-                        .insert(ch.channel, mode_combo);
+                        .insert(ch.channel, row_mode_buttons);
                     channel_checks.borrow_mut().push((ch.channel, check));
                     channels_list.append(&row);
                 }
@@ -10819,12 +10867,21 @@ fn open_interface_settings_dialog_inner(
             let Some(selected) = combo.active_id().map(|v| v.to_string()) else {
                 return;
             };
-            for (channel, control) in hop_channel_mode_controls.borrow().iter() {
-                if control.is_sensitive() {
-                    control.set_active_id(Some(&selected));
+            for (channel, controls) in hop_channel_mode_controls.borrow().iter() {
+                let mut applied = false;
+                for (mode, button) in controls.iter() {
+                    if button.is_sensitive() {
+                        let make_active = mode == &selected;
+                        button.set_active(make_active);
+                        if make_active {
+                            applied = true;
+                        }
+                    }
+                }
+                if applied {
                     hop_channel_mode_overrides
                         .borrow_mut()
-                        .insert(*channel, selected.clone());
+                        .insert(*channel, vec![selected.clone()]);
                 }
             }
         });
@@ -11093,15 +11150,31 @@ fn open_interface_settings_dialog_inner(
                         };
                         let mut per_channel = BTreeMap::new();
                         for channel in selected_channels {
-                            let mode = hop_channel_mode_controls
+                            let mut modes = hop_channel_mode_controls
                                 .borrow()
                                 .get(&channel)
-                                .and_then(|combo| combo.active_id().map(|v| v.to_string()))
+                                .map(|controls| {
+                                    controls
+                                        .iter()
+                                        .filter_map(|(mode, button)| {
+                                            if button.is_active() {
+                                                Some(mode.clone())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
                                 .or_else(|| {
                                     hop_channel_mode_overrides.borrow().get(&channel).cloned()
                                 })
-                                .unwrap_or_else(|| hop_ht_mode.clone());
-                            per_channel.insert(channel, mode);
+                                .unwrap_or_else(|| vec![hop_ht_mode.clone()]);
+                            modes.sort();
+                            modes.dedup();
+                            if modes.is_empty() {
+                                modes.push(hop_ht_mode.clone());
+                            }
+                            per_channel.insert(channel, modes);
                         }
                         per_channel
                     },

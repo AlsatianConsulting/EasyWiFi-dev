@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -116,6 +117,36 @@ pub fn default_wifi_packet_header_mode() -> WifiPacketHeaderMode {
 
 pub fn default_hop_ht_mode() -> String {
     "HT20".to_string()
+}
+
+fn deserialize_channel_ht_modes<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<u16, Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ModeOrModes {
+        One(String),
+        Many(Vec<String>),
+    }
+
+    let raw = BTreeMap::<u16, ModeOrModes>::deserialize(deserializer)?;
+    let mut out = BTreeMap::<u16, Vec<String>>::new();
+    for (channel, value) in raw {
+        let mut modes = match value {
+            ModeOrModes::One(mode) => vec![mode],
+            ModeOrModes::Many(modes) => modes,
+        };
+        modes.retain(|mode| !mode.trim().is_empty());
+        modes.sort();
+        modes.dedup();
+        if !modes.is_empty() {
+            out.insert(channel, modes);
+        }
+    }
+    Ok(out)
 }
 
 pub fn default_enable_wifi_frame_parsing() -> bool {
@@ -746,8 +777,8 @@ pub enum ChannelSelectionMode {
         dwell_ms: u64,
         #[serde(default = "default_hop_ht_mode")]
         ht_mode: String,
-        #[serde(default)]
-        channel_ht_modes: BTreeMap<u16, String>,
+        #[serde(default, deserialize_with = "deserialize_channel_ht_modes")]
+        channel_ht_modes: BTreeMap<u16, Vec<String>>,
     },
     HopBand {
         band: crate::model::SpectrumBand,

@@ -859,12 +859,14 @@ fn initial_channel_request(mode: &ChannelSelectionMode) -> Option<(u16, String)>
             channel_ht_modes,
             ..
         } => channels.first().copied().map(|channel| {
+            let mode = channel_ht_modes
+                .get(&channel)
+                .and_then(|modes| modes.first())
+                .cloned()
+                .unwrap_or_else(|| ht_mode.clone());
             (
                 channel,
-                channel_ht_modes
-                    .get(&channel)
-                    .cloned()
-                    .unwrap_or_else(|| ht_mode.clone()),
+                mode,
             )
         }),
         ChannelSelectionMode::HopBand { channels, .. } => channels
@@ -2053,14 +2055,12 @@ fn run_channel_control_loop(
         } => (
             channels
                 .into_iter()
-                .map(|channel| {
-                    (
-                        channel,
-                        channel_ht_modes
-                            .get(&channel)
-                            .cloned()
-                            .unwrap_or_else(|| ht_mode.clone()),
-                    )
+                .flat_map(|channel| {
+                    let modes = channel_ht_modes
+                        .get(&channel)
+                        .cloned()
+                        .unwrap_or_else(|| vec![ht_mode.clone()]);
+                    modes.into_iter().map(move |mode| (channel, mode))
                 })
                 .collect::<Vec<_>>(),
             dwell_ms,
