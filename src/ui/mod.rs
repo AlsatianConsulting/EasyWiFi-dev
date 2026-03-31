@@ -2284,7 +2284,7 @@ fn build_ui(app: &Application) -> Result<()> {
     let content_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&content_paned)
         .build();
@@ -3291,6 +3291,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
 
     let ap_list = ListBox::new();
     ap_list.set_selection_mode(gtk::SelectionMode::Single);
+    ap_list.set_activate_on_single_click(false);
     attach_listbox_click_selection(&ap_list);
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
@@ -3393,6 +3394,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         state.clone(),
     ));
     let ap_assoc_list = ListBox::new();
+    ap_assoc_list.set_activate_on_single_click(false);
     attach_listbox_click_selection(&ap_assoc_list);
     let ap_assoc_scrolled = ScrolledWindow::builder()
         .vexpand(true)
@@ -3434,6 +3436,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
 
     let client_list = ListBox::new();
     client_list.set_selection_mode(gtk::SelectionMode::Single);
+    client_list.set_activate_on_single_click(false);
     attach_listbox_click_selection(&client_list);
     let client_selection_suppressed = Rc::new(RefCell::new(false));
     let client_selected_key = Rc::new(RefCell::new(None::<String>));
@@ -3671,6 +3674,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
 
     let bluetooth_list = ListBox::new();
     bluetooth_list.set_selection_mode(gtk::SelectionMode::Single);
+    bluetooth_list.set_activate_on_single_click(false);
     attach_listbox_click_selection(&bluetooth_list);
     let bluetooth_selection_suppressed = Rc::new(RefCell::new(false));
     let bluetooth_selected_key = Rc::new(RefCell::new(None::<String>));
@@ -3940,13 +3944,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     {
         let ap_selection_suppressed = ap_selection_suppressed.clone();
         let ap_selected_key = ap_selected_key.clone();
-        let ap_detail_notebook = ap_detail_notebook.clone();
         ap_list.connect_row_selected(move |_, row| {
             if *ap_selection_suppressed.borrow() {
                 return;
-            }
-            if row.is_some() {
-                ap_detail_notebook.set_current_page(Some(0));
             }
             *ap_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
         });
@@ -3999,13 +3999,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     {
         let client_selection_suppressed = client_selection_suppressed.clone();
         let client_selected_key = client_selected_key.clone();
-        let client_detail_notebook = client_detail_notebook.clone();
         client_list.connect_row_selected(move |_, row| {
             if *client_selection_suppressed.borrow() {
                 return;
-            }
-            if row.is_some() {
-                client_detail_notebook.set_current_page(Some(0));
             }
             *client_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
         });
