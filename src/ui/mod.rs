@@ -3740,8 +3740,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_bottom.set_position(DEFAULT_BLUETOOTH_BOTTOM_POSITION);
     bluetooth_bottom.set_resize_start_child(true);
     bluetooth_bottom.set_resize_end_child(true);
-    bluetooth_bottom.set_shrink_start_child(false);
-    bluetooth_bottom.set_shrink_end_child(false);
+    bluetooth_bottom.set_shrink_start_child(true);
+    bluetooth_bottom.set_shrink_end_child(true);
     bluetooth_bottom.set_start_child(Some(&bluetooth_geiger_scrolled));
     bluetooth_bottom.set_end_child(Some(&bluetooth_detail_scrolled));
 
@@ -3750,8 +3750,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_root.set_position(DEFAULT_BLUETOOTH_ROOT_POSITION);
     bluetooth_root.set_resize_start_child(true);
     bluetooth_root.set_resize_end_child(true);
-    bluetooth_root.set_shrink_start_child(false);
-    bluetooth_root.set_shrink_end_child(false);
+    bluetooth_root.set_shrink_start_child(true);
+    bluetooth_root.set_shrink_end_child(true);
     bluetooth_root.set_start_child(Some(&bluetooth_top));
     bluetooth_root.set_end_child(Some(&bluetooth_bottom));
 
