@@ -4996,6 +4996,12 @@ fn bind_poll_loop(
         if ap_tab_active && pending_ap_refresh.get() {
             let now = Instant::now();
             let s = state.borrow();
+            let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout);
+            ap_list.set_size_request(ap_row_width_px, -1);
+            ap_header_holder.set_size_request(ap_row_width_px, -1);
+            ap_header_holder.set_halign(gtk::Align::Start);
+            ap_list.set_halign(gtk::Align::Start);
+            ap_list.set_hexpand(false);
             let should_rebuild = last_ap_list_refresh
                 .borrow()
                 .map(|last| {
@@ -6346,20 +6352,7 @@ fn refresh_ap_list(
             })
         })
         .collect::<Vec<_>>();
-    let visible_columns = settings
-        .ap_table_layout
-        .columns
-        .iter()
-        .filter(|c| c.visible)
-        .collect::<Vec<_>>();
-    let row_width_px: i32 = {
-        let content = visible_columns
-            .iter()
-            .map(|column| column.width_chars.max(6) * TABLE_CHAR_WIDTH_PX)
-            .sum::<i32>();
-        let gaps = (visible_columns.len().saturating_sub(1) as i32) * 14;
-        content + gaps + 24
-    };
+    let row_width_px = table_row_width_px_for_layout(&settings.ap_table_layout);
     list.set_size_request(row_width_px.max(0), -1);
     let total_items = filtered.len();
     let page_size = pagination.page_size.get();
@@ -6412,6 +6405,16 @@ fn refresh_ap_list(
         end,
     );
     restore_listbox_selection(list, selected_key.as_deref());
+}
+
+fn table_row_width_px_for_layout(layout: &TableLayout) -> i32 {
+    let visible_columns = layout.columns.iter().filter(|c| c.visible).collect::<Vec<_>>();
+    let content = visible_columns
+        .iter()
+        .map(|column| column.width_chars.max(6) * TABLE_CHAR_WIDTH_PX)
+        .sum::<i32>();
+    let gaps = (visible_columns.len().saturating_sub(1) as i32) * 14;
+    (content + gaps + 24).max(0)
 }
 
 fn drain_capture_events_batch(
