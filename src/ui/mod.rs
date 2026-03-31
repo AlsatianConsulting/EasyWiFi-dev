@@ -6335,6 +6335,21 @@ fn refresh_ap_list(
             })
         })
         .collect::<Vec<_>>();
+    let visible_columns = settings
+        .ap_table_layout
+        .columns
+        .iter()
+        .filter(|c| c.visible)
+        .collect::<Vec<_>>();
+    let row_width_px: i32 = {
+        let content = visible_columns
+            .iter()
+            .map(|column| column.width_chars.max(6) * TABLE_CHAR_WIDTH_PX)
+            .sum::<i32>();
+        let gaps = (visible_columns.len().saturating_sub(1) as i32) * 14;
+        content + gaps + 24
+    };
+    list.set_size_request(row_width_px.max(0), -1);
     let total_items = filtered.len();
     let page_size = pagination.page_size.get();
     let (current_page, total_pages, start, end) =
@@ -6358,6 +6373,9 @@ fn refresh_ap_list(
             ap.handshake_count > 0,
         );
         let line = GtkBox::new(Orientation::Horizontal, 14);
+        line.set_hexpand(false);
+        line.set_halign(gtk::Align::Start);
+        line.set_size_request(row_width_px, -1);
         for column in settings
             .ap_table_layout
             .columns
