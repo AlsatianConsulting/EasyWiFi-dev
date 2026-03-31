@@ -853,8 +853,13 @@ pub fn prepare_interface_for_capture(
 fn initial_channel_request(mode: &ChannelSelectionMode) -> Option<(u16, String)> {
     match mode {
         ChannelSelectionMode::Locked { channel, ht_mode } => Some((*channel, ht_mode.clone())),
-        ChannelSelectionMode::HopAll { channels, .. }
-        | ChannelSelectionMode::HopBand { channels, .. } => channels
+        ChannelSelectionMode::HopAll {
+            channels, ht_mode, ..
+        } => channels
+            .first()
+            .copied()
+            .map(|channel| (channel, ht_mode.clone())),
+        ChannelSelectionMode::HopBand { channels, .. } => channels
             .first()
             .copied()
             .map(|channel| (channel, "HT20".to_string())),
@@ -2031,13 +2036,17 @@ fn run_channel_control_loop(
     sender: Sender<CaptureEvent>,
     stop_flag: Arc<AtomicBool>,
 ) {
-    let (channels, dwell_ms, locked) = match mode {
-        ChannelSelectionMode::HopAll { channels, dwell_ms } => (channels, dwell_ms, None),
+    let (channels, dwell_ms, hop_ht_mode, locked) = match mode {
+        ChannelSelectionMode::HopAll {
+            channels,
+            dwell_ms,
+            ht_mode,
+        } => (channels, dwell_ms, ht_mode, None),
         ChannelSelectionMode::HopBand {
             channels, dwell_ms, ..
-        } => (channels, dwell_ms, None),
+        } => (channels, dwell_ms, "HT20".to_string(), None),
         ChannelSelectionMode::Locked { channel, ht_mode } => {
-            (vec![channel], 0, Some((channel, ht_mode)))
+            (vec![channel], 0, ht_mode.clone(), Some((channel, ht_mode)))
         }
     };
 
@@ -2085,10 +2094,10 @@ fn run_channel_control_loop(
         let mut index = 0usize;
         while !stop_flag.load(Ordering::Relaxed) && !active_channels.is_empty() {
             let channel = active_channels[index % active_channels.len()];
-            if let Err(err) = set_channel_with_ht_direct(interface_name, channel, "HT20") {
+            if let Err(err) = set_channel_with_ht_direct(interface_name, channel, &hop_ht_mode) {
                 let _ = sender.send(CaptureEvent::Log(format!(
-                    "channel hop set failed on {} channel {} (HT20): {}",
-                    interface_name, channel, err
+                    "channel hop set failed on {} channel {} ({}): {}",
+                    interface_name, channel, hop_ht_mode, err
                 )));
                 active_channels.retain(|candidate| *candidate != channel);
                 if active_channels.is_empty() {
@@ -2114,14 +2123,19 @@ fn run_channel_control_loop(
         return;
     }
 
-    let mut hopper = match spawn_privileged_channel_hopper(interface_name, dwell, "HT20", &channels)
-    {
+    let mut hopper = match spawn_privileged_channel_hopper(
+        interface_name,
+        dwell,
+        &hop_ht_mode,
+        &channels,
+    ) {
         Ok(proc) => {
             let _ = sender.send(CaptureEvent::Log(format!(
-                "channel hopper running on {} across {} channels at {} ms dwell",
+                "channel hopper running on {} across {} channels at {} ms dwell ({})",
                 interface_name,
                 channels.len(),
-                dwell
+                dwell,
+                hop_ht_mode
             )));
             proc.child
         }

@@ -10,9 +10,9 @@ use crate::model::{
 use crate::oui::OuiDatabase;
 use crate::settings::{
     default_ap_table_layout, default_assoc_client_table_layout, default_bluetooth_table_layout,
-    default_client_table_layout, settings_file_path, AppSettings, ChannelSelectionMode,
-    GpsSettings, InterfaceSettings, StreamProtocol, TableColumnLayout, TableLayout,
-    WatchlistDeviceType, WatchlistEntry, WatchlistSettings, WifiPacketHeaderMode,
+    default_client_table_layout, default_hop_ht_mode, settings_file_path, AppSettings,
+    ChannelSelectionMode, GpsSettings, InterfaceSettings, StreamProtocol, TableColumnLayout,
+    TableLayout, WatchlistDeviceType, WatchlistEntry, WatchlistSettings, WifiPacketHeaderMode,
 };
 use crate::storage::StorageEngine;
 use anyhow::{Context, Result};
@@ -2064,6 +2064,7 @@ fn build_ui(app: &Application) -> Result<()> {
             channel_mode: ChannelSelectionMode::HopAll {
                 channels: vec![1, 6, 11, 36, 40, 44, 48],
                 dwell_ms: 200,
+                ht_mode: default_hop_ht_mode(),
             },
             enabled: true,
         }]
@@ -2746,11 +2747,16 @@ fn describe_channel_mode(mode: &ChannelSelectionMode) -> String {
             channels.len(),
             dwell_ms
         ),
-        ChannelSelectionMode::HopAll { channels, dwell_ms } => {
+        ChannelSelectionMode::HopAll {
+            channels,
+            dwell_ms,
+            ht_mode,
+        } => {
             format!(
-                "Hop Specific [{} channels @ {} ms]",
+                "Hop Specific [{} channels @ {} ms, {}]",
                 channels.len(),
-                dwell_ms
+                dwell_ms,
+                ht_mode
             )
         }
     }
@@ -10094,6 +10100,14 @@ fn open_interface_settings_dialog_inner(
     lock_ht_combo.set_visible(false);
     let lock_ht_buttons = Rc::new(RefCell::new(Vec::<(String, ToggleButton)>::new()));
     let lock_ht_button_box = GtkBox::new(Orientation::Horizontal, 6);
+    let hop_ht_combo = ComboBoxText::new();
+    hop_ht_combo.append(Some("HT20"), "HT20");
+    hop_ht_combo.append(Some("HT40+"), "HT40+");
+    hop_ht_combo.append(Some("HT40-"), "HT40-");
+    hop_ht_combo.set_active_id(Some("HT20"));
+    hop_ht_combo.set_visible(false);
+    let hop_ht_buttons = Rc::new(RefCell::new(Vec::<(String, ToggleButton)>::new()));
+    let hop_ht_button_box = GtkBox::new(Orientation::Horizontal, 6);
 
     let wifi_scan_check = CheckButton::with_label("Scan Wi-Fi");
     let bluetooth_scan_check = CheckButton::with_label("Scan Bluetooth");
@@ -10159,6 +10173,13 @@ fn open_interface_settings_dialog_inner(
     ht_row.append(&ht_label);
     ht_row.append(&lock_ht_button_box);
 
+    let hop_ht_row = GtkBox::new(Orientation::Horizontal, 8);
+    let hop_ht_label = Label::new(Some("Hop Bandwidth"));
+    hop_ht_label.set_xalign(0.0);
+    hop_ht_label.set_width_chars(18);
+    hop_ht_row.append(&hop_ht_label);
+    hop_ht_row.append(&hop_ht_button_box);
+
     let wifi_row = GtkBox::new(Orientation::Horizontal, 8);
     let wifi_label = Label::new(Some("Wi-Fi"));
     wifi_label.set_xalign(0.0);
@@ -10210,6 +10231,7 @@ fn open_interface_settings_dialog_inner(
     root.append(&band_row);
     root.append(&lock_row);
     root.append(&ht_row);
+    root.append(&hop_ht_row);
     root.append(&wifi_row);
     root.append(&bluetooth_row);
     root.append(&bluetooth_controller_row);
@@ -10297,6 +10319,69 @@ fn open_interface_settings_dialog_inner(
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "HT20".to_string());
             for (mode, button) in lock_ht_buttons.borrow().iter() {
+                button.set_active(mode == &active);
+            }
+        }));
+    }
+
+    let rebuild_hop_ht_buttons = Rc::new(RefCell::new(None::<Box<dyn Fn(Vec<String>)>>));
+    {
+        let hop_ht_combo = hop_ht_combo.clone();
+        let hop_ht_button_box = hop_ht_button_box.clone();
+        let hop_ht_buttons = hop_ht_buttons.clone();
+        let rebuild = rebuild_hop_ht_buttons.clone();
+        *rebuild.borrow_mut() = Some(Box::new(move |choices: Vec<String>| {
+            while let Some(child) = hop_ht_button_box.first_child() {
+                hop_ht_button_box.remove(&child);
+            }
+            hop_ht_buttons.borrow_mut().clear();
+
+            let current = hop_ht_combo
+                .active_id()
+                .map(|v| v.to_string())
+                .unwrap_or_else(default_hop_ht_mode);
+            let mut modes = choices;
+            if !modes.iter().any(|m| m == "HT20") {
+                modes.insert(0, "HT20".to_string());
+            }
+            modes.sort();
+            modes.dedup();
+
+            for mode in modes {
+                let button = ToggleButton::with_label(&format!("[{}]", mode));
+                hop_ht_button_box.append(&button);
+                hop_ht_buttons
+                    .borrow_mut()
+                    .push((mode.clone(), button.clone()));
+            }
+
+            let buttons = hop_ht_buttons.borrow().clone();
+            for (mode, button) in buttons.iter() {
+                let peers = hop_ht_buttons.borrow().clone();
+                let mode = mode.clone();
+                let hop_ht_combo = hop_ht_combo.clone();
+                button.connect_toggled(move |btn| {
+                    if btn.is_active() {
+                        for (_, peer) in peers.iter() {
+                            if peer.as_ptr() != btn.as_ptr() {
+                                peer.set_active(false);
+                            }
+                        }
+                        hop_ht_combo.set_active_id(Some(&mode));
+                    } else if !peers.iter().any(|(_, peer)| peer.is_active()) {
+                        btn.set_active(true);
+                    }
+                });
+            }
+
+            if !hop_ht_combo.set_active_id(Some(&current)) {
+                hop_ht_combo.set_active_id(Some("HT20"));
+            }
+            let active = hop_ht_combo
+                .active_id()
+                .map(|v| v.to_string())
+                .unwrap_or_else(default_hop_ht_mode);
+            for (mode, button) in hop_ht_buttons.borrow().iter() {
                 button.set_active(mode == &active);
             }
         }));
@@ -10424,6 +10509,8 @@ fn open_interface_settings_dialog_inner(
         let band_combo = band_combo.clone();
         let rebuild_channel_table = rebuild_channel_table.clone();
         let rebuild_lock_ht_buttons = rebuild_lock_ht_buttons.clone();
+        let hop_ht_combo = hop_ht_combo.clone();
+        let rebuild_hop_ht_buttons = rebuild_hop_ht_buttons.clone();
         let apply = apply_interface_capability.clone();
         *apply.borrow_mut() = Some(Box::new(move || {
             let selected = interface_combo
@@ -10485,17 +10572,31 @@ fn open_interface_settings_dialog_inner(
                     .active_id()
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "HT20".to_string());
+                let current_hop_ht = hop_ht_combo
+                    .active_id()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(default_hop_ht_mode);
                 let ht_choices = lock_ht_mode_choices_from_capability(&cap.ht_modes);
                 lock_ht_combo.remove_all();
+                hop_ht_combo.remove_all();
                 for mode in &ht_choices {
                     lock_ht_combo.append(Some(mode), mode);
+                    hop_ht_combo.append(Some(mode), mode);
                 }
                 if ht_choices.iter().any(|m| m == &current_ht) {
                     lock_ht_combo.set_active_id(Some(&current_ht));
                 } else {
                     lock_ht_combo.set_active_id(Some("HT20"));
                 }
+                if ht_choices.iter().any(|m| m == &current_hop_ht) {
+                    hop_ht_combo.set_active_id(Some(&current_hop_ht));
+                } else {
+                    hop_ht_combo.set_active_id(Some("HT20"));
+                }
                 if let Some(render_ht) = rebuild_lock_ht_buttons.borrow().as_ref() {
+                    render_ht(ht_choices.clone());
+                }
+                if let Some(render_ht) = rebuild_hop_ht_buttons.borrow().as_ref() {
                     render_ht(ht_choices.clone());
                 }
                 if let Some(render_channels) = rebuild_channel_table.borrow().as_ref() {
@@ -10516,6 +10617,7 @@ fn open_interface_settings_dialog_inner(
         let band_row = band_row.clone();
         let lock_row = lock_row.clone();
         let ht_row = ht_row.clone();
+        let hop_ht_row = hop_ht_row.clone();
         let wifi_scan_check = wifi_scan_check.clone();
         let update_mode = update_mode_visibility.clone();
         *update_mode.borrow_mut() = Some(Box::new(move || {
@@ -10527,6 +10629,7 @@ fn open_interface_settings_dialog_inner(
                 band_row.set_visible(false);
                 lock_row.set_visible(false);
                 ht_row.set_visible(false);
+                hop_ht_row.set_visible(false);
                 return;
             }
             let mode = mode_combo
@@ -10540,6 +10643,7 @@ fn open_interface_settings_dialog_inner(
                     band_row.set_visible(true);
                     lock_row.set_visible(false);
                     ht_row.set_visible(false);
+                    hop_ht_row.set_visible(false);
                 }
                 "locked" => {
                     channels_table_row.set_visible(false);
@@ -10547,6 +10651,7 @@ fn open_interface_settings_dialog_inner(
                     band_row.set_visible(false);
                     lock_row.set_visible(true);
                     ht_row.set_visible(true);
+                    hop_ht_row.set_visible(false);
                 }
                 _ => {
                     channels_table_row.set_visible(true);
@@ -10554,6 +10659,7 @@ fn open_interface_settings_dialog_inner(
                     band_row.set_visible(false);
                     lock_row.set_visible(false);
                     ht_row.set_visible(false);
+                    hop_ht_row.set_visible(true);
                 }
             }
         }));
@@ -10689,7 +10795,11 @@ fn open_interface_settings_dialog_inner(
             interface_combo.set_active_id(Some(&iface.interface_name));
         }
         match &iface.channel_mode {
-            ChannelSelectionMode::HopAll { channels, dwell_ms } => {
+            ChannelSelectionMode::HopAll {
+                channels,
+                dwell_ms,
+                ht_mode,
+            } => {
                 mode_combo.set_active_id(Some("hop_specific"));
                 channels_entry.set_text(
                     &channels
@@ -10699,6 +10809,7 @@ fn open_interface_settings_dialog_inner(
                         .join(","),
                 );
                 dwell_entry.set_text(&dwell_ms.to_string());
+                hop_ht_combo.set_active_id(Some(ht_mode));
             }
             ChannelSelectionMode::HopBand {
                 band,
@@ -10784,6 +10895,7 @@ fn open_interface_settings_dialog_inner(
         let band_combo = band_combo.clone();
         let lock_channel_entry = lock_channel_entry.clone();
         let lock_ht_combo = lock_ht_combo.clone();
+        let hop_ht_combo = hop_ht_combo.clone();
         let wifi_scan_check = wifi_scan_check.clone();
         let bluetooth_scan_check = bluetooth_scan_check.clone();
         let bluetooth_controller_combo = bluetooth_controller_combo.clone();
@@ -10818,6 +10930,10 @@ fn open_interface_settings_dialog_inner(
                 .active_id()
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "HT20".to_string());
+            let hop_ht_mode = hop_ht_combo
+                .active_id()
+                .map(|v| v.to_string())
+                .unwrap_or_else(default_hop_ht_mode);
             let wifi_enabled = wifi_scan_check.is_active();
             let bluetooth_enabled = bluetooth_scan_check.is_active();
             let bluetooth_controller = if !bluetooth_enabled {
@@ -10910,6 +11026,7 @@ fn open_interface_settings_dialog_inner(
                         sanitized_parsed_channels
                     },
                     dwell_ms,
+                    ht_mode: hop_ht_mode,
                 },
             };
 
@@ -11894,6 +12011,7 @@ fn detect_interface_settings() -> Vec<InterfaceSettings> {
                 .map(|c| c.channel)
                 .collect(),
             dwell_ms: 200,
+            ht_mode: default_hop_ht_mode(),
         },
         enabled: true,
     }]

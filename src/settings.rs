@@ -113,6 +113,10 @@ pub fn default_wifi_packet_header_mode() -> WifiPacketHeaderMode {
     WifiPacketHeaderMode::Radiotap
 }
 
+pub fn default_hop_ht_mode() -> String {
+    "HT20".to_string()
+}
+
 pub fn default_enable_wifi_frame_parsing() -> bool {
     true
 }
@@ -739,6 +743,8 @@ pub enum ChannelSelectionMode {
     HopAll {
         channels: Vec<u16>,
         dwell_ms: u64,
+        #[serde(default = "default_hop_ht_mode")]
+        ht_mode: String,
     },
     HopBand {
         band: crate::model::SpectrumBand,
@@ -756,6 +762,7 @@ impl Default for ChannelSelectionMode {
         Self::HopAll {
             channels: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 36, 40, 44, 48],
             dwell_ms: 200,
+            ht_mode: default_hop_ht_mode(),
         }
     }
 }
