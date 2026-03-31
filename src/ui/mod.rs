@@ -96,6 +96,13 @@ const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 360;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 300;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 300;
 
+fn is_small_display() -> bool {
+    let model = std::fs::read_to_string("/proc/device-tree/model")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    model.contains("raspberry pi")
+}
+
 #[derive(Clone)]
 enum PersistenceCommand {
     ReplaceStorage(StorageEngine),
@@ -2034,6 +2041,8 @@ fn build_ui(app: &Application) -> Result<()> {
     if settings.output_root.as_os_str().is_empty() {
         settings.output_root = output_dir.clone();
     }
+    settings.window_width = settings.window_width.max(MIN_WINDOW_WIDTH);
+    settings.window_height = settings.window_height.max(MIN_WINDOW_HEIGHT);
     sanitize_table_layout(&mut settings.ap_table_layout, &default_ap_table_layout());
     sanitize_table_layout(
         &mut settings.client_table_layout,
@@ -2206,6 +2215,10 @@ fn build_ui(app: &Application) -> Result<()> {
         pending_scan_restart_message: None,
     }));
     state.borrow_mut().backfill_oui_labels();
+    window.set_default_size(
+        state.borrow().settings.window_width,
+        state.borrow().settings.window_height,
+    );
 
     let global_status_label = Label::new(Some("starting"));
     global_status_label.set_xalign(0.0);
@@ -2245,8 +2258,8 @@ fn build_ui(app: &Application) -> Result<()> {
     content_paned.set_position(DEFAULT_CONTENT_PANE_POSITION);
     content_paned.set_resize_start_child(true);
     content_paned.set_resize_end_child(true);
-    content_paned.set_shrink_start_child(false);
-    content_paned.set_shrink_end_child(false);
+    content_paned.set_shrink_start_child(true);
+    content_paned.set_shrink_end_child(true);
     content_paned.set_start_child(Some(&notebook));
     content_paned.set_end_child(Some(&global_status_container));
     let pagination_defaults = PaginationDefaultsUi {
@@ -2268,7 +2281,14 @@ fn build_ui(app: &Application) -> Result<()> {
     let (controls, capture_start_btn, capture_stop_btn) =
         build_capture_controls(&window, state.clone());
     root.append(&controls);
-    root.append(&content_paned);
+    let content_scrolled = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .child(&content_paned)
+        .build();
+    root.append(&content_scrolled);
 
     {
         let notebook = notebook.clone();
@@ -2297,6 +2317,30 @@ fn build_ui(app: &Application) -> Result<()> {
         &global_status_container,
         &widgets,
     );
+    {
+        let mut s = state.borrow_mut();
+        if s.settings.window_fullscreen {
+            window.fullscreen();
+        } else if s.settings.window_maximized {
+            window.maximize();
+        } else if is_small_display() {
+            window.fullscreen();
+            s.settings.window_fullscreen = true;
+            s.save_settings_to_disk();
+        }
+    }
+    {
+        let state = state.clone();
+        window.connect_close_request(move |w| {
+            let mut s = state.borrow_mut();
+            s.settings.window_width = w.width().max(MIN_WINDOW_WIDTH);
+            s.settings.window_height = w.height().max(MIN_WINDOW_HEIGHT);
+            s.settings.window_maximized = w.is_maximized();
+            s.settings.window_fullscreen = w.is_fullscreen();
+            s.save_settings_to_disk();
+            glib::Propagation::Proceed
+        });
+    }
     window.present();
 
     bind_poll_loop(
@@ -3308,8 +3352,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_summary_row.set_position(DEFAULT_AP_SUMMARY_ROW_POSITION);
     ap_summary_row.set_resize_start_child(true);
     ap_summary_row.set_resize_end_child(true);
-    ap_summary_row.set_shrink_start_child(false);
-    ap_summary_row.set_shrink_end_child(false);
+    ap_summary_row.set_shrink_start_child(true);
+    ap_summary_row.set_shrink_end_child(true);
     ap_summary_row.set_start_child(Some(&ap_detail_scroll));
     ap_summary_row.set_end_child(Some(&ap_packet_box));
 
@@ -3331,8 +3375,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_detail_sections.set_position(DEFAULT_AP_DETAIL_SECTIONS_POSITION);
     ap_detail_sections.set_resize_start_child(true);
     ap_detail_sections.set_resize_end_child(true);
-    ap_detail_sections.set_shrink_start_child(false);
-    ap_detail_sections.set_shrink_end_child(false);
+    ap_detail_sections.set_shrink_start_child(true);
+    ap_detail_sections.set_shrink_end_child(true);
     ap_detail_sections.set_start_child(Some(&ap_summary_row));
     ap_detail_sections.set_end_child(Some(&ap_notes_box));
 
@@ -3372,8 +3416,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_bottom.set_position(DEFAULT_AP_BOTTOM_POSITION);
     ap_bottom.set_resize_start_child(true);
     ap_bottom.set_resize_end_child(true);
-    ap_bottom.set_shrink_start_child(false);
-    ap_bottom.set_shrink_end_child(false);
+    ap_bottom.set_shrink_start_child(true);
+    ap_bottom.set_shrink_end_child(true);
     ap_bottom.set_end_child(Some(&ap_assoc_box));
 
     let ap_root = Paned::new(Orientation::Vertical);
@@ -3381,8 +3425,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_root.set_position(DEFAULT_AP_ROOT_POSITION);
     ap_root.set_resize_start_child(true);
     ap_root.set_resize_end_child(true);
-    ap_root.set_shrink_start_child(false);
-    ap_root.set_shrink_end_child(false);
+    ap_root.set_shrink_start_child(true);
+    ap_root.set_shrink_end_child(true);
     ap_root.set_start_child(Some(&ap_top));
     ap_root.set_end_child(Some(&ap_bottom));
 
@@ -3614,8 +3658,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     client_root.set_position(DEFAULT_CLIENT_ROOT_POSITION);
     client_root.set_resize_start_child(true);
     client_root.set_resize_end_child(true);
-    client_root.set_shrink_start_child(false);
-    client_root.set_shrink_end_child(false);
+    client_root.set_shrink_start_child(true);
+    client_root.set_shrink_end_child(true);
     client_root.set_start_child(Some(&client_top));
     client_root.set_end_child(Some(&client_detail_notebook));
 
@@ -3876,8 +3920,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     channel_root.set_position(DEFAULT_CHANNEL_ROOT_POSITION);
     channel_root.set_resize_start_child(true);
     channel_root.set_resize_end_child(true);
-    channel_root.set_shrink_start_child(false);
-    channel_root.set_shrink_end_child(false);
+    channel_root.set_shrink_start_child(true);
+    channel_root.set_shrink_end_child(true);
     channel_root.set_start_child(Some(&channel_controls));
     channel_root.set_end_child(Some(&channel_status_scrolled));
     notebook.append_page(&channel_root, Some(&Label::new(Some("Channel Usage"))));

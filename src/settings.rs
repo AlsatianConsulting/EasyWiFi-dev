@@ -157,6 +157,22 @@ pub fn default_use_zulu_time() -> bool {
     false
 }
 
+pub fn default_window_width() -> i32 {
+    1280
+}
+
+pub fn default_window_height() -> i32 {
+    900
+}
+
+pub fn default_window_maximized() -> bool {
+    false
+}
+
+pub fn default_window_fullscreen() -> bool {
+    false
+}
+
 pub fn default_bluetooth_identity_expanded() -> bool {
     true
 }
@@ -919,6 +935,14 @@ pub struct AppSettings {
     pub auto_check_oui_updates: bool,
     #[serde(default = "default_use_zulu_time")]
     pub use_zulu_time: bool,
+    #[serde(default = "default_window_width")]
+    pub window_width: i32,
+    #[serde(default = "default_window_height")]
+    pub window_height: i32,
+    #[serde(default = "default_window_maximized")]
+    pub window_maximized: bool,
+    #[serde(default = "default_window_fullscreen")]
+    pub window_fullscreen: bool,
 }
 
 impl Default for AppSettings {
@@ -956,6 +980,10 @@ impl Default for AppSettings {
             auto_create_exports_on_startup: default_auto_create_exports_on_startup(),
             auto_check_oui_updates: default_auto_check_oui_updates(),
             use_zulu_time: default_use_zulu_time(),
+            window_width: default_window_width(),
+            window_height: default_window_height(),
+            window_maximized: default_window_maximized(),
+            window_fullscreen: default_window_fullscreen(),
         }
     }
 }
