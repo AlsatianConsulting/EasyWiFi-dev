@@ -2255,6 +2255,7 @@ fn build_ui(app: &Application) -> Result<()> {
     notebook.set_vexpand(true);
     let content_paned = Paned::new(Orientation::Vertical);
     content_paned.set_wide_handle(true);
+    content_paned.set_size_request(1400, -1);
     content_paned.set_position(DEFAULT_CONTENT_PANE_POSITION);
     content_paned.set_resize_start_child(true);
     content_paned.set_resize_end_child(true);
@@ -3296,6 +3297,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vexpand(true)
         .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .min_content_width(1200)
         .child(&ap_list)
         .build();
     let (ap_pagination_row, ap_pagination) = build_table_pagination_controls(
@@ -3339,6 +3341,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vexpand(true)
         .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .min_content_width(1200)
         .min_content_height(250)
         .child(&ap_detail_label)
         .build();
@@ -3398,6 +3401,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vexpand(true)
         .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .min_content_width(1200)
         .child(&ap_assoc_list)
         .build();
     let (ap_assoc_pagination_row, ap_assoc_pagination) = build_table_pagination_controls(
@@ -3441,6 +3445,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vexpand(true)
         .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .min_content_width(1200)
         .child(&client_list)
         .build();
     let (client_pagination_row, client_pagination) = build_table_pagination_controls(
@@ -3481,6 +3486,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .hexpand(true)
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .min_content_width(1200)
         .min_content_height(260)
         .child(&client_detail_box)
         .build();
@@ -3682,6 +3688,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vexpand(true)
         .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .min_content_width(1200)
         .child(&bluetooth_list)
         .build();
     let (bluetooth_pagination_row, bluetooth_pagination) = build_table_pagination_controls(
@@ -3787,6 +3794,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .hexpand(true)
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .min_content_width(1200)
         .min_content_height(220)
         .child(&bluetooth_detail_box)
         .build();
