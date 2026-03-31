@@ -2288,16 +2288,7 @@ fn build_ui(app: &Application) -> Result<()> {
         window.add_controller(key_controller);
     }
 
-    let root_scrolled = ScrolledWindow::builder()
-        .hexpand(true)
-        .vexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .min_content_width(MIN_WINDOW_WIDTH)
-        .min_content_height(MIN_WINDOW_HEIGHT)
-        .child(&root)
-        .build();
-    window.set_child(Some(&root_scrolled));
+    window.set_child(Some(&root));
     apply_view_visibility(
         &state.borrow().settings,
         &content_paned,
