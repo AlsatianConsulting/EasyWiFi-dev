@@ -2631,6 +2631,35 @@ fn build_menubar(
     }
     app.add_action(&settings_show_device_pane_action);
 
+    let dark_mode_initial = state.borrow().settings.dark_mode;
+    let settings_dark_mode_action = gio::SimpleAction::new_stateful(
+        "settings_dark_mode",
+        None,
+        &glib::Variant::from(dark_mode_initial),
+    );
+    {
+        let state = state.clone();
+        settings_dark_mode_action.connect_activate(move |action, _| {
+            let current = action
+                .state()
+                .and_then(|variant| variant.get::<bool>())
+                .unwrap_or(false);
+            let next = !current;
+            action.set_state(&glib::Variant::from(next));
+            apply_dark_mode_preference(next);
+            let mut s = state.borrow_mut();
+            if s.settings.dark_mode != next {
+                s.settings.dark_mode = next;
+                s.save_settings_to_disk();
+            }
+            s.push_status(format!(
+                "dark mode {}",
+                if next { "enabled" } else { "disabled" }
+            ));
+        });
+    }
+    app.add_action(&settings_dark_mode_action);
+
     let set_default_rows_per_page =
         |rows: usize, state: &Rc<RefCell<AppState>>, pagination_defaults: &PaginationDefaultsUi| {
             {
@@ -2748,6 +2777,7 @@ fn build_menubar(
     view_menu.append(Some("Device Pane"), Some("app.settings_show_device_pane"));
     view_menu.append(Some("Details Pane"), Some("app.settings_show_detail_pane"));
     view_menu.append(Some("Status Pane"), Some("app.settings_show_status_bar"));
+    view_menu.append(Some("Dark Mode"), Some("app.settings_dark_mode"));
 
     let settings_menu = gio::Menu::new();
     settings_menu.append_submenu(Some("View"), &view_menu);
@@ -12053,7 +12083,7 @@ fn open_preferences_window(
                     apply_dark_mode_preference(dark_mode_check.is_active());
                 }
                 state.borrow_mut().save_settings_to_disk();
-                if view_changed {
+                if view_changed || dark_mode_changed {
                     if let Some(app) = window.application() {
                         sync_view_menu_action_state(
                             &app,
@@ -12069,6 +12099,11 @@ fn open_preferences_window(
                             &app,
                             "settings_show_device_pane",
                             show_device_pane_check.is_active(),
+                        );
+                        sync_view_menu_action_state(
+                            &app,
+                            "settings_dark_mode",
+                            dark_mode_check.is_active(),
                         );
                     }
                 }
