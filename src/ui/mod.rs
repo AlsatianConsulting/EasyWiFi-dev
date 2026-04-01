@@ -81,6 +81,8 @@ const WATCHDOG_RESTART_GRACE_SECS: u64 = 12;
 const WATCHDOG_MAX_CONSECUTIVE_RESTARTS: u8 = 3;
 const TABLE_CHAR_WIDTH_PX: i32 = 10;
 const AP_TABLE_MIN_WIDTH_PX: i32 = 1200;
+const CLIENT_TABLE_MIN_WIDTH_PX: i32 = 1200;
+const BLUETOOTH_TABLE_MIN_WIDTH_PX: i32 = 1200;
 const DEFAULT_TABLE_PAGE_SIZE: usize = 50;
 const TABLE_PAGE_SIZE_OPTIONS: &[usize] = &[25, 50, 100, 200];
 const DEFAULT_WINDOW_WIDTH: i32 = 720;
@@ -4961,12 +4963,27 @@ fn bind_poll_loop(
             let s = state.borrow();
             let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout)
                 .max(AP_TABLE_MIN_WIDTH_PX);
+            let client_row_width_px = table_row_width_px_for_layout(&s.settings.client_table_layout)
+                .max(CLIENT_TABLE_MIN_WIDTH_PX);
+            let bluetooth_row_width_px =
+                table_row_width_px_for_layout(&s.settings.bluetooth_table_layout)
+                    .max(BLUETOOTH_TABLE_MIN_WIDTH_PX);
             ap_list.set_size_request(ap_row_width_px, -1);
             ap_list_canvas.set_size_request(ap_row_width_px, -1);
             ap_header_holder.set_size_request(ap_row_width_px, -1);
             ap_header_holder.set_halign(gtk::Align::Start);
             ap_list.set_halign(gtk::Align::Start);
             ap_list.set_hexpand(false);
+            client_list.set_size_request(client_row_width_px, -1);
+            client_header_holder.set_size_request(client_row_width_px, -1);
+            client_header_holder.set_halign(gtk::Align::Start);
+            client_list.set_halign(gtk::Align::Start);
+            client_list.set_hexpand(false);
+            bluetooth_list.set_size_request(bluetooth_row_width_px, -1);
+            bluetooth_header_holder.set_size_request(bluetooth_row_width_px, -1);
+            bluetooth_header_holder.set_halign(gtk::Align::Start);
+            bluetooth_list.set_halign(gtk::Align::Start);
+            bluetooth_list.set_hexpand(false);
         }
 
         let ap_selected_key_now = ap_selected_key.borrow().clone();
@@ -6513,6 +6530,9 @@ fn refresh_client_list(
     let page_size = pagination.page_size.get();
     let (current_page, total_pages, start, end) =
         paged_indices(total_items, pagination.current_page.get(), page_size);
+    let row_width_px = table_row_width_px_for_layout(&settings.client_table_layout)
+        .max(CLIENT_TABLE_MIN_WIDTH_PX);
+    list.set_size_request(row_width_px.max(0), -1);
 
     for client in filtered
         .into_iter()
@@ -6532,6 +6552,9 @@ fn refresh_client_list(
             false,
         );
         let line = GtkBox::new(Orientation::Horizontal, 14);
+        line.set_hexpand(false);
+        line.set_halign(gtk::Align::Start);
+        line.set_size_request(row_width_px, -1);
         for column in settings
             .client_table_layout
             .columns
@@ -6690,6 +6713,9 @@ fn refresh_bluetooth_list(
     let page_size = pagination.page_size.get();
     let (current_page, total_pages, start, end) =
         paged_indices(total_items, pagination.current_page.get(), page_size);
+    let row_width_px = table_row_width_px_for_layout(&settings.bluetooth_table_layout)
+        .max(BLUETOOTH_TABLE_MIN_WIDTH_PX);
+    list.set_size_request(row_width_px.max(0), -1);
 
     for device in filtered
         .into_iter()
@@ -6710,6 +6736,9 @@ fn refresh_bluetooth_list(
         );
 
         let line = GtkBox::new(Orientation::Horizontal, 14);
+        line.set_hexpand(false);
+        line.set_halign(gtk::Align::Start);
+        line.set_size_request(row_width_px, -1);
         for column in settings
             .bluetooth_table_layout
             .columns
