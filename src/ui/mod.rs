@@ -80,6 +80,7 @@ const BLUETOOTH_WATCHDOG_STALL_TIMEOUT_SECS: u64 = 20;
 const WATCHDOG_RESTART_GRACE_SECS: u64 = 12;
 const WATCHDOG_MAX_CONSECUTIVE_RESTARTS: u8 = 3;
 const TABLE_CHAR_WIDTH_PX: i32 = 10;
+const AP_TABLE_MIN_WIDTH_PX: i32 = 1200;
 const DEFAULT_TABLE_PAGE_SIZE: usize = 50;
 const TABLE_PAGE_SIZE_OPTIONS: &[usize] = &[25, 50, 100, 200];
 const DEFAULT_WINDOW_WIDTH: i32 = 720;
@@ -4973,7 +4974,8 @@ fn bind_poll_loop(
 
         {
             let s = state.borrow();
-            let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout);
+            let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout)
+                .max(AP_TABLE_MIN_WIDTH_PX);
             ap_list.set_size_request(ap_row_width_px, -1);
             ap_list_canvas.set_size_request(ap_row_width_px, -1);
             ap_header_holder.set_size_request(ap_row_width_px, -1);
@@ -6367,7 +6369,8 @@ fn refresh_ap_list(
             })
         })
         .collect::<Vec<_>>();
-    let row_width_px = table_row_width_px_for_layout(&settings.ap_table_layout);
+    let row_width_px = table_row_width_px_for_layout(&settings.ap_table_layout)
+        .max(AP_TABLE_MIN_WIDTH_PX);
     list.set_size_request(row_width_px.max(0), -1);
     let total_items = filtered.len();
     let page_size = pagination.page_size.get();
