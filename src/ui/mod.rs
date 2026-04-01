@@ -3348,6 +3348,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&ap_list_canvas)
         .build();
+    ap_scrolled.set_overlay_scrolling(false);
     let (ap_pagination_row, ap_pagination) = build_table_pagination_controls(
         default_rows_per_page,
         table_filter_columns(&ap_layout, ap_column_label),
@@ -3505,14 +3506,19 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     client_list.set_selection_mode(gtk::SelectionMode::Single);
     client_list.set_activate_on_single_click(false);
     attach_listbox_click_selection(&client_list);
+    let client_list_canvas = GtkBox::new(Orientation::Horizontal, 0);
+    client_list_canvas.set_hexpand(false);
+    client_list_canvas.set_halign(gtk::Align::Start);
+    client_list_canvas.append(&client_list);
     let client_selection_suppressed = Rc::new(RefCell::new(false));
     let client_selected_key = Rc::new(RefCell::new(None::<String>));
     let client_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Always)
-        .child(&client_list)
+        .child(&client_list_canvas)
         .build();
+    client_scrolled.set_overlay_scrolling(false);
     let (client_pagination_row, client_pagination) = build_table_pagination_controls(
         default_rows_per_page,
         table_filter_columns(&client_layout, client_column_label),
@@ -3525,9 +3531,21 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         state.clone(),
     ));
     client_header_holder.append(&client_pagination.filter_bar);
+    let client_header_scrolled = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(false)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .child(&client_header_holder)
+        .build();
+    client_header_scrolled.set_hadjustment(Some(&client_scrolled.hadjustment()));
     let client_top = GtkBox::new(Orientation::Vertical, 4);
-    client_top.append(&client_header_holder);
+    client_top.append(&client_header_scrolled);
     client_top.append(&client_scrolled);
+    let client_hscroll =
+        Scrollbar::new(Orientation::Horizontal, Some(&client_scrolled.hadjustment()));
+    client_hscroll.set_hexpand(true);
+    client_top.append(&client_hscroll);
     client_top.append(&client_pagination_row);
 
     let client_detail_label = Label::new(None);
@@ -3743,6 +3761,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_list.set_selection_mode(gtk::SelectionMode::Single);
     bluetooth_list.set_activate_on_single_click(false);
     attach_listbox_click_selection(&bluetooth_list);
+    let bluetooth_list_canvas = GtkBox::new(Orientation::Horizontal, 0);
+    bluetooth_list_canvas.set_hexpand(false);
+    bluetooth_list_canvas.set_halign(gtk::Align::Start);
+    bluetooth_list_canvas.append(&bluetooth_list);
     let bluetooth_selection_suppressed = Rc::new(RefCell::new(false));
     let bluetooth_selected_key = Rc::new(RefCell::new(None::<String>));
     let bluetooth_header_holder = GtkBox::new(Orientation::Vertical, 0);
@@ -3755,16 +3777,29 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vexpand(true)
         .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Always)
-        .child(&bluetooth_list)
+        .child(&bluetooth_list_canvas)
         .build();
+    bluetooth_scrolled.set_overlay_scrolling(false);
     let (bluetooth_pagination_row, bluetooth_pagination) = build_table_pagination_controls(
         default_rows_per_page,
         table_filter_columns(&bluetooth_layout, bluetooth_column_label),
     );
     bluetooth_header_holder.append(&bluetooth_pagination.filter_bar);
+    let bluetooth_header_scrolled = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(false)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .child(&bluetooth_header_holder)
+        .build();
+    bluetooth_header_scrolled.set_hadjustment(Some(&bluetooth_scrolled.hadjustment()));
     let bluetooth_top = GtkBox::new(Orientation::Vertical, 4);
-    bluetooth_top.append(&bluetooth_header_holder);
+    bluetooth_top.append(&bluetooth_header_scrolled);
     bluetooth_top.append(&bluetooth_scrolled);
+    let bluetooth_hscroll =
+        Scrollbar::new(Orientation::Horizontal, Some(&bluetooth_scrolled.hadjustment()));
+    bluetooth_hscroll.set_hexpand(true);
+    bluetooth_top.append(&bluetooth_hscroll);
     bluetooth_top.append(&bluetooth_pagination_row);
 
     let bluetooth_identity_label = detail_section_label();
