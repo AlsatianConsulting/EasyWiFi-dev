@@ -4009,14 +4009,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     {
         let ap_selection_suppressed = ap_selection_suppressed.clone();
         let ap_selected_key = ap_selected_key.clone();
-        let ap_scrolled = ap_scrolled.clone();
         ap_list.connect_row_selected(move |_, row| {
             if *ap_selection_suppressed.borrow() {
                 return;
-            }
-            let adj = ap_scrolled.hadjustment();
-            if adj.value() != 0.0 {
-                adj.set_value(0.0);
             }
             *ap_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
         });
@@ -4069,14 +4064,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     {
         let client_selection_suppressed = client_selection_suppressed.clone();
         let client_selected_key = client_selected_key.clone();
-        let client_scrolled = client_scrolled.clone();
         client_list.connect_row_selected(move |_, row| {
             if *client_selection_suppressed.borrow() {
                 return;
-            }
-            let adj = client_scrolled.hadjustment();
-            if adj.value() != 0.0 {
-                adj.set_value(0.0);
             }
             *client_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
         });
@@ -4247,14 +4237,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     {
         let bluetooth_selection_suppressed = bluetooth_selection_suppressed.clone();
         let bluetooth_selected_key = bluetooth_selected_key.clone();
-        let bluetooth_scrolled = bluetooth_scrolled.clone();
         bluetooth_list.connect_row_selected(move |_, row| {
             if *bluetooth_selection_suppressed.borrow() {
                 return;
-            }
-            let adj = bluetooth_scrolled.hadjustment();
-            if adj.value() != 0.0 {
-                adj.set_value(0.0);
             }
             *bluetooth_selected_key.borrow_mut() = row.map(|entry| entry.widget_name().to_string());
         });
