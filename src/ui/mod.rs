@@ -5082,7 +5082,11 @@ fn bind_poll_loop(
 
         {
             let s = state.borrow();
-            let table_viewport_width_px = (window.width().max(MIN_WINDOW_WIDTH) - 52).max(320);
+            let table_viewport_width_px = if is_small_display() {
+                680
+            } else {
+                (window.width().max(MIN_WINDOW_WIDTH) - 52).max(320)
+            };
             let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout)
                 .max(AP_TABLE_MIN_WIDTH_PX);
             let client_row_width_px = table_row_width_px_for_layout(&s.settings.client_table_layout)
@@ -5092,10 +5096,16 @@ fn bind_poll_loop(
                     .max(BLUETOOTH_TABLE_MIN_WIDTH_PX);
             ap_header_scrolled.set_max_content_width(table_viewport_width_px);
             ap_scrolled.set_max_content_width(table_viewport_width_px);
+            ap_header_scrolled.set_size_request(table_viewport_width_px, -1);
+            ap_scrolled.set_size_request(table_viewport_width_px, -1);
             client_header_scrolled.set_max_content_width(table_viewport_width_px);
             client_scrolled.set_max_content_width(table_viewport_width_px);
+            client_header_scrolled.set_size_request(table_viewport_width_px, -1);
+            client_scrolled.set_size_request(table_viewport_width_px, -1);
             bluetooth_header_scrolled.set_max_content_width(table_viewport_width_px);
             bluetooth_scrolled.set_max_content_width(table_viewport_width_px);
+            bluetooth_header_scrolled.set_size_request(table_viewport_width_px, -1);
+            bluetooth_scrolled.set_size_request(table_viewport_width_px, -1);
             ap_list.set_size_request(ap_row_width_px, -1);
             ap_list_canvas.set_size_request(ap_row_width_px, -1);
             ap_header_holder.set_size_request(ap_row_width_px, -1);
