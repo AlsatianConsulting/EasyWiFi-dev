@@ -1656,6 +1656,8 @@ struct UiWidgets {
     ap_detail_notebook: Notebook,
     ap_assoc_box: GtkBox,
     ap_header_holder: GtkBox,
+    ap_header_scrolled: ScrolledWindow,
+    ap_scrolled: ScrolledWindow,
     ap_list_canvas: GtkBox,
     ap_list: ListBox,
     ap_pagination: TablePaginationUi,
@@ -1672,6 +1674,8 @@ struct UiWidgets {
     ap_scroll_adj: gtk::Adjustment,
     ap_scroll_debug_label: Label,
     client_header_holder: GtkBox,
+    client_header_scrolled: ScrolledWindow,
+    client_scrolled: ScrolledWindow,
     client_list: ListBox,
     client_pagination: TablePaginationUi,
     client_scroll_adj: gtk::Adjustment,
@@ -1694,6 +1698,8 @@ struct UiWidgets {
     wifi_geiger_state: Rc<RefCell<WifiGeigerUiState>>,
     bluetooth_list: ListBox,
     bluetooth_header_holder: GtkBox,
+    bluetooth_header_scrolled: ScrolledWindow,
+    bluetooth_scrolled: ScrolledWindow,
     bluetooth_pagination: TablePaginationUi,
     bluetooth_scroll_adj: gtk::Adjustment,
     bluetooth_scroll_debug_label: Label,
@@ -3354,6 +3360,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&ap_list_canvas)
         .build();
+    ap_scrolled.set_propagate_natural_width(false);
     ap_scrolled.set_overlay_scrolling(false);
     let (ap_pagination_row, ap_pagination) = build_table_pagination_controls(
         default_rows_per_page,
@@ -3370,6 +3377,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vscrollbar_policy(gtk::PolicyType::Never)
         .child(&ap_header_holder)
         .build();
+    ap_header_scrolled.set_propagate_natural_width(false);
     let ap_scroll_adj = ap_scrolled.hadjustment();
     let ap_header_hadj = ap_header_scrolled.hadjustment();
     {
@@ -3539,6 +3547,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&client_list_canvas)
         .build();
+    client_scrolled.set_propagate_natural_width(false);
     client_scrolled.set_overlay_scrolling(false);
     let (client_pagination_row, client_pagination) = build_table_pagination_controls(
         default_rows_per_page,
@@ -3559,6 +3568,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vscrollbar_policy(gtk::PolicyType::Never)
         .child(&client_header_holder)
         .build();
+    client_header_scrolled.set_propagate_natural_width(false);
     let client_scroll_adj = client_scrolled.hadjustment();
     let client_header_hadj = client_header_scrolled.hadjustment();
     {
@@ -3814,6 +3824,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&bluetooth_list_canvas)
         .build();
+    bluetooth_scrolled.set_propagate_natural_width(false);
     bluetooth_scrolled.set_overlay_scrolling(false);
     let (bluetooth_pagination_row, bluetooth_pagination) = build_table_pagination_controls(
         default_rows_per_page,
@@ -3827,6 +3838,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vscrollbar_policy(gtk::PolicyType::Never)
         .child(&bluetooth_header_holder)
         .build();
+    bluetooth_header_scrolled.set_propagate_natural_width(false);
     let bluetooth_scroll_adj = bluetooth_scrolled.hadjustment();
     let bluetooth_header_hadj = bluetooth_header_scrolled.hadjustment();
     {
@@ -4629,6 +4641,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_detail_notebook,
             ap_assoc_box,
             ap_header_holder,
+            ap_header_scrolled,
+            ap_scrolled,
             ap_list_canvas,
             ap_list,
             ap_pagination,
@@ -4645,6 +4659,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_scroll_adj,
             ap_scroll_debug_label,
             client_header_holder,
+            client_header_scrolled,
+            client_scrolled,
             client_list,
             client_pagination,
             client_scroll_adj,
@@ -4667,6 +4683,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             wifi_geiger_state,
             bluetooth_list,
             bluetooth_header_holder,
+            bluetooth_header_scrolled,
+            bluetooth_scrolled,
             bluetooth_pagination,
             bluetooth_scroll_adj,
             bluetooth_scroll_debug_label,
@@ -4713,6 +4731,8 @@ fn bind_poll_loop(
         ap_detail_notebook: _ap_detail_notebook,
         ap_assoc_box: _ap_assoc_box,
         ap_header_holder,
+        ap_header_scrolled,
+        ap_scrolled,
         ap_list_canvas,
         ap_list,
         ap_pagination,
@@ -4729,6 +4749,8 @@ fn bind_poll_loop(
         ap_scroll_adj,
         ap_scroll_debug_label,
         client_header_holder,
+        client_header_scrolled,
+        client_scrolled,
         client_list,
         client_pagination,
         client_scroll_adj,
@@ -4751,6 +4773,8 @@ fn bind_poll_loop(
         wifi_geiger_state,
         bluetooth_list,
         bluetooth_header_holder,
+        bluetooth_header_scrolled,
+        bluetooth_scrolled,
         bluetooth_pagination,
         bluetooth_scroll_adj,
         bluetooth_scroll_debug_label,
@@ -5058,6 +5082,7 @@ fn bind_poll_loop(
 
         {
             let s = state.borrow();
+            let table_viewport_width_px = (window.width().max(MIN_WINDOW_WIDTH) - 52).max(320);
             let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout)
                 .max(AP_TABLE_MIN_WIDTH_PX);
             let client_row_width_px = table_row_width_px_for_layout(&s.settings.client_table_layout)
@@ -5065,6 +5090,12 @@ fn bind_poll_loop(
             let bluetooth_row_width_px =
                 table_row_width_px_for_layout(&s.settings.bluetooth_table_layout)
                     .max(BLUETOOTH_TABLE_MIN_WIDTH_PX);
+            ap_header_scrolled.set_max_content_width(table_viewport_width_px);
+            ap_scrolled.set_max_content_width(table_viewport_width_px);
+            client_header_scrolled.set_max_content_width(table_viewport_width_px);
+            client_scrolled.set_max_content_width(table_viewport_width_px);
+            bluetooth_header_scrolled.set_max_content_width(table_viewport_width_px);
+            bluetooth_scrolled.set_max_content_width(table_viewport_width_px);
             ap_list.set_size_request(ap_row_width_px, -1);
             ap_list_canvas.set_size_request(ap_row_width_px, -1);
             ap_header_holder.set_size_request(ap_row_width_px, -1);
