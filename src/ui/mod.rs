@@ -98,6 +98,7 @@ const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 300;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 240;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 240;
+const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-A";
 
 fn is_small_display() -> bool {
     let model = std::fs::read_to_string("/proc/device-tree/model")
@@ -2019,7 +2020,7 @@ fn table_filter_columns(
 fn build_ui(app: &Application) -> Result<()> {
     let window = ApplicationWindow::builder()
         .application(app)
-        .title("EasyWiFi")
+        .title(format!("EasyWiFi [{}]", UI_BUILD_MARKER))
         .default_width(DEFAULT_WINDOW_WIDTH)
         .default_height(DEFAULT_WINDOW_HEIGHT)
         .build();
@@ -2238,7 +2239,7 @@ fn build_ui(app: &Application) -> Result<()> {
         state.borrow().settings.window_height,
     );
 
-    let global_status_label = Label::new(Some("starting"));
+    let global_status_label = Label::new(Some(&format!("starting [{}]", UI_BUILD_MARKER)));
     global_status_label.set_xalign(0.0);
     global_status_label.set_wrap(true);
     global_status_label.set_selectable(true);
@@ -2342,7 +2343,8 @@ fn build_ui(app: &Application) -> Result<()> {
         } else if s.settings.window_maximized {
             window.maximize();
         } else if is_small_display() {
-            window.maximize();
+            window.set_default_size(720, 720);
+            window.set_resizable(true);
         }
     }
     {
