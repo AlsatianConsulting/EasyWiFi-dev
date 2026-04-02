@@ -3498,6 +3498,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_assoc_outer_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
+        .min_content_width(260)
         .hscrollbar_policy(gtk::PolicyType::Always)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&ap_assoc_box)
@@ -3507,7 +3508,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_bottom.set_wide_handle(true);
     ap_bottom.set_position(DEFAULT_AP_BOTTOM_POSITION);
     ap_bottom.set_resize_start_child(true);
-    ap_bottom.set_resize_end_child(false);
+    ap_bottom.set_resize_end_child(true);
     ap_bottom.set_shrink_start_child(true);
     ap_bottom.set_shrink_end_child(true);
     ap_bottom.set_end_child(Some(&ap_assoc_outer_scrolled));
@@ -4798,8 +4799,8 @@ fn bind_poll_loop(
     window: &ApplicationWindow,
 ) {
     let UiWidgets {
-        ap_root: _ap_root,
-        ap_bottom: _ap_bottom,
+        ap_root,
+        ap_bottom,
         ap_detail_notebook: _ap_detail_notebook,
         ap_assoc_box: _ap_assoc_box,
         ap_header_holder,
@@ -4830,7 +4831,7 @@ fn bind_poll_loop(
         client_selection_suppressed,
         client_selected_key,
         client_detail_label,
-        client_root: _client_root,
+        client_root,
         client_detail_notebook: _client_detail_notebook,
         ap_wifi_geiger_target_label,
         ap_wifi_geiger_lock_label,
@@ -4861,7 +4862,7 @@ fn bind_poll_loop(
         bluetooth_characteristics_label,
         bluetooth_descriptors_label,
         bluetooth_enumeration_status_label,
-        bluetooth_root: _bluetooth_root,
+        bluetooth_root,
         bluetooth_bottom: _bluetooth_bottom,
         bluetooth_geiger_rssi,
         bluetooth_geiger_tone,
@@ -5159,6 +5160,18 @@ fn bind_poll_loop(
             } else {
                 (window.width().max(MIN_WINDOW_WIDTH) - 52).max(320)
             };
+            if is_small_display() {
+                let ww = window.width().max(520);
+                let wh = window.height().max(520);
+                let ap_root_pos = ((wh as f64) * 0.34) as i32;
+                let ap_bottom_pos = ((ww as f64) * 0.60) as i32;
+                let client_root_pos = ((wh as f64) * 0.42) as i32;
+                let bluetooth_root_pos = ((wh as f64) * 0.36) as i32;
+                ap_root.set_position(ap_root_pos.clamp(170, wh.saturating_sub(180)));
+                ap_bottom.set_position(ap_bottom_pos.clamp(240, ww.saturating_sub(220)));
+                client_root.set_position(client_root_pos.clamp(180, wh.saturating_sub(180)));
+                bluetooth_root.set_position(bluetooth_root_pos.clamp(170, wh.saturating_sub(180)));
+            }
             let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout)
                 .max(AP_TABLE_MIN_WIDTH_PX);
             let client_row_width_px = table_row_width_px_for_layout(&s.settings.client_table_layout)
