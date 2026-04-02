@@ -99,7 +99,8 @@ const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 300;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 240;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 240;
-const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-I";
+const TABLE_COLUMN_SPACING_PX: u32 = 8;
+const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-J";
 
 fn is_small_display() -> bool {
     let model = std::fs::read_to_string("/proc/device-tree/model")
@@ -1767,7 +1768,7 @@ fn build_table_pagination_controls(
     controls_row.set_hexpand(false);
     controls_row.set_halign(gtk::Align::Start);
     let filter_bar = Grid::new();
-    filter_bar.set_column_spacing(14);
+    filter_bar.set_column_spacing(TABLE_COLUMN_SPACING_PX);
     filter_bar.set_hexpand(false);
     filter_bar.set_halign(gtk::Align::Start);
 
@@ -1825,7 +1826,6 @@ fn build_table_pagination_controls(
         let cell = GtkBox::new(Orientation::Horizontal, 0);
         cell.set_halign(gtk::Align::Start);
         cell.set_hexpand(false);
-        cell.set_margin_end(6);
         cell.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
         cell.append(&entry);
         filter_bar.attach(&cell, column_index as i32, 0, 1, 1);
@@ -2866,7 +2866,7 @@ fn apply_view_visibility(
     let show_ap_bottom = settings.show_detail_pane || settings.show_device_pane;
     widgets
         .ap_root
-        .set_position(if small { 430 } else { DEFAULT_AP_ROOT_POSITION });
+        .set_position(if small { 520 } else { DEFAULT_AP_ROOT_POSITION });
     widgets.ap_root.set_resize_end_child(show_ap_bottom);
     widgets.ap_bottom.set_visible(show_ap_bottom);
     widgets
@@ -2874,13 +2874,13 @@ fn apply_view_visibility(
         .set_visible(settings.show_detail_pane);
     widgets.ap_assoc_box.set_visible(settings.show_device_pane);
     widgets.ap_bottom.set_position(if small {
-        350
+        330
     } else {
         DEFAULT_AP_BOTTOM_POSITION
     });
 
     widgets.client_root.set_position(if small {
-        420
+        500
     } else {
         DEFAULT_CLIENT_ROOT_POSITION
     });
@@ -2892,7 +2892,7 @@ fn apply_view_visibility(
         .set_visible(settings.show_detail_pane);
 
     widgets.bluetooth_root.set_position(if small {
-        420
+        500
     } else {
         DEFAULT_BLUETOOTH_ROOT_POSITION
     });
@@ -3361,6 +3361,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
+        .min_content_height(260)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&ap_viewport)
         .build();
@@ -3403,7 +3404,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_scroll_debug_label = Label::new(Some("AP scroll: pending"));
     ap_scroll_debug_label.set_xalign(0.0);
     ap_scroll_debug_label.add_css_class("caption");
-    ap_top.append(&ap_scroll_debug_label);
+    ap_scroll_debug_label.set_visible(false);
     let ap_scroll_controls = GtkBox::new(Orientation::Horizontal, 6);
     let ap_scroll_home_btn = Button::with_label("<<");
     let ap_scroll_left_btn = Button::with_label("<");
@@ -3621,7 +3622,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_scroll_debug_label = Label::new(Some("Client scroll: pending"));
     client_scroll_debug_label.set_xalign(0.0);
     client_scroll_debug_label.add_css_class("caption");
-    client_top.append(&client_scroll_debug_label);
+    client_scroll_debug_label.set_visible(false);
     let client_scroll_controls = GtkBox::new(Orientation::Horizontal, 6);
     let client_scroll_home_btn = Button::with_label("<<");
     let client_scroll_left_btn = Button::with_label("<");
@@ -3940,7 +3941,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_scroll_debug_label = Label::new(Some("Bluetooth scroll: pending"));
     bluetooth_scroll_debug_label.set_xalign(0.0);
     bluetooth_scroll_debug_label.add_css_class("caption");
-    bluetooth_top.append(&bluetooth_scroll_debug_label);
+    bluetooth_scroll_debug_label.set_visible(false);
     let bluetooth_scroll_controls = GtkBox::new(Orientation::Horizontal, 6);
     let bluetooth_scroll_home_btn = Button::with_label("<<");
     let bluetooth_scroll_left_btn = Button::with_label("<");
@@ -7185,7 +7186,6 @@ fn label_cell(text: String, width_chars: i32) -> Label {
     label.set_max_width_chars(width_chars);
     label.set_single_line_mode(true);
     label.set_size_request(width_chars * TABLE_CHAR_WIDTH_PX, -1);
-    label.set_margin_end(6);
     label
 }
 
@@ -7291,7 +7291,7 @@ fn make_table_header(
     on_sort: Rc<dyn Fn(String)>,
 ) -> Grid {
     let grid = Grid::new();
-    grid.set_column_spacing(14);
+    grid.set_column_spacing(TABLE_COLUMN_SPACING_PX);
     for (i, column) in layout.columns.iter().filter(|c| c.visible).enumerate() {
         grid.attach(
             &sortable_header_widget(
