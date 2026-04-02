@@ -99,7 +99,7 @@ const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 300;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 240;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 240;
-const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-G";
+const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-H";
 
 fn is_small_display() -> bool {
     let model = std::fs::read_to_string("/proc/device-tree/model")
@@ -1817,11 +1817,17 @@ fn build_table_pagination_controls(
         let entry_width = (*width_chars).max(6);
         entry.set_width_chars(entry_width);
         entry.set_max_width_chars(entry_width);
-        entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
-        entry.set_margin_end(6);
+        entry.set_hexpand(true);
+        entry.set_halign(gtk::Align::Fill);
         entry.set_placeholder_text(None::<&str>);
         entry.set_tooltip_text(Some(column_label));
-        filter_bar.attach(&entry, column_index as i32, 0, 1, 1);
+        let cell = GtkBox::new(Orientation::Horizontal, 0);
+        cell.set_halign(gtk::Align::Start);
+        cell.set_hexpand(false);
+        cell.set_margin_end(6);
+        cell.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
+        cell.append(&entry);
+        filter_bar.attach(&cell, column_index as i32, 0, 1, 1);
         filter_entries
             .borrow_mut()
             .insert(column_id.clone(), entry.clone());
@@ -3348,7 +3354,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_list_canvas.set_halign(gtk::Align::Start);
     ap_list_canvas.append(&ap_list);
     let ap_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
-    let ap_viewport = Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    let ap_viewport = Viewport::new(Some(&ap_scroll_adj), None::<&gtk::Adjustment>);
     ap_viewport.set_child(Some(&ap_list_canvas));
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
@@ -3358,7 +3364,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
     ap_scrolled.set_propagate_natural_width(false);
     ap_scrolled.set_overlay_scrolling(false);
-    ap_scrolled.set_hadjustment(Some(&ap_scroll_adj));
     let (ap_pagination_row, ap_pagination) = build_table_pagination_controls(
         default_rows_per_page,
         table_filter_columns(&ap_layout, ap_column_label),
@@ -3552,7 +3557,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     client_list_canvas.set_halign(gtk::Align::Start);
     client_list_canvas.append(&client_list);
     let client_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
-    let client_viewport = Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    let client_viewport = Viewport::new(Some(&client_scroll_adj), None::<&gtk::Adjustment>);
     client_viewport.set_child(Some(&client_list_canvas));
     let client_selection_suppressed = Rc::new(RefCell::new(false));
     let client_selected_key = Rc::new(RefCell::new(None::<String>));
@@ -3564,7 +3569,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
     client_scrolled.set_propagate_natural_width(false);
     client_scrolled.set_overlay_scrolling(false);
-    client_scrolled.set_hadjustment(Some(&client_scroll_adj));
     let (client_pagination_row, client_pagination) = build_table_pagination_controls(
         default_rows_per_page,
         table_filter_columns(&client_layout, client_column_label),
@@ -3863,7 +3867,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_list_canvas.set_halign(gtk::Align::Start);
     bluetooth_list_canvas.append(&bluetooth_list);
     let bluetooth_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
-    let bluetooth_viewport = Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    let bluetooth_viewport = Viewport::new(Some(&bluetooth_scroll_adj), None::<&gtk::Adjustment>);
     bluetooth_viewport.set_child(Some(&bluetooth_list_canvas));
     let bluetooth_selection_suppressed = Rc::new(RefCell::new(false));
     let bluetooth_selected_key = Rc::new(RefCell::new(None::<String>));
@@ -3881,7 +3885,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
     bluetooth_scrolled.set_propagate_natural_width(false);
     bluetooth_scrolled.set_overlay_scrolling(false);
-    bluetooth_scrolled.set_hadjustment(Some(&bluetooth_scroll_adj));
     let (bluetooth_pagination_row, bluetooth_pagination) = build_table_pagination_controls(
         default_rows_per_page,
         table_filter_columns(&bluetooth_layout, bluetooth_column_label),
