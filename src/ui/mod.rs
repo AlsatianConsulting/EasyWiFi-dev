@@ -1670,6 +1670,7 @@ struct UiWidgets {
     ap_list_canvas: GtkBox,
     ap_list: ListBox,
     ap_pagination: TablePaginationUi,
+    ap_scroll_adj: gtk::Adjustment,
     ap_selection_suppressed: Rc<RefCell<bool>>,
     ap_selected_key: Rc<RefCell<Option<String>>>,
     ap_detail_label: Label,
@@ -1686,6 +1687,7 @@ struct UiWidgets {
     client_scrolled: ScrolledWindow,
     client_list: ListBox,
     client_pagination: TablePaginationUi,
+    client_scroll_adj: gtk::Adjustment,
     client_scroll_debug_label: Label,
     client_selection_suppressed: Rc<RefCell<bool>>,
     client_selected_key: Rc<RefCell<Option<String>>>,
@@ -1708,6 +1710,7 @@ struct UiWidgets {
     bluetooth_header_scrolled: ScrolledWindow,
     bluetooth_scrolled: ScrolledWindow,
     bluetooth_pagination: TablePaginationUi,
+    bluetooth_scroll_adj: gtk::Adjustment,
     bluetooth_scroll_debug_label: Label,
     bluetooth_selection_suppressed: Rc<RefCell<bool>>,
     bluetooth_selected_key: Rc<RefCell<Option<String>>>,
@@ -3371,6 +3374,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&ap_list_canvas)
         .build();
+    let ap_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
+    ap_scrolled.set_hadjustment(Some(&ap_scroll_adj));
     ap_scrolled.set_propagate_natural_width(false);
     ap_scrolled.set_overlay_scrolling(false);
     let (ap_pagination_row, ap_pagination) = build_table_pagination_controls(
@@ -3389,7 +3394,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .child(&ap_header_holder)
         .build();
     ap_header_scrolled.set_propagate_natural_width(false);
-    let ap_scroll_adj = ap_scrolled.hadjustment();
     let ap_header_hadj = ap_header_scrolled.hadjustment();
     {
         let ap_header_hadj = ap_header_hadj.clone();
@@ -3416,27 +3420,24 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_scroll_right_btn = Button::with_label(">");
     let ap_scroll_end_btn = Button::with_label(">>");
     {
-        let ap_scrolled = ap_scrolled.clone();
-        ap_scroll_home_btn.connect_clicked(move |_| ap_scrolled.hadjustment().set_value(0.0));
+        let adj = ap_scroll_adj.clone();
+        ap_scroll_home_btn.connect_clicked(move |_| adj.set_value(0.0));
     }
     {
-        let ap_scrolled = ap_scrolled.clone();
+        let adj = ap_scroll_adj.clone();
         ap_scroll_left_btn.connect_clicked(move |_| {
-            let adj = ap_scrolled.hadjustment();
             nudge_adjustment(&adj, -160.0);
         });
     }
     {
-        let ap_scrolled = ap_scrolled.clone();
+        let adj = ap_scroll_adj.clone();
         ap_scroll_right_btn.connect_clicked(move |_| {
-            let adj = ap_scrolled.hadjustment();
             nudge_adjustment(&adj, 160.0);
         });
     }
     {
-        let ap_scrolled = ap_scrolled.clone();
+        let adj = ap_scroll_adj.clone();
         ap_scroll_end_btn.connect_clicked(move |_| {
-            let adj = ap_scrolled.hadjustment();
             let max_value = (adj.upper() - adj.page_size()).max(0.0);
             adj.set_value(max_value);
         });
@@ -3597,6 +3598,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&client_list_canvas)
         .build();
+    let client_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
+    client_scrolled.set_hadjustment(Some(&client_scroll_adj));
     client_scrolled.set_propagate_natural_width(false);
     client_scrolled.set_overlay_scrolling(false);
     let (client_pagination_row, client_pagination) = build_table_pagination_controls(
@@ -3619,7 +3622,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .child(&client_header_holder)
         .build();
     client_header_scrolled.set_propagate_natural_width(false);
-    let client_scroll_adj = client_scrolled.hadjustment();
     let client_header_hadj = client_header_scrolled.hadjustment();
     {
         let client_header_hadj = client_header_hadj.clone();
@@ -3646,28 +3648,24 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_scroll_right_btn = Button::with_label(">");
     let client_scroll_end_btn = Button::with_label(">>");
     {
-        let client_scrolled = client_scrolled.clone();
-        client_scroll_home_btn
-            .connect_clicked(move |_| client_scrolled.hadjustment().set_value(0.0));
+        let adj = client_scroll_adj.clone();
+        client_scroll_home_btn.connect_clicked(move |_| adj.set_value(0.0));
     }
     {
-        let client_scrolled = client_scrolled.clone();
+        let adj = client_scroll_adj.clone();
         client_scroll_left_btn.connect_clicked(move |_| {
-            let adj = client_scrolled.hadjustment();
             nudge_adjustment(&adj, -160.0);
         });
     }
     {
-        let client_scrolled = client_scrolled.clone();
+        let adj = client_scroll_adj.clone();
         client_scroll_right_btn.connect_clicked(move |_| {
-            let adj = client_scrolled.hadjustment();
             nudge_adjustment(&adj, 160.0);
         });
     }
     {
-        let client_scrolled = client_scrolled.clone();
+        let adj = client_scroll_adj.clone();
         client_scroll_end_btn.connect_clicked(move |_| {
-            let adj = client_scrolled.hadjustment();
             let max_value = (adj.upper() - adj.page_size()).max(0.0);
             adj.set_value(max_value);
         });
@@ -3914,6 +3912,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&bluetooth_list_canvas)
         .build();
+    let bluetooth_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
+    bluetooth_scrolled.set_hadjustment(Some(&bluetooth_scroll_adj));
     bluetooth_scrolled.set_propagate_natural_width(false);
     bluetooth_scrolled.set_overlay_scrolling(false);
     let (bluetooth_pagination_row, bluetooth_pagination) = build_table_pagination_controls(
@@ -3929,7 +3929,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .child(&bluetooth_header_holder)
         .build();
     bluetooth_header_scrolled.set_propagate_natural_width(false);
-    let bluetooth_scroll_adj = bluetooth_scrolled.hadjustment();
     let bluetooth_header_hadj = bluetooth_header_scrolled.hadjustment();
     {
         let bluetooth_header_hadj = bluetooth_header_hadj.clone();
@@ -3957,28 +3956,24 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_scroll_right_btn = Button::with_label(">");
     let bluetooth_scroll_end_btn = Button::with_label(">>");
     {
-        let bluetooth_scrolled = bluetooth_scrolled.clone();
-        bluetooth_scroll_home_btn
-            .connect_clicked(move |_| bluetooth_scrolled.hadjustment().set_value(0.0));
+        let adj = bluetooth_scroll_adj.clone();
+        bluetooth_scroll_home_btn.connect_clicked(move |_| adj.set_value(0.0));
     }
     {
-        let bluetooth_scrolled = bluetooth_scrolled.clone();
+        let adj = bluetooth_scroll_adj.clone();
         bluetooth_scroll_left_btn.connect_clicked(move |_| {
-            let adj = bluetooth_scrolled.hadjustment();
             nudge_adjustment(&adj, -160.0);
         });
     }
     {
-        let bluetooth_scrolled = bluetooth_scrolled.clone();
+        let adj = bluetooth_scroll_adj.clone();
         bluetooth_scroll_right_btn.connect_clicked(move |_| {
-            let adj = bluetooth_scrolled.hadjustment();
             nudge_adjustment(&adj, 160.0);
         });
     }
     {
-        let bluetooth_scrolled = bluetooth_scrolled.clone();
+        let adj = bluetooth_scroll_adj.clone();
         bluetooth_scroll_end_btn.connect_clicked(move |_| {
-            let adj = bluetooth_scrolled.hadjustment();
             let max_value = (adj.upper() - adj.page_size()).max(0.0);
             adj.set_value(max_value);
         });
@@ -4776,6 +4771,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_list_canvas,
             ap_list,
             ap_pagination,
+            ap_scroll_adj,
             ap_selection_suppressed,
             ap_selected_key,
             ap_detail_label,
@@ -4792,6 +4788,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             client_scrolled,
             client_list,
             client_pagination,
+            client_scroll_adj,
             client_scroll_debug_label,
             client_selection_suppressed,
             client_selected_key,
@@ -4814,6 +4811,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             bluetooth_header_scrolled,
             bluetooth_scrolled,
             bluetooth_pagination,
+            bluetooth_scroll_adj,
             bluetooth_scroll_debug_label,
             bluetooth_selection_suppressed,
             bluetooth_selected_key,
@@ -4863,6 +4861,7 @@ fn bind_poll_loop(
         ap_list_canvas,
         ap_list,
         ap_pagination,
+        ap_scroll_adj,
         ap_selection_suppressed,
         ap_selected_key,
         ap_detail_label,
@@ -4879,6 +4878,7 @@ fn bind_poll_loop(
         client_scrolled,
         client_list,
         client_pagination,
+        client_scroll_adj,
         client_scroll_debug_label,
         client_selection_suppressed,
         client_selected_key,
@@ -4901,6 +4901,7 @@ fn bind_poll_loop(
         bluetooth_header_scrolled,
         bluetooth_scrolled,
         bluetooth_pagination,
+        bluetooth_scroll_adj,
         bluetooth_scroll_debug_label,
         bluetooth_selection_suppressed,
         bluetooth_selected_key,
@@ -5242,7 +5243,6 @@ fn bind_poll_loop(
             ap_header_holder.set_halign(gtk::Align::Start);
             ap_list.set_halign(gtk::Align::Start);
             ap_list.set_hexpand(false);
-            let ap_scroll_adj = ap_scrolled.hadjustment();
             let ap_upper = ap_row_width_px as f64;
             let ap_page = table_viewport_width_px as f64;
             update_horizontal_adjustment_bounds(
@@ -5257,7 +5257,6 @@ fn bind_poll_loop(
             client_header_holder.set_halign(gtk::Align::Start);
             client_list.set_halign(gtk::Align::Start);
             client_list.set_hexpand(false);
-            let client_scroll_adj = client_scrolled.hadjustment();
             let client_upper = client_row_width_px as f64;
             let client_page = table_viewport_width_px as f64;
             update_horizontal_adjustment_bounds(
@@ -5272,7 +5271,6 @@ fn bind_poll_loop(
             bluetooth_header_holder.set_halign(gtk::Align::Start);
             bluetooth_list.set_halign(gtk::Align::Start);
             bluetooth_list.set_hexpand(false);
-            let bluetooth_scroll_adj = bluetooth_scrolled.hadjustment();
             let bluetooth_upper = bluetooth_row_width_px as f64;
             let bluetooth_page = table_viewport_width_px as f64;
             update_horizontal_adjustment_bounds(
@@ -5283,7 +5281,6 @@ fn bind_poll_loop(
                 (bluetooth_page * 0.7).max(48.0),
             );
         }
-        let ap_scroll_adj = ap_scrolled.hadjustment();
         let ap_max_scroll = (ap_scroll_adj.upper() - ap_scroll_adj.page_size()).max(0.0);
         ap_scroll_debug_label.set_text(&format!(
             "AP scroll: value={:.1} upper={:.1} page={:.1} max={:.1}",
@@ -5292,7 +5289,6 @@ fn bind_poll_loop(
             ap_scroll_adj.page_size(),
             ap_max_scroll
         ));
-        let client_scroll_adj = client_scrolled.hadjustment();
         let client_max_scroll = (client_scroll_adj.upper() - client_scroll_adj.page_size()).max(0.0);
         client_scroll_debug_label.set_text(&format!(
             "Client scroll: value={:.1} upper={:.1} page={:.1} max={:.1}",
@@ -5301,7 +5297,6 @@ fn bind_poll_loop(
             client_scroll_adj.page_size(),
             client_max_scroll
         ));
-        let bluetooth_scroll_adj = bluetooth_scrolled.hadjustment();
         let bluetooth_max_scroll =
             (bluetooth_scroll_adj.upper() - bluetooth_scroll_adj.page_size()).max(0.0);
         bluetooth_scroll_debug_label.set_text(&format!(
