@@ -27,7 +27,7 @@ use gtk::{
     Application, ApplicationWindow, Box as GtkBox, Button, CheckButton, ComboBoxText, Dialog,
     DrawingArea, Entry, EventControllerKey, Expander, FileChooserAction, FileChooserDialog,
     GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned, Popover,
-    ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
+    ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView, Viewport,
     ToggleButton, Window as GtkWindow,
 };
 use gtk4 as gtk;
@@ -3368,14 +3368,15 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_list_canvas.set_hexpand(false);
     ap_list_canvas.set_halign(gtk::Align::Start);
     ap_list_canvas.append(&ap_list);
+    let ap_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
+    let ap_viewport = Viewport::new(Some(&ap_scroll_adj), None::<&gtk::Adjustment>);
+    ap_viewport.set_child(Some(&ap_list_canvas));
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Always)
-        .child(&ap_list_canvas)
+        .child(&ap_viewport)
         .build();
-    let ap_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
-    ap_scrolled.set_hadjustment(Some(&ap_scroll_adj));
     ap_scrolled.set_propagate_natural_width(false);
     ap_scrolled.set_overlay_scrolling(false);
     let (ap_pagination_row, ap_pagination) = build_table_pagination_controls(
@@ -3590,16 +3591,17 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     client_list_canvas.set_hexpand(false);
     client_list_canvas.set_halign(gtk::Align::Start);
     client_list_canvas.append(&client_list);
+    let client_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
+    let client_viewport = Viewport::new(Some(&client_scroll_adj), None::<&gtk::Adjustment>);
+    client_viewport.set_child(Some(&client_list_canvas));
     let client_selection_suppressed = Rc::new(RefCell::new(false));
     let client_selected_key = Rc::new(RefCell::new(None::<String>));
     let client_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Always)
-        .child(&client_list_canvas)
+        .child(&client_viewport)
         .build();
-    let client_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
-    client_scrolled.set_hadjustment(Some(&client_scroll_adj));
     client_scrolled.set_propagate_natural_width(false);
     client_scrolled.set_overlay_scrolling(false);
     let (client_pagination_row, client_pagination) = build_table_pagination_controls(
@@ -3898,6 +3900,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_list_canvas.set_hexpand(false);
     bluetooth_list_canvas.set_halign(gtk::Align::Start);
     bluetooth_list_canvas.append(&bluetooth_list);
+    let bluetooth_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
+    let bluetooth_viewport =
+        Viewport::new(Some(&bluetooth_scroll_adj), None::<&gtk::Adjustment>);
+    bluetooth_viewport.set_child(Some(&bluetooth_list_canvas));
     let bluetooth_selection_suppressed = Rc::new(RefCell::new(false));
     let bluetooth_selected_key = Rc::new(RefCell::new(None::<String>));
     let bluetooth_header_holder = GtkBox::new(Orientation::Vertical, 0);
@@ -3910,10 +3916,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vexpand(true)
         .hexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Always)
-        .child(&bluetooth_list_canvas)
+        .child(&bluetooth_viewport)
         .build();
-    let bluetooth_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
-    bluetooth_scrolled.set_hadjustment(Some(&bluetooth_scroll_adj));
     bluetooth_scrolled.set_propagate_natural_width(false);
     bluetooth_scrolled.set_overlay_scrolling(false);
     let (bluetooth_pagination_row, bluetooth_pagination) = build_table_pagination_controls(
