@@ -3345,7 +3345,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
+        .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&ap_list_canvas)
         .build();
     ap_scrolled.set_overlay_scrolling(false);
@@ -3364,7 +3364,18 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vscrollbar_policy(gtk::PolicyType::Never)
         .child(&ap_header_holder)
         .build();
-    ap_header_scrolled.set_hadjustment(Some(&ap_scrolled.hadjustment()));
+    let ap_scroll_hadj = ap_scrolled.hadjustment();
+    let ap_header_hadj = ap_header_scrolled.hadjustment();
+    {
+        let ap_header_hadj = ap_header_hadj.clone();
+        ap_scroll_hadj.connect_value_changed(move |adj| {
+            let max_value = (ap_header_hadj.upper() - ap_header_hadj.page_size()).max(0.0);
+            let value = adj.value().clamp(0.0, max_value);
+            if (ap_header_hadj.value() - value).abs() > f64::EPSILON {
+                ap_header_hadj.set_value(value);
+            }
+        });
+    }
     let ap_top = GtkBox::new(Orientation::Vertical, 4);
     ap_top.append(&ap_header_scrolled);
     ap_top.append(&ap_scrolled);
@@ -3515,7 +3526,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
+        .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&client_list_canvas)
         .build();
     client_scrolled.set_overlay_scrolling(false);
@@ -3538,7 +3549,18 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vscrollbar_policy(gtk::PolicyType::Never)
         .child(&client_header_holder)
         .build();
-    client_header_scrolled.set_hadjustment(Some(&client_scrolled.hadjustment()));
+    let client_scroll_hadj = client_scrolled.hadjustment();
+    let client_header_hadj = client_header_scrolled.hadjustment();
+    {
+        let client_header_hadj = client_header_hadj.clone();
+        client_scroll_hadj.connect_value_changed(move |adj| {
+            let max_value = (client_header_hadj.upper() - client_header_hadj.page_size()).max(0.0);
+            let value = adj.value().clamp(0.0, max_value);
+            if (client_header_hadj.value() - value).abs() > f64::EPSILON {
+                client_header_hadj.set_value(value);
+            }
+        });
+    }
     let client_top = GtkBox::new(Orientation::Vertical, 4);
     client_top.append(&client_header_scrolled);
     client_top.append(&client_scrolled);
@@ -3776,7 +3798,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Always)
+        .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&bluetooth_list_canvas)
         .build();
     bluetooth_scrolled.set_overlay_scrolling(false);
@@ -3792,7 +3814,19 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .vscrollbar_policy(gtk::PolicyType::Never)
         .child(&bluetooth_header_holder)
         .build();
-    bluetooth_header_scrolled.set_hadjustment(Some(&bluetooth_scrolled.hadjustment()));
+    let bluetooth_scroll_hadj = bluetooth_scrolled.hadjustment();
+    let bluetooth_header_hadj = bluetooth_header_scrolled.hadjustment();
+    {
+        let bluetooth_header_hadj = bluetooth_header_hadj.clone();
+        bluetooth_scroll_hadj.connect_value_changed(move |adj| {
+            let max_value =
+                (bluetooth_header_hadj.upper() - bluetooth_header_hadj.page_size()).max(0.0);
+            let value = adj.value().clamp(0.0, max_value);
+            if (bluetooth_header_hadj.value() - value).abs() > f64::EPSILON {
+                bluetooth_header_hadj.set_value(value);
+            }
+        });
+    }
     let bluetooth_top = GtkBox::new(Orientation::Vertical, 4);
     bluetooth_top.append(&bluetooth_header_scrolled);
     bluetooth_top.append(&bluetooth_scrolled);
