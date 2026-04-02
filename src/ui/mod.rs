@@ -5119,18 +5119,13 @@ fn bind_poll_loop(
             ap_list.set_hexpand(false);
             let ap_upper = ap_row_width_px as f64;
             let ap_page = table_viewport_width_px as f64;
-            let ap_max = (ap_upper - ap_page).max(0.0);
-            if ap_scroll_adj.upper() != ap_upper {
-                ap_scroll_adj.set_upper(ap_upper);
-            }
-            if ap_scroll_adj.page_size() != ap_page {
-                ap_scroll_adj.set_page_size(ap_page);
-            }
-            ap_scroll_adj.set_step_increment(24.0);
-            ap_scroll_adj.set_page_increment((ap_page * 0.7).max(48.0));
-            if ap_scroll_adj.value() > ap_max {
-                ap_scroll_adj.set_value(ap_max);
-            }
+            update_horizontal_adjustment_bounds(
+                &ap_scroll_adj,
+                ap_upper,
+                ap_page,
+                24.0,
+                (ap_page * 0.7).max(48.0),
+            );
             client_list.set_size_request(client_row_width_px, -1);
             client_header_holder.set_size_request(client_row_width_px, -1);
             client_header_holder.set_halign(gtk::Align::Start);
@@ -5138,18 +5133,13 @@ fn bind_poll_loop(
             client_list.set_hexpand(false);
             let client_upper = client_row_width_px as f64;
             let client_page = table_viewport_width_px as f64;
-            let client_max = (client_upper - client_page).max(0.0);
-            if client_scroll_adj.upper() != client_upper {
-                client_scroll_adj.set_upper(client_upper);
-            }
-            if client_scroll_adj.page_size() != client_page {
-                client_scroll_adj.set_page_size(client_page);
-            }
-            client_scroll_adj.set_step_increment(24.0);
-            client_scroll_adj.set_page_increment((client_page * 0.7).max(48.0));
-            if client_scroll_adj.value() > client_max {
-                client_scroll_adj.set_value(client_max);
-            }
+            update_horizontal_adjustment_bounds(
+                &client_scroll_adj,
+                client_upper,
+                client_page,
+                24.0,
+                (client_page * 0.7).max(48.0),
+            );
             bluetooth_list.set_size_request(bluetooth_row_width_px, -1);
             bluetooth_header_holder.set_size_request(bluetooth_row_width_px, -1);
             bluetooth_header_holder.set_halign(gtk::Align::Start);
@@ -5157,18 +5147,13 @@ fn bind_poll_loop(
             bluetooth_list.set_hexpand(false);
             let bluetooth_upper = bluetooth_row_width_px as f64;
             let bluetooth_page = table_viewport_width_px as f64;
-            let bluetooth_max = (bluetooth_upper - bluetooth_page).max(0.0);
-            if bluetooth_scroll_adj.upper() != bluetooth_upper {
-                bluetooth_scroll_adj.set_upper(bluetooth_upper);
-            }
-            if bluetooth_scroll_adj.page_size() != bluetooth_page {
-                bluetooth_scroll_adj.set_page_size(bluetooth_page);
-            }
-            bluetooth_scroll_adj.set_step_increment(24.0);
-            bluetooth_scroll_adj.set_page_increment((bluetooth_page * 0.7).max(48.0));
-            if bluetooth_scroll_adj.value() > bluetooth_max {
-                bluetooth_scroll_adj.set_value(bluetooth_max);
-            }
+            update_horizontal_adjustment_bounds(
+                &bluetooth_scroll_adj,
+                bluetooth_upper,
+                bluetooth_page,
+                24.0,
+                (bluetooth_page * 0.7).max(48.0),
+            );
         }
         let ap_max_scroll = (ap_scroll_adj.upper() - ap_scroll_adj.page_size()).max(0.0);
         ap_scroll_debug_label.set_text(&format!(
@@ -6993,6 +6978,34 @@ fn set_table_overflow_width(list: &ListBox, row_width_px: i32) {
             canvas.set_halign(gtk::Align::Start);
             canvas.set_hexpand(false);
         }
+    }
+}
+
+fn update_horizontal_adjustment_bounds(
+    adj: &gtk::Adjustment,
+    upper: f64,
+    page_size: f64,
+    step: f64,
+    page_inc: f64,
+) {
+    let upper = upper.max(0.0);
+    let page_size = page_size.max(1.0);
+    let max_value = (upper - page_size).max(0.0);
+    let current = adj.value().clamp(0.0, max_value);
+    if (adj.upper() - upper).abs() > 0.5 {
+        adj.set_upper(upper);
+    }
+    if (adj.page_size() - page_size).abs() > 0.5 {
+        adj.set_page_size(page_size);
+    }
+    if (adj.step_increment() - step).abs() > 0.1 {
+        adj.set_step_increment(step);
+    }
+    if (adj.page_increment() - page_inc).abs() > 0.1 {
+        adj.set_page_increment(page_inc);
+    }
+    if (adj.value() - current).abs() > 0.5 {
+        adj.set_value(current);
     }
 }
 
