@@ -2347,15 +2347,15 @@ fn build_ui(app: &Application) -> Result<()> {
     );
     {
         let s = state.borrow_mut();
-        if is_small_display() {
+        if s.settings.window_fullscreen {
+            window.fullscreen();
+        } else if s.settings.window_maximized {
+            window.maximize();
+        } else if is_small_display() {
             window.unfullscreen();
             window.unmaximize();
             window.set_default_size(680, 680);
             window.set_resizable(true);
-        } else if s.settings.window_fullscreen {
-            window.fullscreen();
-        } else if s.settings.window_maximized {
-            window.maximize();
         }
     }
     {
@@ -2461,61 +2461,6 @@ fn build_menubar(
     pagination_defaults: &PaginationDefaultsUi,
     widgets: &UiWidgets,
 ) -> gtk::PopoverMenuBar {
-    let export_all_action = gio::SimpleAction::new("export_all", None);
-    {
-        let state = state.clone();
-        export_all_action.connect_activate(move |_, _| {
-            let mut s = state.borrow_mut();
-            let _ = s.exporter.export_access_points_csv(&s.access_points);
-            let _ = s.exporter.export_clients_csv(&s.clients);
-            let gps_pcap = s
-                .exporter
-                .export_session_pcap_with_gps(&s.session_capture_path, &s.gps_track);
-            match gps_pcap {
-                Ok(_) => {
-                    s.push_status("exported AP/client CSV and consolidated GPS PCAPNG".to_string())
-                }
-                Err(err) => s.push_status(format!(
-                    "exported CSV; consolidated GPS PCAPNG failed: {err}"
-                )),
-            }
-        });
-    }
-    app.add_action(&export_all_action);
-
-    let export_locations_action = gio::SimpleAction::new("export_locations", None);
-    {
-        let state = state.clone();
-        export_locations_action.connect_activate(move |_, _| {
-            let mut s = state.borrow_mut();
-            let csv = s.exporter.export_location_logs_csv(
-                &s.access_points,
-                &s.clients,
-                &s.bluetooth_devices,
-            );
-            let kml = s.exporter.export_location_logs_kml(
-                &s.access_points,
-                &s.clients,
-                &s.bluetooth_devices,
-            );
-            match (csv, kml) {
-                (Ok(_), Ok(_)) => s.push_status("exported location logs (CSV + KML)".to_string()),
-                (csv_res, kml_res) => s.push_status(format!(
-                    "location export incomplete: csv={} kml={}",
-                    csv_res
-                        .err()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "ok".to_string()),
-                    kml_res
-                        .err()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "ok".to_string())
-                )),
-            }
-        });
-    }
-    app.add_action(&export_locations_action);
-
     let settings_window_action = gio::SimpleAction::new("settings_preferences", None);
     {
         let window = window.clone();
@@ -2738,45 +2683,7 @@ fn build_menubar(
     {
         let state = state.clone();
         update_oui_action.connect_activate(move |_, _| {
-            let mut s = state.borrow_mut();
-            let target = if s.settings.oui_source_path.as_os_str().is_empty() {
-                OuiDatabase::persistent_cache_path()
-                    .unwrap_or_else(|| s.exporter.paths.session_dir.join("oui_latest.csv"))
-            } else {
-                s.settings.oui_source_path.clone()
-            };
-            match s.oui.refresh_from_ieee(&target) {
-                Ok(_) => match OuiDatabase::load_from_path(&target) {
-                    Ok(db) => {
-                        s.oui = db;
-                        s.backfill_oui_labels();
-                        let oui_count = s.oui.count();
-                        s.push_status(format!(
-                            "OUI database updated from IEEE ({} entries)",
-                            oui_count
-                        ));
-                    }
-                    Err(err) => {
-                        s.push_status(format!("OUI update downloaded but reload failed: {err}"));
-                    }
-                },
-                Err(err) => {
-                    match OuiDatabase::load_with_override(Some(&s.settings.oui_source_path))
-                        .or_else(|_| OuiDatabase::load_default())
-                    {
-                        Ok(db) if db.count() > 0 => {
-                            let oui_count = db.count();
-                            s.oui = db;
-                            s.backfill_oui_labels();
-                            s.push_status(format!(
-                            "OUI update failed: {err}; reloaded local OUI database ({} entries)",
-                            oui_count
-                        ));
-                        }
-                        _ => s.push_status(format!("OUI update failed: {err}")),
-                    }
-                }
-            }
+            refresh_oui_database(&state);
         });
     }
     app.add_action(&update_oui_action);
@@ -2791,15 +2698,6 @@ fn build_menubar(
     app.add_action(&quit_action);
 
     let file_menu = gio::Menu::new();
-    file_menu.append(
-        Some("Export CSV + Consolidated PCAP"),
-        Some("app.export_all"),
-    );
-    file_menu.append(
-        Some("Export Location Logs (CSV + KML)"),
-        Some("app.export_locations"),
-    );
-    file_menu.append(Some("Update OUI Database"), Some("app.update_oui"));
     file_menu.append(Some("Quit"), Some("app.quit_app"));
 
     let view_menu = gio::Menu::new();
@@ -2817,6 +2715,48 @@ fn build_menubar(
     root.append_submenu(Some("Settings"), &settings_menu);
 
     gtk::PopoverMenuBar::from_model(Some(&root))
+}
+
+fn refresh_oui_database(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    let target = if s.settings.oui_source_path.as_os_str().is_empty() {
+        OuiDatabase::persistent_cache_path()
+            .unwrap_or_else(|| s.exporter.paths.session_dir.join("oui_latest.csv"))
+    } else {
+        s.settings.oui_source_path.clone()
+    };
+    match s.oui.refresh_from_ieee(&target) {
+        Ok(_) => match OuiDatabase::load_from_path(&target) {
+            Ok(db) => {
+                s.oui = db;
+                s.backfill_oui_labels();
+                let oui_count = s.oui.count();
+                s.push_status(format!(
+                    "OUI database updated from IEEE ({} entries)",
+                    oui_count
+                ));
+            }
+            Err(err) => {
+                s.push_status(format!("OUI update downloaded but reload failed: {err}"));
+            }
+        },
+        Err(err) => {
+            match OuiDatabase::load_with_override(Some(&s.settings.oui_source_path))
+                .or_else(|_| OuiDatabase::load_default())
+            {
+                Ok(db) if db.count() > 0 => {
+                    let oui_count = db.count();
+                    s.oui = db;
+                    s.backfill_oui_labels();
+                    s.push_status(format!(
+                        "OUI update failed: {err}; reloaded local OUI database ({} entries)",
+                        oui_count
+                    ));
+                }
+                _ => s.push_status(format!("OUI update failed: {err}")),
+            }
+        }
+    }
 }
 
 fn set_scan_control_button_sensitivity(
@@ -5214,7 +5154,7 @@ fn bind_poll_loop(
 
         {
             let s = state.borrow();
-            let table_viewport_width_px = if is_small_display() {
+            let table_viewport_width_px = if is_small_display() && !window.is_fullscreen() {
                 680
             } else {
                 (window.width().max(MIN_WINDOW_WIDTH) - 52).max(320)
@@ -12209,6 +12149,8 @@ fn open_preferences_window(
     oui_row.append(&oui_entry);
     oui_row.append(&oui_browse_btn);
     data_sources_page.append(&oui_row);
+    let update_oui_btn = Button::with_label("Update OUI Database (IEEE)");
+    data_sources_page.append(&update_oui_btn);
 
     let ap_fields_page = page(&stack, "table_fields_ap", "Table Fields: Wi-Fi AP");
     ap_fields_page.append(&build_table_layout_editor(
@@ -12293,6 +12235,13 @@ fn open_preferences_window(
                     oui_entry.set_text(&path.display().to_string());
                 }
             });
+        });
+    }
+
+    {
+        let state = state.clone();
+        update_oui_btn.connect_clicked(move |_| {
+            refresh_oui_database(&state);
         });
     }
 
