@@ -28,7 +28,7 @@ use gtk::{
     DrawingArea, Entry, EventControllerKey, Expander, FileChooserAction, FileChooserDialog,
     GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned, Popover,
     ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
-    ToggleButton, Window as GtkWindow, Scrollbar,
+    ToggleButton, Window as GtkWindow,
 };
 use gtk4 as gtk;
 use std::cell::{Cell, RefCell};
@@ -3359,7 +3359,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(false)
-        .hscrollbar_policy(gtk::PolicyType::Never)
+        .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&ap_list_canvas)
         .build();
     ap_scrolled.set_propagate_natural_width(false);
@@ -3397,9 +3397,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_top.set_halign(gtk::Align::Start);
     ap_top.append(&ap_header_scrolled);
     ap_top.append(&ap_scrolled);
-    let ap_hscroll = Scrollbar::new(Orientation::Horizontal, Some(&ap_scroll_adj));
-    ap_hscroll.set_hexpand(true);
-    ap_top.append(&ap_hscroll);
     let ap_scroll_debug_label = Label::new(Some("AP scroll: pending"));
     ap_scroll_debug_label.set_xalign(0.0);
     ap_scroll_debug_label.add_css_class("caption");
@@ -3548,7 +3545,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(false)
-        .hscrollbar_policy(gtk::PolicyType::Never)
+        .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&client_list_canvas)
         .build();
     client_scrolled.set_propagate_natural_width(false);
@@ -3590,9 +3587,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     client_top.set_halign(gtk::Align::Start);
     client_top.append(&client_header_scrolled);
     client_top.append(&client_scrolled);
-    let client_hscroll = Scrollbar::new(Orientation::Horizontal, Some(&client_scroll_adj));
-    client_hscroll.set_hexpand(true);
-    client_top.append(&client_hscroll);
     let client_scroll_debug_label = Label::new(Some("Client scroll: pending"));
     client_scroll_debug_label.set_xalign(0.0);
     client_scroll_debug_label.add_css_class("caption");
@@ -3827,7 +3821,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(false)
-        .hscrollbar_policy(gtk::PolicyType::Never)
+        .hscrollbar_policy(gtk::PolicyType::Always)
         .child(&bluetooth_list_canvas)
         .build();
     bluetooth_scrolled.set_propagate_natural_width(false);
@@ -3863,9 +3857,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_top.set_halign(gtk::Align::Start);
     bluetooth_top.append(&bluetooth_header_scrolled);
     bluetooth_top.append(&bluetooth_scrolled);
-    let bluetooth_hscroll = Scrollbar::new(Orientation::Horizontal, Some(&bluetooth_scroll_adj));
-    bluetooth_hscroll.set_hexpand(true);
-    bluetooth_top.append(&bluetooth_hscroll);
     let bluetooth_scroll_debug_label = Label::new(Some("Bluetooth scroll: pending"));
     bluetooth_scroll_debug_label.set_xalign(0.0);
     bluetooth_scroll_debug_label.add_css_class("caption");
