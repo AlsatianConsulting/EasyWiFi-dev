@@ -4,8 +4,8 @@ use crate::export::ExportManager;
 use crate::gps::{self, GpsProvider};
 use crate::model::{
     observation_highlights, AccessPointRecord, BluetoothDeviceRecord, ChannelUsagePoint,
-    ClientNetworkIntel, ClientRecord, GeoObservation, HandshakeRecord, PacketTypeBreakdown,
-    SessionMetadata, SpectrumBand,
+    ClientNetworkIntel, ClientRecord, GeoObservation, HandshakeRecord, SessionMetadata,
+    SpectrumBand,
 };
 use crate::oui::OuiDatabase;
 use crate::settings::{
@@ -93,7 +93,6 @@ const SMALL_DISPLAY_TARGET_WIDTH: i32 = 720;
 const SMALL_DISPLAY_TARGET_HEIGHT: i32 = 720;
 const DEFAULT_CONTENT_PANE_POSITION: i32 = 420;
 const DEFAULT_AP_ROOT_POSITION: i32 = 240;
-const DEFAULT_AP_SUMMARY_ROW_POSITION: i32 = 320;
 const DEFAULT_AP_DETAIL_SECTIONS_POSITION: i32 = 260;
 const DEFAULT_AP_BOTTOM_POSITION: i32 = 500;
 const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
@@ -110,11 +109,7 @@ fn is_small_display() -> bool {
 }
 
 fn effective_min_window_size() -> (i32, i32) {
-    if is_small_display() {
-        (SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT)
-    } else {
-        (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
-    }
+    (SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT)
 }
 
 #[derive(Clone)]
@@ -1681,8 +1676,6 @@ struct UiWidgets {
     ap_assoc_header_holder: GtkBox,
     ap_assoc_list: ListBox,
     ap_assoc_pagination: TablePaginationUi,
-    ap_packet_draw: DrawingArea,
-    ap_selected_packet_mix: Rc<RefCell<PacketTypeBreakdown>>,
     ap_scroll_debug_label: Label,
     client_header_holder: GtkBox,
     client_header_scrolled: ScrolledWindow,
@@ -2036,6 +2029,8 @@ fn build_ui(app: &Application) -> Result<()> {
         .build();
     let (min_window_width, min_window_height) = effective_min_window_size();
     window.set_size_request(min_window_width, min_window_height);
+    window.set_default_size(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
+    window.set_resizable(false);
     let output_dir = {
         let fallback = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         fallback.join("output")
@@ -2245,10 +2240,7 @@ fn build_ui(app: &Application) -> Result<()> {
         pending_scan_restart_message: None,
     }));
     state.borrow_mut().backfill_oui_labels();
-    window.set_default_size(
-        state.borrow().settings.window_width,
-        state.borrow().settings.window_height,
-    );
+    window.set_default_size(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
 
     let global_status_label = Label::new(Some(&format!("starting [{}]", UI_BUILD_MARKER)));
     global_status_label.set_xalign(0.0);
@@ -2348,32 +2340,25 @@ fn build_ui(app: &Application) -> Result<()> {
         &widgets,
     );
     {
-        let s = state.borrow_mut();
-        if is_small_display() && s.settings.window_fullscreen {
-            window.unfullscreen();
-            window.unmaximize();
-            window.set_default_size(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
-            window.set_resizable(true);
-        } else if s.settings.window_fullscreen {
-            window.fullscreen();
-        } else if s.settings.window_maximized {
-            window.maximize();
-        } else if is_small_display() {
-            window.unfullscreen();
-            window.unmaximize();
-            window.set_default_size(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
-            window.set_resizable(true);
-        }
+        let mut s = state.borrow_mut();
+        s.settings.window_fullscreen = false;
+        s.settings.window_maximized = false;
+        s.settings.window_width = SMALL_DISPLAY_TARGET_WIDTH;
+        s.settings.window_height = SMALL_DISPLAY_TARGET_HEIGHT;
+        window.unfullscreen();
+        window.unmaximize();
+        window.set_default_size(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
+        window.set_resizable(false);
     }
     {
         let state = state.clone();
         window.connect_close_request(move |w| {
             let mut s = state.borrow_mut();
-            let (min_width, min_height) = effective_min_window_size();
-            s.settings.window_width = w.width().max(min_width);
-            s.settings.window_height = w.height().max(min_height);
-            s.settings.window_maximized = w.is_maximized();
-            s.settings.window_fullscreen = w.is_fullscreen();
+            let _ = w;
+            s.settings.window_width = SMALL_DISPLAY_TARGET_WIDTH;
+            s.settings.window_height = SMALL_DISPLAY_TARGET_HEIGHT;
+            s.settings.window_maximized = false;
+            s.settings.window_fullscreen = false;
             s.save_settings_to_disk();
             glib::Propagation::Proceed
         });
@@ -2842,7 +2827,7 @@ fn apply_view_visibility(
         .set_visible(settings.show_detail_pane);
     widgets.ap_assoc_box.set_visible(settings.show_device_pane);
     widgets.ap_bottom.set_position(if small {
-        340
+        360
     } else {
         DEFAULT_AP_BOTTOM_POSITION
     });
@@ -3419,10 +3404,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_notes_view = TextView::new();
     ap_notes_view.set_vexpand(true);
 
-    let ap_packet_draw = DrawingArea::new();
-    ap_packet_draw.set_content_width(300);
-    ap_packet_draw.set_content_height(220);
-
     let save_notes_btn = Button::with_label("Save Notes");
 
     let ap_export_box = GtkBox::new(Orientation::Horizontal, 6);
@@ -3441,20 +3422,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .min_content_height(250)
         .child(&ap_detail_label)
         .build();
-
-    let ap_packet_box = GtkBox::new(Orientation::Vertical, 6);
-    ap_packet_box.append(&Label::new(Some("Packet Type Pie")));
-    ap_packet_box.append(&ap_packet_draw);
-
-    let ap_summary_row = Paned::new(Orientation::Horizontal);
-    ap_summary_row.set_wide_handle(true);
-    ap_summary_row.set_position(DEFAULT_AP_SUMMARY_ROW_POSITION);
-    ap_summary_row.set_resize_start_child(true);
-    ap_summary_row.set_resize_end_child(true);
-    ap_summary_row.set_shrink_start_child(true);
-    ap_summary_row.set_shrink_end_child(true);
-    ap_summary_row.set_start_child(Some(&ap_detail_scroll));
-    ap_summary_row.set_end_child(Some(&ap_packet_box));
 
     let ap_notes_scrolled = ScrolledWindow::builder()
         .hexpand(true)
@@ -3476,11 +3443,11 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_detail_sections.set_resize_end_child(true);
     ap_detail_sections.set_shrink_start_child(true);
     ap_detail_sections.set_shrink_end_child(true);
-    ap_detail_sections.set_start_child(Some(&ap_summary_row));
+    ap_detail_sections.set_start_child(Some(&ap_detail_scroll));
     ap_detail_sections.set_end_child(Some(&ap_notes_box));
 
     let ap_detail_box = GtkBox::new(Orientation::Vertical, 6);
-    ap_detail_box.append(&Label::new(Some("Network Details and Packet Graphs")));
+    ap_detail_box.append(&Label::new(Some("Network Details")));
     ap_detail_box.append(&ap_detail_sections);
 
     let ap_selection_suppressed = Rc::new(RefCell::new(false));
@@ -4183,15 +4150,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     channel_root.set_end_child(Some(&channel_status_scrolled));
     notebook.append_page(&channel_root, Some(&Label::new(Some("Channel Usage"))));
 
-    let selected_packet_mix: Rc<RefCell<PacketTypeBreakdown>> =
-        Rc::new(RefCell::new(PacketTypeBreakdown::default()));
-    {
-        let mix = selected_packet_mix.clone();
-        ap_packet_draw.set_draw_func(move |_, ctx, width, height| {
-            draw_packet_pie(ctx, width as f64, height as f64, &mix.borrow());
-        });
-    }
-
     {
         let ap_selection_suppressed = ap_selection_suppressed.clone();
         let ap_selected_key = ap_selected_key.clone();
@@ -4745,8 +4703,6 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             ap_assoc_header_holder,
             ap_assoc_list,
             ap_assoc_pagination,
-            ap_packet_draw,
-            ap_selected_packet_mix: selected_packet_mix,
             ap_scroll_debug_label,
             client_header_holder,
             client_header_scrolled,
@@ -4835,8 +4791,6 @@ fn bind_poll_loop(
         ap_assoc_header_holder,
         ap_assoc_list,
         ap_assoc_pagination,
-        ap_packet_draw,
-        ap_selected_packet_mix,
         ap_scroll_debug_label,
         client_header_holder,
         client_header_scrolled,
@@ -5181,7 +5135,7 @@ fn bind_poll_loop(
                 let ww = window.width().clamp(520, SMALL_DISPLAY_TARGET_WIDTH);
                 let wh = window.height().clamp(520, SMALL_DISPLAY_TARGET_HEIGHT);
                 let ap_root_pos = ((wh as f64) * 0.34) as i32;
-                let ap_bottom_pos = ((ww as f64) * 0.60) as i32;
+                let ap_bottom_pos = ((ww as f64) * 0.50) as i32;
                 let client_root_pos = ((wh as f64) * 0.42) as i32;
                 let bluetooth_root_pos = ((wh as f64) * 0.36) as i32;
                 ap_root.set_position(ap_root_pos.clamp(170, wh.saturating_sub(180)));
@@ -5380,8 +5334,6 @@ fn bind_poll_loop(
                             &ap_detail_label,
                             ap_watchlist_match(ap, &s.settings.watchlists).is_some(),
                         );
-                        *ap_selected_packet_mix.borrow_mut() = ap.packet_mix.clone();
-                        ap_packet_draw.queue_draw();
                         let notes_text = ap.notes.as_deref().unwrap_or("");
                         let buffer = ap_notes_view.buffer();
                         let current_notes = buffer
@@ -5434,8 +5386,6 @@ fn bind_poll_loop(
                     }
                     set_detail_watchlist_highlight(&ap_detail_label, false);
                     ap_notes_view.buffer().set_text("");
-                    *ap_selected_packet_mix.borrow_mut() = PacketTypeBreakdown::default();
-                    ap_packet_draw.queue_draw();
                     clear_listbox(&ap_assoc_list);
                     clear_wifi_geiger_preview(&wifi_geiger_state);
                     *last_ap_detail_signature.borrow_mut() = None;
@@ -5449,8 +5399,6 @@ fn bind_poll_loop(
                 }
                 set_detail_watchlist_highlight(&ap_detail_label, false);
                 ap_notes_view.buffer().set_text("");
-                *ap_selected_packet_mix.borrow_mut() = PacketTypeBreakdown::default();
-                ap_packet_draw.queue_draw();
                 clear_listbox(&ap_assoc_list);
                 clear_wifi_geiger_preview(&wifi_geiger_state);
                 *last_ap_detail_signature.borrow_mut() = None;
@@ -7884,7 +7832,7 @@ fn format_ap_detail_text(ap: &AccessPointRecord) -> String {
     let advanced_not_captured = "Not captured yet";
 
     format!(
-        "Identity\nSSID: {}\nHidden SSID: {}\nBSSID: {}\nOUI: {}\n802.11d Country: {}\n\nSecurity\nEncryption: {}\nFull Encryption: {}\nAKM Suites: {}\nCipher Suites: {}\nPMF: {}\nWPS:\n{}\nHandshake Count (WPA2 4-way full): {}\nPMKID Count: {}\n\nRadio\nBand: {}\nPrimary Channel: {}\nFrequency: {} MHz\nSecondary Channel: {}\nChannel Width: {}\nCenter Segment 0: {}\nCenter Segment 1: {}\nPHY Generation: {}\nHT/VHT/HE/EHT Summary: {}\nSupported Rates: {}\nBasic Rates: {}\nWMM / QoS: {}\n802.11k: {}\n802.11v: {}\n802.11r: {}\nDFS / TPC: {}\nChannel Switch Announcement: {}\nMulti-BSSID: {}\nRNR / Neighbor Report: {}\n802.11u / Hotspot 2.0: {}\nVendor IEs: {}\n\nPresence\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nClients: {}\nFirst Seen: {}\nLast Seen: {}\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}\nUptime (beacon estimate): {}\nBeacon Interval: {}\nDTIM Period: {}\n\nAnalytics\nPacket Totals: total={} mgmt={} control={} data={} other={}\nBSS Load: {}\nObserved Data Rates: {}\nRetry Rate: {}\n\nNotes\n{}",
+        "Identity\nSSID: {}\nHidden SSID: {}\nBSSID: {}\nOUI: {}\n802.11d Country: {}\n\nSecurity\nEncryption: {}\nFull Encryption: {}\nAKM Suites: {}\nCipher Suites: {}\nPMF: {}\nWPS:\n{}\nHandshake Count (WPA2 4-way full): {}\nPMKID Count: {}\n\nRadio\nBand: {}\nPrimary Channel: {}\nFrequency: {} MHz\nSecondary Channel: {}\nChannel Width: {}\nCenter Segment 0: {}\nCenter Segment 1: {}\nPHY Generation: {}\nHT/VHT/HE/EHT Summary: {}\nSupported Rates: {}\nBasic Rates: {}\nWMM / QoS: {}\n802.11k: {}\n802.11v: {}\n802.11r: {}\nDFS / TPC: {}\nChannel Switch Announcement: {}\nMulti-BSSID: {}\nRNR / Neighbor Report: {}\n802.11u / Hotspot 2.0: {}\nVendor IEs: {}\n\nPresence\nCurrent RSSI: {}\nAverage RSSI: {}\nMinimum RSSI: {}\nMaximum RSSI: {}\nRSSI Samples: {}\nClients: {}\nFirst Seen: {}\nLast Seen: {}\nObservation Count: {}\nFirst Location: {}\nLast Location: {}\nStrongest Location: {}\nUptime (beacon estimate): {}\nBeacon Interval: {}\nDTIM Period: {}\n\nPacket Statistics\nTotal Frames: {}\nManagement Frames: {}\nControl Frames: {}\nData Frames: {}\nOther Frames: {}\nBSS Load: {}\nObserved Data Rates: {}\nRetry Rate: {}\n\nNotes\n{}",
         ap.ssid.clone().unwrap_or_else(|| "<hidden>".to_string()),
         hidden_ssid,
         ap.bssid,
@@ -8551,44 +8499,6 @@ fn format_strongest_observation(obs: Option<&GeoObservation>, has_observations: 
         }
         None if has_observations => "Unknown (no RSSI captured)".to_string(),
         None => "Unknown".to_string(),
-    }
-}
-
-fn draw_packet_pie(ctx: &cairo::Context, width: f64, height: f64, mix: &PacketTypeBreakdown) {
-    let total = mix.total() as f64;
-    ctx.set_source_rgb(0.12, 0.12, 0.14);
-    let _ = ctx.paint();
-
-    if total <= 0.0 {
-        ctx.set_source_rgb(0.8, 0.8, 0.8);
-        ctx.move_to(20.0, height / 2.0);
-        let _ = ctx.show_text("No packet data yet");
-        return;
-    }
-
-    let cx = width * 0.5;
-    let cy = height * 0.5;
-    let radius = width.min(height) * 0.35;
-
-    let slices = [
-        (mix.management as f64, (0.3, 0.8, 1.0)),
-        (mix.control as f64, (0.9, 0.6, 0.1)),
-        (mix.data as f64, (0.2, 0.9, 0.3)),
-        (mix.other as f64, (0.85, 0.2, 0.2)),
-    ];
-
-    let mut angle = -std::f64::consts::FRAC_PI_2;
-    for (value, (r, g, b)) in slices {
-        if value <= 0.0 {
-            continue;
-        }
-        let next = angle + (value / total) * std::f64::consts::TAU;
-        ctx.set_source_rgb(r, g, b);
-        ctx.move_to(cx, cy);
-        ctx.arc(cx, cy, radius, angle, next);
-        ctx.close_path();
-        let _ = ctx.fill();
-        angle = next;
     }
 }
 
