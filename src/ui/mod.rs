@@ -99,7 +99,7 @@ const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 300;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 240;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 240;
-const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-D";
+const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-E";
 
 fn is_small_display() -> bool {
     let model = std::fs::read_to_string("/proc/device-tree/model")
@@ -3456,7 +3456,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_detail_sections.set_end_child(Some(&ap_notes_box));
 
     let ap_detail_box = GtkBox::new(Orientation::Vertical, 6);
-    ap_detail_box.append(&Label::new(Some("Network Details")));
+    let ap_details_heading = Label::new(Some("Network Details"));
+    ap_details_heading.set_xalign(0.0);
+    ap_detail_box.append(&ap_details_heading);
     ap_detail_box.append(&ap_detail_sections);
 
     let ap_selection_suppressed = Rc::new(RefCell::new(false));
@@ -3484,6 +3486,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_assoc_header_holder.append(&ap_assoc_pagination.filter_bar);
 
     let ap_assoc_box = GtkBox::new(Orientation::Vertical, 4);
+    ap_assoc_box.set_hexpand(true);
     ap_assoc_box.append(&ap_assoc_header_holder);
     ap_assoc_box.append(&ap_assoc_scrolled);
     ap_assoc_box.append(&ap_assoc_pagination_row);
