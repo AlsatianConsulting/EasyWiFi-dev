@@ -3358,7 +3358,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_list_canvas.append(&ap_list);
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
-        .hexpand(true)
+        .hexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&ap_list_canvas)
         .build();
@@ -3373,7 +3373,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_header_holder.append(&ap_table_header(&ap_layout, &ap_sort, state.clone()));
     ap_header_holder.append(&ap_pagination.filter_bar);
     let ap_header_scrolled = ScrolledWindow::builder()
-        .hexpand(true)
+        .hexpand(false)
         .vexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Never)
@@ -3393,6 +3393,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         });
     }
     let ap_top = GtkBox::new(Orientation::Vertical, 4);
+    ap_top.set_hexpand(false);
+    ap_top.set_halign(gtk::Align::Start);
     ap_top.append(&ap_header_scrolled);
     ap_top.append(&ap_scrolled);
     let ap_hscroll = Scrollbar::new(Orientation::Horizontal, Some(&ap_scroll_adj));
@@ -3545,7 +3547,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_selected_key = Rc::new(RefCell::new(None::<String>));
     let client_scrolled = ScrolledWindow::builder()
         .vexpand(true)
-        .hexpand(true)
+        .hexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&client_list_canvas)
         .build();
@@ -3564,7 +3566,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ));
     client_header_holder.append(&client_pagination.filter_bar);
     let client_header_scrolled = ScrolledWindow::builder()
-        .hexpand(true)
+        .hexpand(false)
         .vexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Never)
@@ -3584,6 +3586,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         });
     }
     let client_top = GtkBox::new(Orientation::Vertical, 4);
+    client_top.set_hexpand(false);
+    client_top.set_halign(gtk::Align::Start);
     client_top.append(&client_header_scrolled);
     client_top.append(&client_scrolled);
     let client_hscroll = Scrollbar::new(Orientation::Horizontal, Some(&client_scroll_adj));
@@ -3822,7 +3826,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ));
     let bluetooth_scrolled = ScrolledWindow::builder()
         .vexpand(true)
-        .hexpand(true)
+        .hexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&bluetooth_list_canvas)
         .build();
@@ -3834,7 +3838,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     );
     bluetooth_header_holder.append(&bluetooth_pagination.filter_bar);
     let bluetooth_header_scrolled = ScrolledWindow::builder()
-        .hexpand(true)
+        .hexpand(false)
         .vexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Never)
@@ -3855,6 +3859,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         });
     }
     let bluetooth_top = GtkBox::new(Orientation::Vertical, 4);
+    bluetooth_top.set_hexpand(false);
+    bluetooth_top.set_halign(gtk::Align::Start);
     bluetooth_top.append(&bluetooth_header_scrolled);
     bluetooth_top.append(&bluetooth_scrolled);
     let bluetooth_hscroll = Scrollbar::new(Orientation::Horizontal, Some(&bluetooth_scroll_adj));
@@ -5098,14 +5104,20 @@ fn bind_poll_loop(
                     .max(BLUETOOTH_TABLE_MIN_WIDTH_PX);
             ap_header_scrolled.set_max_content_width(table_viewport_width_px);
             ap_scrolled.set_max_content_width(table_viewport_width_px);
+            ap_header_scrolled.set_min_content_width(table_viewport_width_px);
+            ap_scrolled.set_min_content_width(table_viewport_width_px);
             ap_header_scrolled.set_size_request(table_viewport_width_px, -1);
             ap_scrolled.set_size_request(table_viewport_width_px, -1);
             client_header_scrolled.set_max_content_width(table_viewport_width_px);
             client_scrolled.set_max_content_width(table_viewport_width_px);
+            client_header_scrolled.set_min_content_width(table_viewport_width_px);
+            client_scrolled.set_min_content_width(table_viewport_width_px);
             client_header_scrolled.set_size_request(table_viewport_width_px, -1);
             client_scrolled.set_size_request(table_viewport_width_px, -1);
             bluetooth_header_scrolled.set_max_content_width(table_viewport_width_px);
             bluetooth_scrolled.set_max_content_width(table_viewport_width_px);
+            bluetooth_header_scrolled.set_min_content_width(table_viewport_width_px);
+            bluetooth_scrolled.set_min_content_width(table_viewport_width_px);
             bluetooth_header_scrolled.set_size_request(table_viewport_width_px, -1);
             bluetooth_scrolled.set_size_request(table_viewport_width_px, -1);
             ap_list.set_size_request(ap_row_width_px, -1);
