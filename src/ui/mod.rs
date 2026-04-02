@@ -3374,7 +3374,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(false)
-        .hscrollbar_policy(gtk::PolicyType::Always)
+        .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&ap_viewport)
         .build();
     ap_scrolled.set_propagate_natural_width(false);
@@ -3395,15 +3395,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .child(&ap_header_holder)
         .build();
     ap_header_scrolled.set_propagate_natural_width(false);
-    let ap_header_hadj = ap_header_scrolled.hadjustment();
     {
-        let ap_header_hadj = ap_header_hadj.clone();
+        let ap_list_canvas = ap_list_canvas.clone();
+        let ap_header_holder = ap_header_holder.clone();
         ap_scroll_adj.connect_value_changed(move |adj| {
-            let max_value = (ap_header_hadj.upper() - ap_header_hadj.page_size()).max(0.0);
-            let value = adj.value().clamp(0.0, max_value);
-            if (ap_header_hadj.value() - value).abs() > f64::EPSILON {
-                ap_header_hadj.set_value(value);
-            }
+            let offset = -(adj.value().round() as i32);
+            ap_list_canvas.set_margin_start(offset);
+            ap_header_holder.set_margin_start(offset);
         });
     }
     let ap_top = GtkBox::new(Orientation::Vertical, 4);
@@ -3411,6 +3409,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_top.set_halign(gtk::Align::Start);
     ap_top.append(&ap_header_scrolled);
     ap_top.append(&ap_scrolled);
+    let ap_hscroll = gtk::Scrollbar::new(Orientation::Horizontal, Some(&ap_scroll_adj));
+    ap_hscroll.set_hexpand(true);
+    ap_top.append(&ap_hscroll);
     let ap_scroll_debug_label = Label::new(Some("AP scroll: pending"));
     ap_scroll_debug_label.set_xalign(0.0);
     ap_scroll_debug_label.add_css_class("caption");
@@ -3599,7 +3600,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(false)
-        .hscrollbar_policy(gtk::PolicyType::Always)
+        .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&client_viewport)
         .build();
     client_scrolled.set_propagate_natural_width(false);
@@ -3624,15 +3625,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .child(&client_header_holder)
         .build();
     client_header_scrolled.set_propagate_natural_width(false);
-    let client_header_hadj = client_header_scrolled.hadjustment();
     {
-        let client_header_hadj = client_header_hadj.clone();
+        let client_list_canvas = client_list_canvas.clone();
+        let client_header_holder = client_header_holder.clone();
         client_scroll_adj.connect_value_changed(move |adj| {
-            let max_value = (client_header_hadj.upper() - client_header_hadj.page_size()).max(0.0);
-            let value = adj.value().clamp(0.0, max_value);
-            if (client_header_hadj.value() - value).abs() > f64::EPSILON {
-                client_header_hadj.set_value(value);
-            }
+            let offset = -(adj.value().round() as i32);
+            client_list_canvas.set_margin_start(offset);
+            client_header_holder.set_margin_start(offset);
         });
     }
     let client_top = GtkBox::new(Orientation::Vertical, 4);
@@ -3640,6 +3639,9 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     client_top.set_halign(gtk::Align::Start);
     client_top.append(&client_header_scrolled);
     client_top.append(&client_scrolled);
+    let client_hscroll = gtk::Scrollbar::new(Orientation::Horizontal, Some(&client_scroll_adj));
+    client_hscroll.set_hexpand(true);
+    client_top.append(&client_hscroll);
     let client_scroll_debug_label = Label::new(Some("Client scroll: pending"));
     client_scroll_debug_label.set_xalign(0.0);
     client_scroll_debug_label.add_css_class("caption");
@@ -3915,7 +3917,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let bluetooth_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(false)
-        .hscrollbar_policy(gtk::PolicyType::Always)
+        .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&bluetooth_viewport)
         .build();
     bluetooth_scrolled.set_propagate_natural_width(false);
@@ -3933,16 +3935,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .child(&bluetooth_header_holder)
         .build();
     bluetooth_header_scrolled.set_propagate_natural_width(false);
-    let bluetooth_header_hadj = bluetooth_header_scrolled.hadjustment();
     {
-        let bluetooth_header_hadj = bluetooth_header_hadj.clone();
+        let bluetooth_list_canvas = bluetooth_list_canvas.clone();
+        let bluetooth_header_holder = bluetooth_header_holder.clone();
         bluetooth_scroll_adj.connect_value_changed(move |adj| {
-            let max_value =
-                (bluetooth_header_hadj.upper() - bluetooth_header_hadj.page_size()).max(0.0);
-            let value = adj.value().clamp(0.0, max_value);
-            if (bluetooth_header_hadj.value() - value).abs() > f64::EPSILON {
-                bluetooth_header_hadj.set_value(value);
-            }
+            let offset = -(adj.value().round() as i32);
+            bluetooth_list_canvas.set_margin_start(offset);
+            bluetooth_header_holder.set_margin_start(offset);
         });
     }
     let bluetooth_top = GtkBox::new(Orientation::Vertical, 4);
@@ -3950,6 +3949,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_top.set_halign(gtk::Align::Start);
     bluetooth_top.append(&bluetooth_header_scrolled);
     bluetooth_top.append(&bluetooth_scrolled);
+    let bluetooth_hscroll =
+        gtk::Scrollbar::new(Orientation::Horizontal, Some(&bluetooth_scroll_adj));
+    bluetooth_hscroll.set_hexpand(true);
+    bluetooth_top.append(&bluetooth_hscroll);
     let bluetooth_scroll_debug_label = Label::new(Some("Bluetooth scroll: pending"));
     bluetooth_scroll_debug_label.set_xalign(0.0);
     bluetooth_scroll_debug_label.add_css_class("caption");
