@@ -2347,13 +2347,15 @@ fn build_ui(app: &Application) -> Result<()> {
     );
     {
         let s = state.borrow_mut();
-        if s.settings.window_fullscreen {
+        if is_small_display() {
+            window.unfullscreen();
+            window.unmaximize();
+            window.set_default_size(680, 680);
+            window.set_resizable(true);
+        } else if s.settings.window_fullscreen {
             window.fullscreen();
         } else if s.settings.window_maximized {
             window.maximize();
-        } else if is_small_display() {
-            window.set_default_size(700, 700);
-            window.set_resizable(true);
         }
     }
     {
