@@ -107,6 +107,14 @@ fn is_small_display() -> bool {
     model.contains("raspberry pi")
 }
 
+fn effective_min_window_size() -> (i32, i32) {
+    if is_small_display() {
+        (520, 520)
+    } else {
+        (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    }
+}
+
 #[derive(Clone)]
 enum PersistenceCommand {
     ReplaceStorage(StorageEngine),
@@ -2024,7 +2032,8 @@ fn build_ui(app: &Application) -> Result<()> {
         .default_width(DEFAULT_WINDOW_WIDTH)
         .default_height(DEFAULT_WINDOW_HEIGHT)
         .build();
-    window.set_size_request(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
+    let (min_window_width, min_window_height) = effective_min_window_size();
+    window.set_size_request(min_window_width, min_window_height);
     let output_dir = {
         let fallback = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         fallback.join("output")
@@ -2343,7 +2352,7 @@ fn build_ui(app: &Application) -> Result<()> {
         } else if s.settings.window_maximized {
             window.maximize();
         } else if is_small_display() {
-            window.set_default_size(720, 720);
+            window.set_default_size(700, 700);
             window.set_resizable(true);
         }
     }
@@ -2351,8 +2360,9 @@ fn build_ui(app: &Application) -> Result<()> {
         let state = state.clone();
         window.connect_close_request(move |w| {
             let mut s = state.borrow_mut();
-            s.settings.window_width = w.width().max(MIN_WINDOW_WIDTH);
-            s.settings.window_height = w.height().max(MIN_WINDOW_HEIGHT);
+            let (min_width, min_height) = effective_min_window_size();
+            s.settings.window_width = w.width().max(min_width);
+            s.settings.window_height = w.height().max(min_height);
             s.settings.window_maximized = w.is_maximized();
             s.settings.window_fullscreen = w.is_fullscreen();
             s.save_settings_to_disk();
