@@ -3401,6 +3401,39 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_scroll_debug_label.set_xalign(0.0);
     ap_scroll_debug_label.add_css_class("caption");
     ap_top.append(&ap_scroll_debug_label);
+    let ap_scroll_controls = GtkBox::new(Orientation::Horizontal, 6);
+    let ap_scroll_home_btn = Button::with_label("<<");
+    let ap_scroll_left_btn = Button::with_label("<");
+    let ap_scroll_right_btn = Button::with_label(">");
+    let ap_scroll_end_btn = Button::with_label(">>");
+    {
+        let adj = ap_scroll_adj.clone();
+        ap_scroll_home_btn.connect_clicked(move |_| adj.set_value(0.0));
+    }
+    {
+        let adj = ap_scroll_adj.clone();
+        ap_scroll_left_btn.connect_clicked(move |_| nudge_adjustment(&adj, -160.0));
+    }
+    {
+        let adj = ap_scroll_adj.clone();
+        ap_scroll_right_btn.connect_clicked(move |_| nudge_adjustment(&adj, 160.0));
+    }
+    {
+        let adj = ap_scroll_adj.clone();
+        ap_scroll_end_btn.connect_clicked(move |_| {
+            let max_value = (adj.upper() - adj.page_size()).max(0.0);
+            adj.set_value(max_value);
+        });
+    }
+    for button in [
+        &ap_scroll_home_btn,
+        &ap_scroll_left_btn,
+        &ap_scroll_right_btn,
+        &ap_scroll_end_btn,
+    ] {
+        ap_scroll_controls.append(button);
+    }
+    ap_top.append(&ap_scroll_controls);
     ap_top.append(&ap_pagination_row);
 
     let ap_detail_label = Label::new(None);
@@ -3591,6 +3624,39 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     client_scroll_debug_label.set_xalign(0.0);
     client_scroll_debug_label.add_css_class("caption");
     client_top.append(&client_scroll_debug_label);
+    let client_scroll_controls = GtkBox::new(Orientation::Horizontal, 6);
+    let client_scroll_home_btn = Button::with_label("<<");
+    let client_scroll_left_btn = Button::with_label("<");
+    let client_scroll_right_btn = Button::with_label(">");
+    let client_scroll_end_btn = Button::with_label(">>");
+    {
+        let adj = client_scroll_adj.clone();
+        client_scroll_home_btn.connect_clicked(move |_| adj.set_value(0.0));
+    }
+    {
+        let adj = client_scroll_adj.clone();
+        client_scroll_left_btn.connect_clicked(move |_| nudge_adjustment(&adj, -160.0));
+    }
+    {
+        let adj = client_scroll_adj.clone();
+        client_scroll_right_btn.connect_clicked(move |_| nudge_adjustment(&adj, 160.0));
+    }
+    {
+        let adj = client_scroll_adj.clone();
+        client_scroll_end_btn.connect_clicked(move |_| {
+            let max_value = (adj.upper() - adj.page_size()).max(0.0);
+            adj.set_value(max_value);
+        });
+    }
+    for button in [
+        &client_scroll_home_btn,
+        &client_scroll_left_btn,
+        &client_scroll_right_btn,
+        &client_scroll_end_btn,
+    ] {
+        client_scroll_controls.append(button);
+    }
+    client_top.append(&client_scroll_controls);
     client_top.append(&client_pagination_row);
 
     let client_detail_label = Label::new(None);
@@ -3861,6 +3927,39 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_scroll_debug_label.set_xalign(0.0);
     bluetooth_scroll_debug_label.add_css_class("caption");
     bluetooth_top.append(&bluetooth_scroll_debug_label);
+    let bluetooth_scroll_controls = GtkBox::new(Orientation::Horizontal, 6);
+    let bluetooth_scroll_home_btn = Button::with_label("<<");
+    let bluetooth_scroll_left_btn = Button::with_label("<");
+    let bluetooth_scroll_right_btn = Button::with_label(">");
+    let bluetooth_scroll_end_btn = Button::with_label(">>");
+    {
+        let adj = bluetooth_scroll_adj.clone();
+        bluetooth_scroll_home_btn.connect_clicked(move |_| adj.set_value(0.0));
+    }
+    {
+        let adj = bluetooth_scroll_adj.clone();
+        bluetooth_scroll_left_btn.connect_clicked(move |_| nudge_adjustment(&adj, -160.0));
+    }
+    {
+        let adj = bluetooth_scroll_adj.clone();
+        bluetooth_scroll_right_btn.connect_clicked(move |_| nudge_adjustment(&adj, 160.0));
+    }
+    {
+        let adj = bluetooth_scroll_adj.clone();
+        bluetooth_scroll_end_btn.connect_clicked(move |_| {
+            let max_value = (adj.upper() - adj.page_size()).max(0.0);
+            adj.set_value(max_value);
+        });
+    }
+    for button in [
+        &bluetooth_scroll_home_btn,
+        &bluetooth_scroll_left_btn,
+        &bluetooth_scroll_right_btn,
+        &bluetooth_scroll_end_btn,
+    ] {
+        bluetooth_scroll_controls.append(button);
+    }
+    bluetooth_top.append(&bluetooth_scroll_controls);
     bluetooth_top.append(&bluetooth_pagination_row);
 
     let bluetooth_identity_label = detail_section_label();
@@ -7007,6 +7106,12 @@ fn update_horizontal_adjustment_bounds(
     if (adj.value() - current).abs() > 0.5 {
         adj.set_value(current);
     }
+}
+
+fn nudge_adjustment(adj: &gtk::Adjustment, delta: f64) {
+    let max_value = (adj.upper() - adj.page_size()).max(0.0);
+    let next = (adj.value() + delta).clamp(0.0, max_value);
+    adj.set_value(next);
 }
 
 fn clear_box(holder: &GtkBox) {
