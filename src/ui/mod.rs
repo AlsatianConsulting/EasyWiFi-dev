@@ -2347,7 +2347,12 @@ fn build_ui(app: &Application) -> Result<()> {
     );
     {
         let s = state.borrow_mut();
-        if s.settings.window_fullscreen {
+        if is_small_display() && s.settings.window_fullscreen {
+            window.unfullscreen();
+            window.unmaximize();
+            window.set_default_size(680, 680);
+            window.set_resizable(true);
+        } else if s.settings.window_fullscreen {
             window.fullscreen();
         } else if s.settings.window_maximized {
             window.maximize();
@@ -5155,7 +5160,7 @@ fn bind_poll_loop(
 
         {
             let s = state.borrow();
-            let table_viewport_width_px = if is_small_display() && !window.is_fullscreen() {
+            let table_viewport_width_px = if is_small_display() {
                 680
             } else {
                 (window.width().max(MIN_WINDOW_WIDTH) - 52).max(320)
