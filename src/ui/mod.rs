@@ -99,7 +99,7 @@ const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 300;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 240;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 240;
-const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-F";
+const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-G";
 
 fn is_small_display() -> bool {
     let model = std::fs::read_to_string("/proc/device-tree/model")
@@ -1761,13 +1761,15 @@ fn build_table_pagination_controls(
             .collect::<Vec<_>>(),
     );
 
-    let container = GtkBox::new(Orientation::Horizontal, 8);
+    let container = GtkBox::new(Orientation::Vertical, 4);
     container.set_margin_top(4);
     let controls_row = GtkBox::new(Orientation::Horizontal, 8);
-    controls_row.set_hexpand(true);
+    controls_row.set_hexpand(false);
+    controls_row.set_halign(gtk::Align::Start);
     let filter_bar = Grid::new();
     filter_bar.set_column_spacing(14);
-    filter_bar.set_hexpand(true);
+    filter_bar.set_hexpand(false);
+    filter_bar.set_halign(gtk::Align::Start);
 
     let rows_label = Label::new(Some("Rows"));
     rows_label.set_xalign(0.0);
@@ -1790,10 +1792,14 @@ fn build_table_pagination_controls(
     let clear_filters_button = Button::with_label("Clear");
     let filter_summary_label = Label::new(Some("No active column filters"));
     filter_summary_label.set_xalign(0.0);
-    filter_summary_label.set_hexpand(true);
+    filter_summary_label.set_hexpand(false);
+    filter_summary_label.set_max_width_chars(20);
+    filter_summary_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     let summary_label = Label::new(Some("Showing 0 of 0 | Page 1 of 1"));
     summary_label.set_xalign(0.0);
-    summary_label.set_hexpand(true);
+    summary_label.set_hexpand(false);
+    summary_label.set_max_width_chars(28);
+    summary_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
     controls_row.append(&rows_label);
     controls_row.append(&page_size_combo);
@@ -1813,7 +1819,8 @@ fn build_table_pagination_controls(
         entry.set_max_width_chars(entry_width);
         entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
         entry.set_margin_end(6);
-        entry.set_placeholder_text(Some(column_label));
+        entry.set_placeholder_text(None::<&str>);
+        entry.set_tooltip_text(Some(column_label));
         filter_bar.attach(&entry, column_index as i32, 0, 1, 1);
         filter_entries
             .borrow_mut()
@@ -1838,7 +1845,15 @@ fn build_table_pagination_controls(
     }
     controls_row.append(&filter_summary_label);
 
-    container.append(&controls_row);
+    let controls_scrolled = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(false)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .child(&controls_row)
+        .build();
+    controls_scrolled.set_propagate_natural_width(false);
+    container.append(&controls_scrolled);
 
     {
         let page_size = page_size.clone();
