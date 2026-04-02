@@ -5117,16 +5117,58 @@ fn bind_poll_loop(
             ap_header_holder.set_halign(gtk::Align::Start);
             ap_list.set_halign(gtk::Align::Start);
             ap_list.set_hexpand(false);
+            let ap_upper = ap_row_width_px as f64;
+            let ap_page = table_viewport_width_px as f64;
+            let ap_max = (ap_upper - ap_page).max(0.0);
+            if ap_scroll_adj.upper() != ap_upper {
+                ap_scroll_adj.set_upper(ap_upper);
+            }
+            if ap_scroll_adj.page_size() != ap_page {
+                ap_scroll_adj.set_page_size(ap_page);
+            }
+            ap_scroll_adj.set_step_increment(24.0);
+            ap_scroll_adj.set_page_increment((ap_page * 0.7).max(48.0));
+            if ap_scroll_adj.value() > ap_max {
+                ap_scroll_adj.set_value(ap_max);
+            }
             client_list.set_size_request(client_row_width_px, -1);
             client_header_holder.set_size_request(client_row_width_px, -1);
             client_header_holder.set_halign(gtk::Align::Start);
             client_list.set_halign(gtk::Align::Start);
             client_list.set_hexpand(false);
+            let client_upper = client_row_width_px as f64;
+            let client_page = table_viewport_width_px as f64;
+            let client_max = (client_upper - client_page).max(0.0);
+            if client_scroll_adj.upper() != client_upper {
+                client_scroll_adj.set_upper(client_upper);
+            }
+            if client_scroll_adj.page_size() != client_page {
+                client_scroll_adj.set_page_size(client_page);
+            }
+            client_scroll_adj.set_step_increment(24.0);
+            client_scroll_adj.set_page_increment((client_page * 0.7).max(48.0));
+            if client_scroll_adj.value() > client_max {
+                client_scroll_adj.set_value(client_max);
+            }
             bluetooth_list.set_size_request(bluetooth_row_width_px, -1);
             bluetooth_header_holder.set_size_request(bluetooth_row_width_px, -1);
             bluetooth_header_holder.set_halign(gtk::Align::Start);
             bluetooth_list.set_halign(gtk::Align::Start);
             bluetooth_list.set_hexpand(false);
+            let bluetooth_upper = bluetooth_row_width_px as f64;
+            let bluetooth_page = table_viewport_width_px as f64;
+            let bluetooth_max = (bluetooth_upper - bluetooth_page).max(0.0);
+            if bluetooth_scroll_adj.upper() != bluetooth_upper {
+                bluetooth_scroll_adj.set_upper(bluetooth_upper);
+            }
+            if bluetooth_scroll_adj.page_size() != bluetooth_page {
+                bluetooth_scroll_adj.set_page_size(bluetooth_page);
+            }
+            bluetooth_scroll_adj.set_step_increment(24.0);
+            bluetooth_scroll_adj.set_page_increment((bluetooth_page * 0.7).max(48.0));
+            if bluetooth_scroll_adj.value() > bluetooth_max {
+                bluetooth_scroll_adj.set_value(bluetooth_max);
+            }
         }
         let ap_max_scroll = (ap_scroll_adj.upper() - ap_scroll_adj.page_size()).max(0.0);
         ap_scroll_debug_label.set_text(&format!(
