@@ -99,7 +99,7 @@ const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 300;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 240;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 240;
-const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-E";
+const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-F";
 
 fn is_small_display() -> bool {
     let model = std::fs::read_to_string("/proc/device-tree/model")
@@ -2360,6 +2360,21 @@ fn build_ui(app: &Application) -> Result<()> {
         });
     }
     {
+        let window = window.clone();
+        glib::timeout_add_local(Duration::from_millis(250), move || {
+            if window.width() != SMALL_DISPLAY_TARGET_WIDTH
+                || window.height() != SMALL_DISPLAY_TARGET_HEIGHT
+            {
+                window.unfullscreen();
+                window.unmaximize();
+                window.set_default_size(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
+                window.set_size_request(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
+                window.set_resizable(false);
+            }
+            glib::ControlFlow::Continue
+        });
+    }
+    {
         let state = state.clone();
         window.connect_close_request(move |w| {
             let mut s = state.borrow_mut();
@@ -3318,7 +3333,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_list_canvas.set_halign(gtk::Align::Start);
     ap_list_canvas.append(&ap_list);
     let ap_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
-    let ap_viewport = Viewport::new(Some(&ap_scroll_adj), None::<&gtk::Adjustment>);
+    let ap_viewport = Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
     ap_viewport.set_child(Some(&ap_list_canvas));
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
@@ -3328,6 +3343,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
     ap_scrolled.set_propagate_natural_width(false);
     ap_scrolled.set_overlay_scrolling(false);
+    ap_scrolled.set_hadjustment(Some(&ap_scroll_adj));
     let (ap_pagination_row, ap_pagination) = build_table_pagination_controls(
         default_rows_per_page,
         table_filter_columns(&ap_layout, ap_column_label),
@@ -3344,15 +3360,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .child(&ap_header_holder)
         .build();
     ap_header_scrolled.set_propagate_natural_width(false);
-    {
-        let ap_list_canvas = ap_list_canvas.clone();
-        let ap_header_holder = ap_header_holder.clone();
-        ap_scroll_adj.connect_value_changed(move |adj| {
-            let offset = -(adj.value().round() as i32);
-            ap_list_canvas.set_margin_start(offset);
-            ap_header_holder.set_margin_start(offset);
-        });
-    }
+    ap_header_scrolled.set_hadjustment(Some(&ap_scroll_adj));
     let ap_top = GtkBox::new(Orientation::Vertical, 4);
     ap_top.set_hexpand(true);
     ap_top.set_halign(gtk::Align::Fill);
@@ -3529,7 +3537,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     client_list_canvas.set_halign(gtk::Align::Start);
     client_list_canvas.append(&client_list);
     let client_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
-    let client_viewport = Viewport::new(Some(&client_scroll_adj), None::<&gtk::Adjustment>);
+    let client_viewport = Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
     client_viewport.set_child(Some(&client_list_canvas));
     let client_selection_suppressed = Rc::new(RefCell::new(false));
     let client_selected_key = Rc::new(RefCell::new(None::<String>));
@@ -3541,6 +3549,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
     client_scrolled.set_propagate_natural_width(false);
     client_scrolled.set_overlay_scrolling(false);
+    client_scrolled.set_hadjustment(Some(&client_scroll_adj));
     let (client_pagination_row, client_pagination) = build_table_pagination_controls(
         default_rows_per_page,
         table_filter_columns(&client_layout, client_column_label),
@@ -3561,15 +3570,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .child(&client_header_holder)
         .build();
     client_header_scrolled.set_propagate_natural_width(false);
-    {
-        let client_list_canvas = client_list_canvas.clone();
-        let client_header_holder = client_header_holder.clone();
-        client_scroll_adj.connect_value_changed(move |adj| {
-            let offset = -(adj.value().round() as i32);
-            client_list_canvas.set_margin_start(offset);
-            client_header_holder.set_margin_start(offset);
-        });
-    }
+    client_header_scrolled.set_hadjustment(Some(&client_scroll_adj));
     let client_top = GtkBox::new(Orientation::Vertical, 4);
     client_top.set_hexpand(true);
     client_top.set_halign(gtk::Align::Fill);
@@ -3847,7 +3848,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_list_canvas.set_halign(gtk::Align::Start);
     bluetooth_list_canvas.append(&bluetooth_list);
     let bluetooth_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
-    let bluetooth_viewport = Viewport::new(Some(&bluetooth_scroll_adj), None::<&gtk::Adjustment>);
+    let bluetooth_viewport = Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
     bluetooth_viewport.set_child(Some(&bluetooth_list_canvas));
     let bluetooth_selection_suppressed = Rc::new(RefCell::new(false));
     let bluetooth_selected_key = Rc::new(RefCell::new(None::<String>));
@@ -3865,6 +3866,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
     bluetooth_scrolled.set_propagate_natural_width(false);
     bluetooth_scrolled.set_overlay_scrolling(false);
+    bluetooth_scrolled.set_hadjustment(Some(&bluetooth_scroll_adj));
     let (bluetooth_pagination_row, bluetooth_pagination) = build_table_pagination_controls(
         default_rows_per_page,
         table_filter_columns(&bluetooth_layout, bluetooth_column_label),
@@ -3878,15 +3880,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .child(&bluetooth_header_holder)
         .build();
     bluetooth_header_scrolled.set_propagate_natural_width(false);
-    {
-        let bluetooth_list_canvas = bluetooth_list_canvas.clone();
-        let bluetooth_header_holder = bluetooth_header_holder.clone();
-        bluetooth_scroll_adj.connect_value_changed(move |adj| {
-            let offset = -(adj.value().round() as i32);
-            bluetooth_list_canvas.set_margin_start(offset);
-            bluetooth_header_holder.set_margin_start(offset);
-        });
-    }
+    bluetooth_header_scrolled.set_hadjustment(Some(&bluetooth_scroll_adj));
     let bluetooth_top = GtkBox::new(Orientation::Vertical, 4);
     bluetooth_top.set_hexpand(true);
     bluetooth_top.set_halign(gtk::Align::Fill);
