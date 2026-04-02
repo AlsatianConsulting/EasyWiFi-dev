@@ -6408,7 +6408,7 @@ fn refresh_ap_list(
         .collect::<Vec<_>>();
     let row_width_px = table_row_width_px_for_layout(&settings.ap_table_layout)
         .max(AP_TABLE_MIN_WIDTH_PX);
-    list.set_size_request(row_width_px.max(0), -1);
+    set_table_overflow_width(list, row_width_px);
     let total_items = filtered.len();
     let page_size = pagination.page_size.get();
     let (current_page, total_pages, start, end) =
@@ -6567,7 +6567,7 @@ fn refresh_client_list(
         paged_indices(total_items, pagination.current_page.get(), page_size);
     let row_width_px = table_row_width_px_for_layout(&settings.client_table_layout)
         .max(CLIENT_TABLE_MIN_WIDTH_PX);
-    list.set_size_request(row_width_px.max(0), -1);
+    set_table_overflow_width(list, row_width_px);
 
     for client in filtered
         .into_iter()
@@ -6750,7 +6750,7 @@ fn refresh_bluetooth_list(
         paged_indices(total_items, pagination.current_page.get(), page_size);
     let row_width_px = table_row_width_px_for_layout(&settings.bluetooth_table_layout)
         .max(BLUETOOTH_TABLE_MIN_WIDTH_PX);
-    list.set_size_request(row_width_px.max(0), -1);
+    set_table_overflow_width(list, row_width_px);
 
     for device in filtered
         .into_iter()
@@ -6804,6 +6804,20 @@ fn refresh_bluetooth_list(
 fn clear_listbox(list: &ListBox) {
     while let Some(row) = list.row_at_index(0) {
         list.remove(&row);
+    }
+}
+
+fn set_table_overflow_width(list: &ListBox, row_width_px: i32) {
+    let width = row_width_px.max(0);
+    list.set_size_request(width, -1);
+    list.set_halign(gtk::Align::Start);
+    list.set_hexpand(false);
+    if let Some(parent) = list.parent() {
+        if let Ok(canvas) = parent.downcast::<GtkBox>() {
+            canvas.set_size_request(width, -1);
+            canvas.set_halign(gtk::Align::Start);
+            canvas.set_hexpand(false);
+        }
     }
 }
 
