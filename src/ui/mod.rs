@@ -27,8 +27,8 @@ use gtk::{
     Application, ApplicationWindow, Box as GtkBox, Button, CheckButton, ComboBoxText, Dialog,
     DrawingArea, Entry, EventControllerKey, Expander, FileChooserAction, FileChooserDialog,
     GestureClick, Grid, Label, ListBox, ListBoxRow, Notebook, Orientation, Paned, Popover,
-    ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView, Viewport,
-    ToggleButton, Window as GtkWindow,
+    ProgressBar, ResponseType, ScrolledWindow, SpinButton, Stack, StackSidebar, TextView,
+    ToggleButton, Viewport, Window as GtkWindow,
 };
 use gtk4 as gtk;
 use std::cell::{Cell, RefCell};
@@ -89,6 +89,8 @@ const DEFAULT_WINDOW_WIDTH: i32 = 720;
 const DEFAULT_WINDOW_HEIGHT: i32 = 720;
 const MIN_WINDOW_WIDTH: i32 = 720;
 const MIN_WINDOW_HEIGHT: i32 = 720;
+const SMALL_DISPLAY_TARGET_WIDTH: i32 = 720;
+const SMALL_DISPLAY_TARGET_HEIGHT: i32 = 720;
 const DEFAULT_CONTENT_PANE_POSITION: i32 = 420;
 const DEFAULT_AP_ROOT_POSITION: i32 = 240;
 const DEFAULT_AP_SUMMARY_ROW_POSITION: i32 = 320;
@@ -109,7 +111,7 @@ fn is_small_display() -> bool {
 
 fn effective_min_window_size() -> (i32, i32) {
     if is_small_display() {
-        (520, 520)
+        (SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT)
     } else {
         (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
     }
@@ -2350,7 +2352,7 @@ fn build_ui(app: &Application) -> Result<()> {
         if is_small_display() && s.settings.window_fullscreen {
             window.unfullscreen();
             window.unmaximize();
-            window.set_default_size(680, 680);
+            window.set_default_size(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
             window.set_resizable(true);
         } else if s.settings.window_fullscreen {
             window.fullscreen();
@@ -2359,7 +2361,7 @@ fn build_ui(app: &Application) -> Result<()> {
         } else if is_small_display() {
             window.unfullscreen();
             window.unmaximize();
-            window.set_default_size(680, 680);
+            window.set_default_size(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
             window.set_resizable(true);
         }
     }
@@ -2803,11 +2805,7 @@ fn describe_channel_mode(mode: &ChannelSelectionMode) -> String {
             ht_mode,
             channel_ht_modes,
         } => {
-            let mixed = channel_ht_modes
-                .values()
-                .collect::<HashSet<_>>()
-                .len()
-                > 1;
+            let mixed = channel_ht_modes.values().collect::<HashSet<_>>().len() > 1;
             format!(
                 "Hop Specific [{} channels @ {} ms, {}{}]",
                 channels.len(),
@@ -2826,7 +2824,11 @@ fn apply_view_visibility(
     widgets: &UiWidgets,
 ) {
     let small = is_small_display();
-    content_paned.set_position(if small { 400 } else { DEFAULT_CONTENT_PANE_POSITION });
+    content_paned.set_position(if small {
+        400
+    } else {
+        DEFAULT_CONTENT_PANE_POSITION
+    });
     status_container.set_visible(settings.show_status_bar);
 
     let show_ap_bottom = settings.show_detail_pane || settings.show_device_pane;
@@ -2839,13 +2841,17 @@ fn apply_view_visibility(
         .ap_detail_notebook
         .set_visible(settings.show_detail_pane);
     widgets.ap_assoc_box.set_visible(settings.show_device_pane);
-    widgets
-        .ap_bottom
-        .set_position(if small { 340 } else { DEFAULT_AP_BOTTOM_POSITION });
+    widgets.ap_bottom.set_position(if small {
+        340
+    } else {
+        DEFAULT_AP_BOTTOM_POSITION
+    });
 
-    widgets
-        .client_root
-        .set_position(if small { 220 } else { DEFAULT_CLIENT_ROOT_POSITION });
+    widgets.client_root.set_position(if small {
+        220
+    } else {
+        DEFAULT_CLIENT_ROOT_POSITION
+    });
     widgets
         .client_root
         .set_resize_end_child(settings.show_detail_pane);
@@ -2853,18 +2859,22 @@ fn apply_view_visibility(
         .client_detail_notebook
         .set_visible(settings.show_detail_pane);
 
-    widgets
-        .bluetooth_root
-        .set_position(if small { 220 } else { DEFAULT_BLUETOOTH_ROOT_POSITION });
+    widgets.bluetooth_root.set_position(if small {
+        220
+    } else {
+        DEFAULT_BLUETOOTH_ROOT_POSITION
+    });
     widgets
         .bluetooth_root
         .set_resize_end_child(settings.show_detail_pane);
     widgets
         .bluetooth_bottom
         .set_visible(settings.show_detail_pane);
-    widgets
-        .bluetooth_bottom
-        .set_position(if small { 280 } else { DEFAULT_BLUETOOTH_BOTTOM_POSITION });
+    widgets.bluetooth_bottom.set_position(if small {
+        280
+    } else {
+        DEFAULT_BLUETOOTH_BOTTOM_POSITION
+    });
 }
 
 fn apply_dark_mode_preference(enabled: bool) {
@@ -3849,8 +3859,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     bluetooth_list_canvas.set_halign(gtk::Align::Start);
     bluetooth_list_canvas.append(&bluetooth_list);
     let bluetooth_scroll_adj = gtk::Adjustment::new(0.0, 0.0, 0.0, 24.0, 160.0, 680.0);
-    let bluetooth_viewport =
-        Viewport::new(Some(&bluetooth_scroll_adj), None::<&gtk::Adjustment>);
+    let bluetooth_viewport = Viewport::new(Some(&bluetooth_scroll_adj), None::<&gtk::Adjustment>);
     bluetooth_viewport.set_child(Some(&bluetooth_list_canvas));
     let bluetooth_selection_suppressed = Rc::new(RefCell::new(false));
     let bluetooth_selected_key = Rc::new(RefCell::new(None::<String>));
@@ -4200,7 +4209,10 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
             let key = row.widget_name().to_string();
             let ap = {
                 let s = state.borrow();
-                s.access_points.iter().find(|entry| entry.bssid == key).cloned()
+                s.access_points
+                    .iter()
+                    .find(|entry| entry.bssid == key)
+                    .cloned()
             };
             if let Some(ap) = ap {
                 open_ap_details_dialog(&window, &ap);
@@ -5161,13 +5173,13 @@ fn bind_poll_loop(
         {
             let s = state.borrow();
             let table_viewport_width_px = if is_small_display() {
-                680
+                (window.width() - 40).clamp(320, SMALL_DISPLAY_TARGET_WIDTH - 40)
             } else {
                 (window.width().max(MIN_WINDOW_WIDTH) - 52).max(320)
             };
             if is_small_display() {
-                let ww = window.width().max(520);
-                let wh = window.height().max(520);
+                let ww = window.width().clamp(520, SMALL_DISPLAY_TARGET_WIDTH);
+                let wh = window.height().clamp(520, SMALL_DISPLAY_TARGET_HEIGHT);
                 let ap_root_pos = ((wh as f64) * 0.34) as i32;
                 let ap_bottom_pos = ((ww as f64) * 0.60) as i32;
                 let client_root_pos = ((wh as f64) * 0.42) as i32;
@@ -5179,8 +5191,9 @@ fn bind_poll_loop(
             }
             let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout)
                 .max(AP_TABLE_MIN_WIDTH_PX);
-            let client_row_width_px = table_row_width_px_for_layout(&s.settings.client_table_layout)
-                .max(CLIENT_TABLE_MIN_WIDTH_PX);
+            let client_row_width_px =
+                table_row_width_px_for_layout(&s.settings.client_table_layout)
+                    .max(CLIENT_TABLE_MIN_WIDTH_PX);
             let bluetooth_row_width_px =
                 table_row_width_px_for_layout(&s.settings.bluetooth_table_layout)
                     .max(BLUETOOTH_TABLE_MIN_WIDTH_PX);
@@ -5254,7 +5267,8 @@ fn bind_poll_loop(
             ap_scroll_adj.page_size(),
             ap_max_scroll
         ));
-        let client_max_scroll = (client_scroll_adj.upper() - client_scroll_adj.page_size()).max(0.0);
+        let client_max_scroll =
+            (client_scroll_adj.upper() - client_scroll_adj.page_size()).max(0.0);
         client_scroll_debug_label.set_text(&format!(
             "Client scroll: value={:.1} upper={:.1} page={:.1} max={:.1}",
             client_scroll_adj.value(),
@@ -6657,8 +6671,8 @@ fn refresh_ap_list(
             })
         })
         .collect::<Vec<_>>();
-    let row_width_px = table_row_width_px_for_layout(&settings.ap_table_layout)
-        .max(AP_TABLE_MIN_WIDTH_PX);
+    let row_width_px =
+        table_row_width_px_for_layout(&settings.ap_table_layout).max(AP_TABLE_MIN_WIDTH_PX);
     set_table_overflow_width(list, row_width_px);
     let total_items = filtered.len();
     let page_size = pagination.page_size.get();
@@ -6714,7 +6728,11 @@ fn refresh_ap_list(
 }
 
 fn table_row_width_px_for_layout(layout: &TableLayout) -> i32 {
-    let visible_columns = layout.columns.iter().filter(|c| c.visible).collect::<Vec<_>>();
+    let visible_columns = layout
+        .columns
+        .iter()
+        .filter(|c| c.visible)
+        .collect::<Vec<_>>();
     let content = visible_columns
         .iter()
         .map(|column| column.width_chars.max(6) * TABLE_CHAR_WIDTH_PX)
@@ -6816,8 +6834,8 @@ fn refresh_client_list(
     let page_size = pagination.page_size.get();
     let (current_page, total_pages, start, end) =
         paged_indices(total_items, pagination.current_page.get(), page_size);
-    let row_width_px = table_row_width_px_for_layout(&settings.client_table_layout)
-        .max(CLIENT_TABLE_MIN_WIDTH_PX);
+    let row_width_px =
+        table_row_width_px_for_layout(&settings.client_table_layout).max(CLIENT_TABLE_MIN_WIDTH_PX);
     set_table_overflow_width(list, row_width_px);
 
     for client in filtered
@@ -10740,10 +10758,11 @@ fn open_interface_settings_dialog_inner(
     let clear_channels_btn = Button::with_label("Clear");
     let show_channels_btn = Button::with_label("Show Device Channels");
     let channel_checks = Rc::new(RefCell::new(Vec::<(u16, CheckButton)>::new()));
-    let hop_channel_mode_controls =
-        Rc::new(RefCell::new(HashMap::<u16, Vec<(String, ToggleButton)>>::new()));
-    let hop_channel_mode_overrides =
-        Rc::new(RefCell::new(BTreeMap::<u16, Vec<String>>::new()));
+    let hop_channel_mode_controls = Rc::new(RefCell::new(HashMap::<
+        u16,
+        Vec<(String, ToggleButton)>,
+    >::new()));
+    let hop_channel_mode_overrides = Rc::new(RefCell::new(BTreeMap::<u16, Vec<String>>::new()));
     let channels_list = GtkBox::new(Orientation::Vertical, 4);
     let channels_scrolled = ScrolledWindow::builder()
         .hexpand(true)
@@ -11128,12 +11147,10 @@ fn open_interface_settings_dialog_inner(
                         .get(&ch.channel)
                         .cloned()
                         .unwrap_or_else(|| {
-                            vec![
-                                hop_ht_combo
-                                    .active_id()
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_else(default_hop_ht_mode),
-                            ]
+                            vec![hop_ht_combo
+                                .active_id()
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(default_hop_ht_mode)]
                         });
                     let mut row_mode_buttons = Vec::<(String, ToggleButton)>::new();
                     for mode in &ht_choices {
@@ -11143,7 +11160,10 @@ fn open_interface_settings_dialog_inner(
                         mode_box.append(&button);
                         row_mode_buttons.push((mode.clone(), button.clone()));
                     }
-                    if row_mode_buttons.iter().all(|(_, button)| !button.is_active()) {
+                    if row_mode_buttons
+                        .iter()
+                        .all(|(_, button)| !button.is_active())
+                    {
                         if let Some((_, first)) = row_mode_buttons.first() {
                             first.set_active(true);
                         }
@@ -11187,7 +11207,13 @@ fn open_interface_settings_dialog_inner(
                     }
                     let mut initial_selected = row_mode_buttons
                         .iter()
-                        .filter_map(|(mode, button)| if button.is_active() { Some(mode.clone()) } else { None })
+                        .filter_map(|(mode, button)| {
+                            if button.is_active() {
+                                Some(mode.clone())
+                            } else {
+                                None
+                            }
+                        })
                         .collect::<Vec<_>>();
                     initial_selected.sort();
                     initial_selected.dedup();
