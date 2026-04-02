@@ -99,7 +99,7 @@ const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 300;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 240;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 240;
-const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-C";
+const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-D";
 
 fn is_small_display() -> bool {
     let model = std::fs::read_to_string("/proc/device-tree/model")
@@ -1808,7 +1808,7 @@ fn build_table_pagination_controls(
     for (column_index, (column_id, column_label, width_chars)) in filter_columns.iter().enumerate()
     {
         let entry = Entry::new();
-        let entry_width = (*width_chars).max(8);
+        let entry_width = (*width_chars).max(6);
         entry.set_width_chars(entry_width);
         entry.set_max_width_chars(entry_width);
         entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
@@ -2349,6 +2349,15 @@ fn build_ui(app: &Application) -> Result<()> {
         window.unmaximize();
         window.set_default_size(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
         window.set_resizable(false);
+    }
+    {
+        window.connect_map(|w| {
+            w.unfullscreen();
+            w.unmaximize();
+            w.set_default_size(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
+            w.set_size_request(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
+            w.set_resizable(false);
+        });
     }
     {
         let state = state.clone();
