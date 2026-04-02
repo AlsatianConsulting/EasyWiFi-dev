@@ -2306,7 +2306,7 @@ fn build_ui(app: &Application) -> Result<()> {
     let content_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Never)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&content_paned)
         .build();
@@ -3313,7 +3313,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_viewport.set_child(Some(&ap_list_canvas));
     let ap_scrolled = ScrolledWindow::builder()
         .vexpand(true)
-        .hexpand(false)
+        .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&ap_viewport)
         .build();
@@ -3328,7 +3328,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_header_holder.append(&ap_table_header(&ap_layout, &ap_sort, state.clone()));
     ap_header_holder.append(&ap_pagination.filter_bar);
     let ap_header_scrolled = ScrolledWindow::builder()
-        .hexpand(false)
+        .hexpand(true)
         .vexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Never)
@@ -3345,8 +3345,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         });
     }
     let ap_top = GtkBox::new(Orientation::Vertical, 4);
-    ap_top.set_hexpand(false);
-    ap_top.set_halign(gtk::Align::Start);
+    ap_top.set_hexpand(true);
+    ap_top.set_halign(gtk::Align::Fill);
     ap_top.append(&ap_header_scrolled);
     ap_top.append(&ap_scrolled);
     let ap_hscroll = gtk::Scrollbar::new(Orientation::Horizontal, Some(&ap_scroll_adj));
@@ -3522,7 +3522,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let client_selected_key = Rc::new(RefCell::new(None::<String>));
     let client_scrolled = ScrolledWindow::builder()
         .vexpand(true)
-        .hexpand(false)
+        .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&client_viewport)
         .build();
@@ -3541,7 +3541,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ));
     client_header_holder.append(&client_pagination.filter_bar);
     let client_header_scrolled = ScrolledWindow::builder()
-        .hexpand(false)
+        .hexpand(true)
         .vexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Never)
@@ -3558,8 +3558,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         });
     }
     let client_top = GtkBox::new(Orientation::Vertical, 4);
-    client_top.set_hexpand(false);
-    client_top.set_halign(gtk::Align::Start);
+    client_top.set_hexpand(true);
+    client_top.set_halign(gtk::Align::Fill);
     client_top.append(&client_header_scrolled);
     client_top.append(&client_scrolled);
     let client_hscroll = gtk::Scrollbar::new(Orientation::Horizontal, Some(&client_scroll_adj));
@@ -3692,12 +3692,13 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
 
     let ap_detail_notebook = Notebook::new();
+    ap_detail_notebook.set_hexpand(true);
+    ap_detail_notebook.set_halign(gtk::Align::Fill);
+    ap_detail_notebook.set_margin_start(0);
+    ap_detail_notebook.set_margin_end(0);
     ap_detail_notebook.set_scrollable(true);
     ap_detail_notebook.append_page(&ap_detail_box, Some(&Label::new(Some("Details"))));
-    ap_detail_notebook.append_page(
-        &ap_geiger_scrolled,
-        Some(&Label::new(Some("RSSI Geiger Counter"))),
-    );
+    ap_detail_notebook.append_page(&ap_geiger_scrolled, Some(&Label::new(Some("RSSI Geiger"))));
     ap_bottom.set_start_child(Some(&ap_detail_notebook));
 
     let client_wifi_geiger_target_label = Label::new(Some(
@@ -3838,7 +3839,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ));
     let bluetooth_scrolled = ScrolledWindow::builder()
         .vexpand(true)
-        .hexpand(false)
+        .hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&bluetooth_viewport)
         .build();
@@ -3850,7 +3851,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     );
     bluetooth_header_holder.append(&bluetooth_pagination.filter_bar);
     let bluetooth_header_scrolled = ScrolledWindow::builder()
-        .hexpand(false)
+        .hexpand(true)
         .vexpand(false)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Never)
@@ -3867,8 +3868,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         });
     }
     let bluetooth_top = GtkBox::new(Orientation::Vertical, 4);
-    bluetooth_top.set_hexpand(false);
-    bluetooth_top.set_halign(gtk::Align::Start);
+    bluetooth_top.set_hexpand(true);
+    bluetooth_top.set_halign(gtk::Align::Fill);
     bluetooth_top.append(&bluetooth_header_scrolled);
     bluetooth_top.append(&bluetooth_scrolled);
     let bluetooth_hscroll =
