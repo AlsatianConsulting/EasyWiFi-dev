@@ -99,7 +99,7 @@ const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 300;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 240;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 240;
-const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-H";
+const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-I";
 
 fn is_small_display() -> bool {
     let model = std::fs::read_to_string("/proc/device-tree/model")
@@ -1817,8 +1817,9 @@ fn build_table_pagination_controls(
         let entry_width = (*width_chars).max(6);
         entry.set_width_chars(entry_width);
         entry.set_max_width_chars(entry_width);
-        entry.set_hexpand(true);
-        entry.set_halign(gtk::Align::Fill);
+        entry.set_hexpand(false);
+        entry.set_halign(gtk::Align::Start);
+        entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
         entry.set_placeholder_text(None::<&str>);
         entry.set_tooltip_text(Some(column_label));
         let cell = GtkBox::new(Orientation::Horizontal, 0);
@@ -2293,6 +2294,7 @@ fn build_ui(app: &Application) -> Result<()> {
     global_status_container.append(&global_status_scrolled);
 
     let root = GtkBox::new(Orientation::Vertical, 8);
+    root.set_size_request(SMALL_DISPLAY_TARGET_WIDTH, SMALL_DISPLAY_TARGET_HEIGHT);
     let (notebook, widgets) = build_tabs(&window, state.clone());
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
@@ -2864,7 +2866,7 @@ fn apply_view_visibility(
     let show_ap_bottom = settings.show_detail_pane || settings.show_device_pane;
     widgets
         .ap_root
-        .set_position(if small { 220 } else { DEFAULT_AP_ROOT_POSITION });
+        .set_position(if small { 430 } else { DEFAULT_AP_ROOT_POSITION });
     widgets.ap_root.set_resize_end_child(show_ap_bottom);
     widgets.ap_bottom.set_visible(show_ap_bottom);
     widgets
@@ -2872,13 +2874,13 @@ fn apply_view_visibility(
         .set_visible(settings.show_detail_pane);
     widgets.ap_assoc_box.set_visible(settings.show_device_pane);
     widgets.ap_bottom.set_position(if small {
-        360
+        350
     } else {
         DEFAULT_AP_BOTTOM_POSITION
     });
 
     widgets.client_root.set_position(if small {
-        220
+        420
     } else {
         DEFAULT_CLIENT_ROOT_POSITION
     });
@@ -2890,7 +2892,7 @@ fn apply_view_visibility(
         .set_visible(settings.show_detail_pane);
 
     widgets.bluetooth_root.set_position(if small {
-        220
+        420
     } else {
         DEFAULT_BLUETOOTH_ROOT_POSITION
     });
@@ -3381,6 +3383,15 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
     ap_header_scrolled.set_propagate_natural_width(false);
     ap_header_scrolled.set_hadjustment(Some(&ap_scroll_adj));
+    {
+        let ap_list_canvas = ap_list_canvas.clone();
+        let ap_header_holder = ap_header_holder.clone();
+        ap_scroll_adj.connect_value_changed(move |adj| {
+            let offset = -(adj.value().round() as i32);
+            ap_list_canvas.set_margin_start(offset);
+            ap_header_holder.set_margin_start(offset);
+        });
+    }
     let ap_top = GtkBox::new(Orientation::Vertical, 4);
     ap_top.set_hexpand(true);
     ap_top.set_halign(gtk::Align::Fill);
@@ -3590,6 +3601,15 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
     client_header_scrolled.set_propagate_natural_width(false);
     client_header_scrolled.set_hadjustment(Some(&client_scroll_adj));
+    {
+        let client_list_canvas = client_list_canvas.clone();
+        let client_header_holder = client_header_holder.clone();
+        client_scroll_adj.connect_value_changed(move |adj| {
+            let offset = -(adj.value().round() as i32);
+            client_list_canvas.set_margin_start(offset);
+            client_header_holder.set_margin_start(offset);
+        });
+    }
     let client_top = GtkBox::new(Orientation::Vertical, 4);
     client_top.set_hexpand(true);
     client_top.set_halign(gtk::Align::Fill);
@@ -3899,6 +3919,15 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .build();
     bluetooth_header_scrolled.set_propagate_natural_width(false);
     bluetooth_header_scrolled.set_hadjustment(Some(&bluetooth_scroll_adj));
+    {
+        let bluetooth_list_canvas = bluetooth_list_canvas.clone();
+        let bluetooth_header_holder = bluetooth_header_holder.clone();
+        bluetooth_scroll_adj.connect_value_changed(move |adj| {
+            let offset = -(adj.value().round() as i32);
+            bluetooth_list_canvas.set_margin_start(offset);
+            bluetooth_header_holder.set_margin_start(offset);
+        });
+    }
     let bluetooth_top = GtkBox::new(Orientation::Vertical, 4);
     bluetooth_top.set_hexpand(true);
     bluetooth_top.set_halign(gtk::Align::Fill);
@@ -4805,8 +4834,8 @@ fn bind_poll_loop(
     window: &ApplicationWindow,
 ) {
     let UiWidgets {
-        ap_root,
-        ap_bottom,
+        ap_root: _ap_root,
+        ap_bottom: _ap_bottom,
         ap_detail_notebook: _ap_detail_notebook,
         ap_assoc_box: _ap_assoc_box,
         ap_header_holder,
@@ -4835,7 +4864,7 @@ fn bind_poll_loop(
         client_selection_suppressed,
         client_selected_key,
         client_detail_label,
-        client_root,
+        client_root: _client_root,
         client_detail_notebook: _client_detail_notebook,
         ap_wifi_geiger_target_label,
         ap_wifi_geiger_lock_label,
@@ -4866,7 +4895,7 @@ fn bind_poll_loop(
         bluetooth_characteristics_label,
         bluetooth_descriptors_label,
         bluetooth_enumeration_status_label,
-        bluetooth_root,
+        bluetooth_root: _bluetooth_root,
         bluetooth_bottom: _bluetooth_bottom,
         bluetooth_geiger_rssi,
         bluetooth_geiger_tone,
@@ -5167,14 +5196,7 @@ fn bind_poll_loop(
             if is_small_display() {
                 let ww = window.width().clamp(520, SMALL_DISPLAY_TARGET_WIDTH);
                 let wh = window.height().clamp(520, SMALL_DISPLAY_TARGET_HEIGHT);
-                let ap_root_pos = ((wh as f64) * 0.34) as i32;
-                let ap_bottom_pos = ((ww as f64) * 0.50) as i32;
-                let client_root_pos = ((wh as f64) * 0.42) as i32;
-                let bluetooth_root_pos = ((wh as f64) * 0.36) as i32;
-                ap_root.set_position(ap_root_pos.clamp(170, wh.saturating_sub(180)));
-                ap_bottom.set_position(ap_bottom_pos.clamp(240, ww.saturating_sub(220)));
-                client_root.set_position(client_root_pos.clamp(180, wh.saturating_sub(180)));
-                bluetooth_root.set_position(bluetooth_root_pos.clamp(170, wh.saturating_sub(180)));
+                let _ = (ww, wh);
             }
             let ap_row_width_px = table_row_width_px_for_layout(&s.settings.ap_table_layout)
                 .max(AP_TABLE_MIN_WIDTH_PX);
