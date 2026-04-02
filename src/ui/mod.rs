@@ -99,7 +99,7 @@ const DEFAULT_CLIENT_ROOT_POSITION: i32 = 240;
 const DEFAULT_BLUETOOTH_BOTTOM_POSITION: i32 = 300;
 const DEFAULT_BLUETOOTH_ROOT_POSITION: i32 = 240;
 const DEFAULT_CHANNEL_ROOT_POSITION: i32 = 240;
-const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-B";
+const UI_BUILD_MARKER: &str = "SCROLLFIX-2026-04-02-C";
 
 fn is_small_display() -> bool {
     let model = std::fs::read_to_string("/proc/device-tree/model")
@@ -1808,7 +1808,7 @@ fn build_table_pagination_controls(
     for (column_index, (column_id, column_label, width_chars)) in filter_columns.iter().enumerate()
     {
         let entry = Entry::new();
-        let entry_width = (*width_chars).max(8).min(24);
+        let entry_width = (*width_chars).max(8);
         entry.set_width_chars(entry_width);
         entry.set_max_width_chars(entry_width);
         entry.set_size_request(entry_width * TABLE_CHAR_WIDTH_PX, -1);
@@ -2306,7 +2306,7 @@ fn build_ui(app: &Application) -> Result<()> {
     let content_scrolled = ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&content_paned)
         .build();
@@ -3399,7 +3399,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_detail_label.set_xalign(0.0);
     ap_detail_label.set_yalign(0.0);
     ap_detail_label.set_selectable(true);
-    ap_detail_label.set_wrap(true);
+    ap_detail_label.set_wrap(false);
 
     let ap_notes_view = TextView::new();
     ap_notes_view.set_vexpand(true);
@@ -3464,7 +3464,8 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     let ap_assoc_scrolled = ScrolledWindow::builder()
         .vexpand(true)
         .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Never)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&ap_assoc_list)
         .build();
     let (ap_assoc_pagination_row, ap_assoc_pagination) = build_table_pagination_controls(
@@ -3482,7 +3483,7 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
         .hexpand(true)
         .min_content_width(260)
         .hscrollbar_policy(gtk::PolicyType::Always)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Always)
         .child(&ap_assoc_box)
         .build();
 
@@ -3699,7 +3700,14 @@ fn build_tabs(window: &ApplicationWindow, state: Rc<RefCell<AppState>>) -> (Note
     ap_detail_notebook.set_scrollable(true);
     ap_detail_notebook.append_page(&ap_detail_box, Some(&Label::new(Some("Details"))));
     ap_detail_notebook.append_page(&ap_geiger_scrolled, Some(&Label::new(Some("RSSI Geiger"))));
-    ap_bottom.set_start_child(Some(&ap_detail_notebook));
+    let ap_detail_outer_scrolled = ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .child(&ap_detail_notebook)
+        .build();
+    ap_bottom.set_start_child(Some(&ap_detail_outer_scrolled));
 
     let client_wifi_geiger_target_label = Label::new(Some(
         "Target: none selected. Select a client to view its last RSSI or start locating it.",
