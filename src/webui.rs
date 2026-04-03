@@ -178,9 +178,10 @@ pub fn run() -> Result<()> {
     let listener = TcpListener::bind(addr).with_context(|| format!("failed to bind web UI on {addr}"))?;
     eprintln!("EasyWiFi Web UI listening on http://{addr}");
 
-    let _ = std::process::Command::new("xdg-open")
-        .arg(format!("http://{addr}"))
-        .spawn();
+    let url = format!("http://{addr}");
+    if let Err(err) = launch_browser(&url) {
+        eprintln!("failed to launch browser for web UI: {err}");
+    }
 
     for stream in listener.incoming() {
         match stream {
@@ -1065,6 +1066,51 @@ fn mime_for(path: &Path) -> &'static str {
         "ttf" => "font/ttf",
         _ => "application/octet-stream",
     }
+}
+
+fn launch_browser(url: &str) -> Result<()> {
+    let mut attempts: Vec<(String, Vec<String>, bool)> = Vec::new();
+    attempts.push((
+        "chromium-browser".to_string(),
+        vec![
+            "--new-window".to_string(),
+            "--disable-gpu".to_string(),
+            "--disable-extensions".to_string(),
+            "--no-first-run".to_string(),
+            "--no-default-browser-check".to_string(),
+            url.to_string(),
+        ],
+        true,
+    ));
+    attempts.push((
+        "chromium".to_string(),
+        vec![
+            "--new-window".to_string(),
+            "--disable-gpu".to_string(),
+            "--disable-extensions".to_string(),
+            "--no-first-run".to_string(),
+            "--no-default-browser-check".to_string(),
+            url.to_string(),
+        ],
+        true,
+    ));
+    attempts.push(("xdg-open".to_string(), vec![url.to_string()], false));
+
+    let mut last_error: Option<anyhow::Error> = None;
+    for (bin, args, clear_chromium_flags) in attempts {
+        let mut cmd = std::process::Command::new(&bin);
+        cmd.args(&args);
+        if clear_chromium_flags {
+            cmd.env_remove("CHROMIUM_FLAGS");
+        }
+        match cmd.spawn() {
+            Ok(_) => return Ok(()),
+            Err(err) => {
+                last_error = Some(anyhow::anyhow!("{}: {}", bin, err));
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("no browser launch method available")))
 }
 
 fn respond_json(stream: &mut TcpStream, body: &str) -> Result<()> {
