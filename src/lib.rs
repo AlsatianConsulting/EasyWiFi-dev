@@ -9,3 +9,4 @@ pub mod settings;
 pub mod storage;
 pub mod test_mode;
 pub mod ui;
+pub mod webui;
