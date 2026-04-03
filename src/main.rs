@@ -5,7 +5,6 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("--test-wifi") => easywifi::test_mode::run_wifi_cli(&args[1..]),
         Some("--test-bluetooth") => easywifi::test_mode::run_bluetooth_cli(&args[1..]),
-        Some("--gtk") => easywifi::ui::run(),
         Some("--help") | Some("-h") => {
             print_usage();
             Ok(())
@@ -20,7 +19,6 @@ fn print_usage() {
     println!();
     println!("Usage:");
     println!("  easywifi");
-    println!("  easywifi --gtk");
     println!("  easywifi --test-wifi --interface <iface> [options]");
     println!("  easywifi --test-bluetooth [options]");
     println!();
