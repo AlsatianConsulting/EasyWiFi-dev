@@ -81,6 +81,7 @@ const Index = () => {
   const [btEnumerationStatus, setBtEnumerationStatus] = useState<Record<string, BtEnumerationStatus>>({});
   const [startWifiEnabled, setStartWifiEnabled] = useState(true);
   const [startBluetoothEnabled, setStartBluetoothEnabled] = useState(true);
+  const [compactLayout, setCompactLayout] = useState(false);
 
   const [columns, setColumns] = useState(loadColumns);
 
@@ -160,6 +161,15 @@ const Index = () => {
   useEffect(() => {
     refreshMeta();
   }, [refreshMeta]);
+
+  useEffect(() => {
+    const evaluate = () => {
+      setCompactLayout(window.innerWidth <= 720 || window.innerHeight <= 720);
+    };
+    evaluate();
+    window.addEventListener("resize", evaluate);
+    return () => window.removeEventListener("resize", evaluate);
+  }, []);
 
   useEffect(() => {
     if (selectedAP && !accessPoints.some((ap) => ap.bssid === selectedAP.bssid)) {
@@ -286,7 +296,7 @@ const Index = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-background">
+    <div className="flex h-[100dvh] min-h-0 flex-col bg-background">
       <HeaderBar
         activeTab={activeTab}
         onTabChange={(tab) => { setActiveTab(tab); if (tab !== "clients") setApFilter(null); }}
@@ -310,12 +320,20 @@ const Index = () => {
 
       <div className="flex-1 overflow-hidden">
         {settings.showDetailPane ? (
-          <ResizablePanelGroup direction="horizontal">
-            <ResizablePanel defaultSize={65} minSize={40}>
+          <ResizablePanelGroup direction={compactLayout ? "vertical" : "horizontal"}>
+            <ResizablePanel
+              className="min-h-0 min-w-0"
+              defaultSize={compactLayout ? 58 : 65}
+              minSize={compactLayout ? 35 : 40}
+            >
               {renderMainContent()}
             </ResizablePanel>
             <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={35} minSize={25}>
+            <ResizablePanel
+              className="min-h-0 min-w-0"
+              defaultSize={compactLayout ? 42 : 35}
+              minSize={compactLayout ? 25 : 25}
+            >
               {renderDetailPanel()}
             </ResizablePanel>
           </ResizablePanelGroup>
