@@ -98,11 +98,12 @@ const ScanSetupDialog = ({
     [caps.channels],
   );
   const bandChannels = useMemo(() => {
-    if (model.wifi_band === "all") return sortedChannels;
-    if (model.wifi_band === "2.4") return sortedChannels.filter((ch) => ch >= 1 && ch <= 14);
-    if (model.wifi_band === "5") return sortedChannels.filter((ch) => ch >= 32 && ch <= 177);
+    const band = model?.wifi_band ?? "all";
+    if (band === "all") return sortedChannels;
+    if (band === "2.4") return sortedChannels.filter((ch) => ch >= 1 && ch <= 14);
+    if (band === "5") return sortedChannels.filter((ch) => ch >= 32 && ch <= 177);
     return sortedChannels.filter((ch) => ch > 177);
-  }, [model.wifi_band, sortedChannels]);
+  }, [model?.wifi_band, sortedChannels]);
 
   if (!model) return null;
 
