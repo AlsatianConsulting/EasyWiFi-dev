@@ -5,59 +5,233 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>EasyWiFi Command Center</title>
   <link rel="icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/index.css" />
   <style>
     :root { color-scheme: dark; }
-    body { margin: 0; background: hsl(240,10%,7%); color: hsl(210,20%,92%); font-family: Ubuntu, system-ui, sans-serif; }
-    .app { display: grid; grid-template-rows: 48px 1fr 24px; height: 100vh; }
-    .header { display:flex; align-items:center; justify-content:space-between; padding: 8px 14px; background: hsl(240,8%,10%); border-bottom:1px solid hsl(240,6%,18%); }
-    .brand { display:flex; align-items:center; gap:8px; }
-    .brand img { width:20px; height:20px; }
-    .brand .title { color:hsl(27,76%,53%); font-weight:700; }
-    .brand .subtitle { color:hsl(215,15%,55%); font-size:12px; }
-    .tabs { display:flex; gap:8px; }
-    .tab { background:transparent; color:hsl(215,15%,55%); border:1px solid transparent; border-radius:6px; padding:6px 10px; }
-    .tab.active { background:hsl(27,76%,53%); color:white; }
-    .right { display:flex; align-items:center; gap:10px; color:hsl(215,15%,55%); font-size:12px; }
-    .right strong { color:hsl(210,20%,92%); }
-    .btn { border:1px solid hsl(240,6%,18%); background:hsl(240,6%,14%); color:hsl(210,20%,92%); border-radius:6px; padding:6px 10px; }
-    .btn.primary { background:hsl(27,76%,53%); color:white; border-color:hsl(27,76%,53%); }
-    .main { display:grid; grid-template-columns: 65% 35%; min-height:0; }
-    .panel { border-right:1px solid hsl(240,6%,18%); display:flex; flex-direction:column; min-width:0; }
-    .subheader { padding:8px 12px; border-bottom:1px solid hsl(240,6%,18%); color:hsl(215,15%,55%); font-size:12px; letter-spacing:.05em; text-transform:uppercase; }
-    .table-shell { flex:1; overflow:auto; padding:8px 12px; color:hsl(215,15%,55%); }
-    .detail { padding:10px 12px; overflow:auto; }
-    .card { background:hsl(240,6%,14%); border:1px solid hsl(240,6%,18%); border-radius:8px; padding:10px; margin-bottom:10px; }
-    .footer { background:hsl(240,8%,10%); border-top:1px solid hsl(240,6%,18%); display:flex; align-items:center; justify-content:space-between; padding:4px 12px; font-size:10px; color:hsl(215,15%,55%); }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: hsl(240 10% 7%);
+      color: hsl(210 20% 92%);
+      font-family: Ubuntu, system-ui, sans-serif;
+    }
+    .app {
+      display: grid;
+      grid-template-rows: 44px 1fr 24px;
+      height: 100vh;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 6px 10px;
+      border-bottom: 1px solid hsl(240 6% 18%);
+      background: hsl(240 8% 10%);
+    }
+    .brand { display: flex; align-items: center; gap: 8px; min-width: 220px; }
+    .brand img { width: 18px; height: 18px; }
+    .title { color: hsl(27 76% 53%); font-weight: 700; }
+    .subtitle { color: hsl(215 15% 55%); font-size: 11px; }
+    .tabs { display: flex; gap: 6px; }
+    .tab {
+      border: 1px solid hsl(240 6% 18%);
+      background: hsl(240 6% 14%);
+      color: hsl(215 15% 55%);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .tab.active { background: hsl(27 76% 53%); border-color: hsl(27 76% 53%); color: white; }
+    .right { display: flex; align-items: center; gap: 8px; font-size: 11px; color: hsl(215 15% 55%); }
+    .right strong { color: hsl(210 20% 92%); }
+    .btn {
+      border: 1px solid hsl(240 6% 18%);
+      background: hsl(240 6% 14%);
+      color: hsl(210 20% 92%);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .btn.primary { background: hsl(27 76% 53%); border-color: hsl(27 76% 53%); color: white; }
+    .btn.destructive { background: hsl(0 72% 51%); border-color: hsl(0 72% 51%); color: white; }
+
+    .main {
+      display: grid;
+      grid-template-columns: 65% 35%;
+      min-height: 0;
+    }
+    .left {
+      border-right: 1px solid hsl(240 6% 18%);
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto auto auto 1fr;
+    }
+    .subhead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px solid hsl(240 6% 18%);
+      padding: 6px 10px;
+      font-size: 11px;
+      color: hsl(215 15% 55%);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .subhead .controls { display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0; }
+    .search {
+      width: 170px;
+      border-radius: 6px;
+      border: 1px solid hsl(240 6% 18%);
+      background: hsl(240 6% 14%);
+      color: hsl(210 20% 92%);
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+    .table-wrap {
+      overflow: auto;
+      min-height: 0;
+      padding: 0 8px 8px 8px;
+    }
+    table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td {
+      border-bottom: 1px solid hsla(240, 6%, 18%, .6);
+      padding: 6px 8px;
+      white-space: nowrap;
+      text-align: left;
+    }
+    th {
+      color: hsl(215 15% 55%);
+      font-weight: 500;
+      cursor: pointer;
+      user-select: none;
+    }
+    thead tr.filters th { padding: 4px 8px; }
+    thead input {
+      width: 100%;
+      min-width: 80px;
+      border-radius: 4px;
+      border: 1px solid hsl(240 6% 18%);
+      background: hsl(240 6% 14%);
+      color: hsl(210 20% 92%);
+      padding: 3px 6px;
+      font-size: 11px;
+    }
+    tbody tr:hover { background: hsla(240, 6%, 14%, .65); }
+    tbody tr.selected { background: hsla(27, 76%, 53%, .16); box-shadow: inset 2px 0 0 hsl(27 76% 53%); }
+
+    .detail {
+      min-width: 0;
+      overflow: auto;
+      padding: 10px;
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+    .card {
+      background: hsla(240, 6%, 14%, .45);
+      border: 1px solid hsl(240 6% 18%);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .card h3 {
+      margin: 0 0 8px 0;
+      color: hsl(215 15% 55%);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      font-weight: 600;
+    }
+    .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 11px; }
+    .k { color: hsl(215 15% 55%); }
+    .v { color: hsl(210 20% 92%); font-weight: 500; }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 10px;
+      border-top: 1px solid hsl(240 6% 18%);
+      background: hsl(240 8% 10%);
+      color: hsl(215 15% 55%);
+      font-size: 10px;
+    }
+
+    .menu {
+      position: absolute;
+      top: 78px;
+      right: 12px;
+      z-index: 99;
+      width: 260px;
+      max-height: 50vh;
+      overflow: auto;
+      border: 1px solid hsl(240 6% 18%);
+      background: hsl(240 8% 10%);
+      border-radius: 8px;
+      padding: 8px;
+      display: none;
+    }
+    .menu.open { display: block; }
+    .menu .item { display: flex; align-items: center; gap: 8px; padding: 4px; font-size: 12px; color: hsl(210 20% 92%); }
   </style>
 </head>
 <body>
   <div class="app">
     <header class="header">
-      <div class="brand"><img src="/placeholder.svg" alt="logo"/><span class="title">EasyWiFi</span><span class="subtitle">Command Center</span></div>
-      <nav class="tabs">
-        <button class="tab active">Access Points</button>
-        <button class="tab">Clients &amp; Probes</button>
-        <button class="tab">Bluetooth</button>
-      </nav>
+      <div class="brand">
+        <img src="/placeholder.svg" alt="logo" />
+        <span class="title">EasyWiFi</span>
+        <span class="subtitle">Command Center</span>
+      </div>
+      <nav class="tabs"></nav>
       <div class="right">
         <span>APs: <strong id="aps-count">0</strong></span>
         <span>Clients: <strong id="clients-count">0</strong></span>
-        <button class="btn" id="settings-btn">⚙</button>
+        <button class="btn" id="col-btn">Columns</button>
+        <button class="btn" id="settings-btn">Settings</button>
         <button class="btn primary" id="scan-btn">Start Scan</button>
       </div>
     </header>
-    <main class="main">
-      <section class="panel">
-        <div class="subheader">Discovered Access Points</div>
-        <div class="table-shell">Web UI shell loaded from lovableUI. Backend data/API wiring is in progress.</div>
+
+    <section class="main">
+      <section class="left">
+        <div class="subhead">
+          <span id="table-title">Discovered Access Points</span>
+          <div class="controls">
+            <input id="global-filter" class="search" placeholder="Filter..." />
+            <span id="found-count">0 found</span>
+          </div>
+        </div>
+        <div class="table-wrap" id="table-wrap"></div>
       </section>
-      <aside class="detail">
-        <div class="card"><strong>Details</strong><div id="health" style="margin-top:8px;color:hsl(215,15%,55%)">Checking backend…</div></div>
+
+      <aside class="detail" id="detail-panel">
+        <div class="card">
+          <h3>Selection</h3>
+          <div id="selection-id" class="v">None</div>
+          <div id="selection-sub" class="k" style="margin-top:4px; font-size:11px;">Select a row to view details.</div>
+        </div>
+        <div class="card">
+          <h3>Packet Mix</h3>
+          <canvas id="packet-canvas" width="220" height="180"></canvas>
+        </div>
+        <div class="card">
+          <h3>Details</h3>
+          <div class="kv" id="kv-grid"></div>
+        </div>
       </aside>
-    </main>
-    <footer class="footer"><span>Interface: --</span><span id="scan-state">Idle</span></footer>
+    </section>
+
+    <footer class="footer">
+      <span id="health">Backend: --</span>
+      <span id="scan-state">Idle</span>
+    </footer>
   </div>
+
+  <div class="menu" id="column-menu"></div>
+
   <script src="/app.js"></script>
 </body>
 </html>
