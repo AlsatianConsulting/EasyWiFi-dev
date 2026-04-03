@@ -100,11 +100,25 @@ static PRIVILEGED_HELPER: Lazy<Mutex<Option<PrivilegedHelperClient>>> =
     Lazy::new(|| Mutex::new(None));
 static TSHARK_FIELDS: Lazy<HashSet<String>> = Lazy::new(load_tshark_fields);
 
+fn iw_executable() -> &'static str {
+    if Path::new("/usr/sbin/iw").exists() {
+        "/usr/sbin/iw"
+    } else if Path::new("/sbin/iw").exists() {
+        "/sbin/iw"
+    } else {
+        "iw"
+    }
+}
+
+fn iw_command() -> Command {
+    Command::new(iw_executable())
+}
+
 pub fn list_interfaces() -> Result<Vec<InterfaceInfo>> {
     let mut interfaces = Vec::new();
     let mut seen = HashSet::new();
 
-    if let Ok(output) = Command::new("iw").arg("dev").output() {
+    if let Ok(output) = iw_command().arg("dev").output() {
         if output.status.success() {
             let text = String::from_utf8_lossy(&output.stdout);
             let mut current_name: Option<String> = None;
@@ -162,7 +176,7 @@ fn list_sysfs_wireless_interfaces() -> Vec<String> {
 }
 
 fn interface_type_via_iw(interface: &str) -> Option<String> {
-    let output = Command::new("iw")
+    let output = iw_command()
         .args(["dev", interface, "info"])
         .output()
         .ok()?;
@@ -864,10 +878,7 @@ fn initial_channel_request(mode: &ChannelSelectionMode) -> Option<(u16, String)>
                 .and_then(|modes| modes.first())
                 .cloned()
                 .unwrap_or_else(|| ht_mode.clone());
-            (
-                channel,
-                mode,
-            )
+            (channel, mode)
         }),
         ChannelSelectionMode::HopBand { channels, .. } => channels
             .first()
@@ -901,7 +912,7 @@ pub fn set_interface_monitor_mode_direct(
 
     let active_iface = if let Some(mon) = monitor_name {
         run_command_checked(
-            Command::new("iw").args(["dev", interface, "interface", "add", mon, "type", "monitor"]),
+            iw_command().args(["dev", interface, "interface", "add", mon, "type", "monitor"]),
             format!(
                 "failed to create monitor interface {} from {}",
                 mon, interface
@@ -910,7 +921,7 @@ pub fn set_interface_monitor_mode_direct(
         mon.to_string()
     } else {
         run_command_checked(
-            Command::new("iw").args(["dev", interface, "set", "type", "monitor"]),
+            iw_command().args(["dev", interface, "set", "type", "monitor"]),
             format!("failed to set {} monitor mode", interface),
         )?;
         interface.to_string()
@@ -945,7 +956,7 @@ pub fn set_interface_type_direct(interface: &str, if_type: &str) -> Result<()> {
         format!("failed to set {} down", interface),
     )?;
     run_command_checked(
-        Command::new("iw").args(["dev", interface, "set", "type", if_type]),
+        iw_command().args(["dev", interface, "set", "type", if_type]),
         format!("failed to set {} interface type {}", interface, if_type),
     )?;
     run_command_checked(
@@ -969,7 +980,7 @@ pub fn set_channel_with_ht(interface: &str, channel: u16, ht_mode: &str) -> Resu
 
 pub fn set_channel_with_ht_direct(interface: &str, channel: u16, ht_mode: &str) -> Result<()> {
     run_command_checked(
-        Command::new("iw").args([
+        iw_command().args([
             "dev",
             interface,
             "set",
@@ -2076,9 +2087,11 @@ fn run_channel_control_loop(
             dwell_ms,
             None,
         ),
-        ChannelSelectionMode::Locked { channel, ht_mode } => {
-            (vec![(channel, ht_mode.clone())], 0, Some((channel, ht_mode)))
-        }
+        ChannelSelectionMode::Locked { channel, ht_mode } => (
+            vec![(channel, ht_mode.clone())],
+            0,
+            Some((channel, ht_mode)),
+        ),
     };
 
     if let Some((channel, ht_mode)) = locked {
@@ -2246,7 +2259,7 @@ fn run_channel_control_loop(
 }
 
 fn phy_index_for_interface(interface: &str) -> Result<Option<String>> {
-    let output = Command::new("iw")
+    let output = iw_command()
         .arg("dev")
         .arg(interface)
         .arg("info")
@@ -2275,7 +2288,7 @@ fn phy_info_text_for_interface(interface: &str) -> Result<Option<String>> {
         ],
         vec![format!("phy{}", phy_index), "info".to_string()],
     ] {
-        let output = Command::new("iw").args(&args).output();
+        let output = iw_command().args(&args).output();
         let Ok(output) = output else {
             continue;
         };
