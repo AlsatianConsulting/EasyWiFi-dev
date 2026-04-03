@@ -264,15 +264,38 @@ fn handle_client(
 }
 
 fn map_path(request_path: &str) -> PathBuf {
-    let base = Path::new("lovableUI");
-    match request_path {
-        "/" => base.join("index.html"),
-        "/index.css" => base.join("index.css"),
-        "/app.js" => base.join("app.js"),
-        "/favicon.ico" => base.join("favicon.ico"),
-        "/placeholder.svg" => base.join("placeholder.svg"),
-        _ => base.join("index.html"),
+    let trimmed = request_path.trim_start_matches('/');
+    if trimmed.is_empty() {
+        let dist_index = Path::new("lovableUI").join("dist").join("index.html");
+        if dist_index.exists() {
+            return dist_index;
+        }
+        return Path::new("lovableUI").join("index.html");
     }
+
+    // Block path traversal attempts and keep file serving inside lovableUI.
+    let candidate = Path::new(trimmed);
+    if candidate
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Path::new("lovableUI").join("index.html");
+    }
+
+    let dist_candidate = Path::new("lovableUI").join("dist").join(trimmed);
+    if dist_candidate.exists() {
+        return dist_candidate;
+    }
+    let root_candidate = Path::new("lovableUI").join(trimmed);
+    if root_candidate.exists() {
+        return root_candidate;
+    }
+
+    let dist_index = Path::new("lovableUI").join("dist").join("index.html");
+    if dist_index.exists() {
+        return dist_index;
+    }
+    Path::new("lovableUI").join("index.html")
 }
 
 fn mime_for(path: &Path) -> &'static str {
@@ -286,6 +309,14 @@ fn mime_for(path: &Path) -> &'static str {
         "js" => "application/javascript; charset=utf-8",
         "svg" => "image/svg+xml",
         "ico" => "image/x-icon",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "json" => "application/json; charset=utf-8",
+        "map" => "application/json; charset=utf-8",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
         _ => "application/octet-stream",
     }
 }
