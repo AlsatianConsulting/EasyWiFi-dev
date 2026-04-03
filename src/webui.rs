@@ -136,6 +136,8 @@ struct ScanSetupResponse {
     hop_channels: Vec<u16>,
     hop_dwell_ms: u64,
     hop_ht_mode: String,
+    wifi_band: String,
+    wifi_bandwidths: Vec<String>,
     bluetooth_controller: Option<String>,
 }
 
@@ -150,6 +152,8 @@ struct ScanSetupRequest {
     hop_channels: Option<Vec<u16>>,
     hop_dwell_ms: Option<u64>,
     hop_ht_mode: Option<String>,
+    wifi_band: Option<String>,
+    wifi_bandwidths: Option<Vec<String>>,
     bluetooth_controller: Option<String>,
 }
 
@@ -427,23 +431,48 @@ fn handle_client(
         let mut hop_channels = vec![1, 6, 11];
         let mut hop_dwell_ms = 200_u64;
         let mut hop_ht_mode = "HT20".to_string();
+        let mut wifi_band = "all".to_string();
+        let mut wifi_bandwidths = vec!["HT20".to_string()];
         if let Some(iface) = s.settings.interfaces.iter().find(|iface| iface.enabled) {
+            let supported_ht_modes = capture::list_supported_ht_modes(&iface.interface_name)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|mode| mode.trim().to_string())
+                .filter(|mode| !mode.is_empty())
+                .collect::<Vec<_>>();
+            if !supported_ht_modes.is_empty() {
+                wifi_bandwidths = supported_ht_modes;
+            }
             match &iface.channel_mode {
                 ChannelSelectionMode::Locked { channel, ht_mode } => {
                     mode = "locked".to_string();
                     locked_channel = Some(*channel);
                     locked_ht_mode = Some(ht_mode.clone());
+                    wifi_bandwidths = vec![ht_mode.clone()];
                 }
                 ChannelSelectionMode::HopAll {
                     channels,
                     dwell_ms,
                     ht_mode,
-                    ..
+                    channel_ht_modes,
                 } => {
                     mode = "hop_specific".to_string();
                     hop_channels = channels.clone();
                     hop_dwell_ms = *dwell_ms;
                     hop_ht_mode = ht_mode.clone();
+                    if !channel_ht_modes.is_empty() {
+                        let mut merged = Vec::<String>::new();
+                        for modes in channel_ht_modes.values() {
+                            for mode in modes {
+                                if !merged.iter().any(|m| m.eq_ignore_ascii_case(mode)) {
+                                    merged.push(mode.clone());
+                                }
+                            }
+                        }
+                        if !merged.is_empty() {
+                            wifi_bandwidths = merged;
+                        }
+                    }
                 }
                 ChannelSelectionMode::HopBand { channels, dwell_ms, .. } => {
                     mode = "hop_specific".to_string();
@@ -451,10 +480,11 @@ fn handle_client(
                     hop_dwell_ms = *dwell_ms;
                 }
             }
+            wifi_band = infer_band_from_channels(&hop_channels, locked_channel);
         }
         let payload = ScanSetupResponse {
-            wifi_enabled: s.settings.interfaces.iter().any(|iface| iface.enabled),
-            bluetooth_enabled: s.settings.bluetooth_enabled,
+            wifi_enabled: false,
+            bluetooth_enabled: false,
             selected_interface,
             mode,
             locked_channel,
@@ -462,6 +492,8 @@ fn handle_client(
             hop_channels,
             hop_dwell_ms,
             hop_ht_mode,
+            wifi_band,
+            wifi_bandwidths,
             bluetooth_controller: s.settings.bluetooth_controller.clone(),
         };
         let body = serde_json::to_string(&payload).context("failed to serialize scan setup")?;
@@ -484,32 +516,56 @@ fn handle_client(
         }
 
         let mode = req.mode.trim().to_lowercase();
+        let wifi_bandwidths = req
+            .wifi_bandwidths
+            .unwrap_or_default()
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        let primary_ht_mode = wifi_bandwidths
+            .first()
+            .cloned()
+            .or_else(|| req.locked_ht_mode.clone())
+            .or_else(|| req.hop_ht_mode.clone())
+            .unwrap_or_else(|| "HT20".to_string());
         let channel_mode = if mode == "locked" {
             ChannelSelectionMode::Locked {
                 channel: req.locked_channel.unwrap_or(1),
-                ht_mode: req
-                    .locked_ht_mode
-                    .as_deref()
-                    .unwrap_or("HT20")
-                    .trim()
-                    .to_string(),
+                ht_mode: primary_ht_mode.clone(),
             }
         } else {
-            ChannelSelectionMode::HopAll {
-                channels: req
-                    .hop_channels
-                    .unwrap_or_else(|| vec![1, 6, 11])
+            let mut channels = req
+                .hop_channels
+                .unwrap_or_else(|| vec![1, 6, 11])
+                .into_iter()
+                .filter(|ch| *ch > 0)
+                .collect::<Vec<_>>();
+            if let Some(band) = req.wifi_band.as_deref() {
+                channels = channels
                     .into_iter()
-                    .filter(|ch| *ch > 0)
-                    .collect::<Vec<_>>(),
+                    .filter(|ch| match band.trim() {
+                        "2.4" => (1..=14).contains(ch),
+                        "5" => (32..=177).contains(ch),
+                        "6" => *ch > 177,
+                        _ => true,
+                    })
+                    .collect::<Vec<_>>();
+            }
+            if channels.is_empty() {
+                channels = vec![1, 6, 11];
+            }
+            let mut channel_ht_modes = BTreeMap::<u16, Vec<String>>::new();
+            if !wifi_bandwidths.is_empty() {
+                for channel in &channels {
+                    channel_ht_modes.insert(*channel, wifi_bandwidths.clone());
+                }
+            }
+            ChannelSelectionMode::HopAll {
+                channels,
                 dwell_ms: req.hop_dwell_ms.unwrap_or(200).max(25),
-                ht_mode: req
-                    .hop_ht_mode
-                    .as_deref()
-                    .unwrap_or("HT20")
-                    .trim()
-                    .to_string(),
-                channel_ht_modes: BTreeMap::new(),
+                ht_mode: primary_ht_mode,
+                channel_ht_modes,
             }
         };
 
@@ -902,6 +958,27 @@ fn query_param(query: Option<&str>, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn infer_band_from_channels(hop_channels: &[u16], locked_channel: Option<u16>) -> String {
+    let mut values = hop_channels.to_vec();
+    if values.is_empty() {
+        if let Some(channel) = locked_channel {
+            values.push(channel);
+        }
+    }
+    if values.is_empty() {
+        return "all".to_string();
+    }
+    let has_24 = values.iter().any(|ch| (1..=14).contains(ch));
+    let has_5 = values.iter().any(|ch| (32..=177).contains(ch));
+    let has_6 = values.iter().any(|ch| *ch > 177);
+    match (has_24, has_5, has_6) {
+        (true, false, false) => "2.4".to_string(),
+        (false, true, false) => "5".to_string(),
+        (false, false, true) => "6".to_string(),
+        _ => "all".to_string(),
+    }
 }
 
 fn map_path(request_path: &str) -> PathBuf {

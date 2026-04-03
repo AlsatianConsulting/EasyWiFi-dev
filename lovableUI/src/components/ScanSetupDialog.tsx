@@ -24,6 +24,8 @@ export interface ScanSetupModel {
   hop_channels: number[];
   hop_dwell_ms: number;
   hop_ht_mode: string;
+  wifi_band: "all" | "2.4" | "5" | "6";
+  wifi_bandwidths: string[];
   bluetooth_controller: string | null;
 }
 
@@ -84,10 +86,23 @@ const ScanSetupDialog = ({
       .catch(() => setCaps(defaultCapabilities));
   }, [open, selectedInterface]);
 
+  useEffect(() => {
+    if (!model) return;
+    if (model.wifi_bandwidths.length === 0 && caps.ht_modes.length > 0) {
+      setModel({ ...model, wifi_bandwidths: [...caps.ht_modes] });
+    }
+  }, [caps.ht_modes, model]);
+
   const sortedChannels = useMemo(
     () => [...(caps.channels || [])].sort((a, b) => a - b),
     [caps.channels],
   );
+  const bandChannels = useMemo(() => {
+    if (model.wifi_band === "all") return sortedChannels;
+    if (model.wifi_band === "2.4") return sortedChannels.filter((ch) => ch >= 1 && ch <= 14);
+    if (model.wifi_band === "5") return sortedChannels.filter((ch) => ch >= 32 && ch <= 177);
+    return sortedChannels.filter((ch) => ch > 177);
+  }, [model.wifi_band, sortedChannels]);
 
   if (!model) return null;
 
@@ -162,12 +177,60 @@ const ScanSetupDialog = ({
               </Select>
             </div>
 
+            <div className="space-y-1">
+              <span className="text-xs text-muted-foreground">Band</span>
+              <Select
+                value={model.wifi_band}
+                onValueChange={(value) =>
+                  setModel((m) => (m ? { ...m, wifi_band: value as "all" | "2.4" | "5" | "6" } : m))
+                }
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Bands</SelectItem>
+                  <SelectItem value="2.4">2.4 GHz</SelectItem>
+                  <SelectItem value="5">5 GHz</SelectItem>
+                  <SelectItem value="6">6 GHz</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-xs text-muted-foreground">Bandwidths (default: all)</span>
+              <div className="max-h-24 overflow-auto rounded border border-border p-2 grid grid-cols-3 gap-1">
+                {caps.ht_modes.map((mode) => {
+                  const checked = model.wifi_bandwidths.includes(mode);
+                  return (
+                    <label key={mode} className="flex items-center gap-1 text-[11px]">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const enabled = e.target.checked;
+                          setModel((m) => {
+                            if (!m) return m;
+                            const next = enabled
+                              ? [...m.wifi_bandwidths, mode]
+                              : m.wifi_bandwidths.filter((value) => value !== mode);
+                            return { ...m, wifi_bandwidths: next };
+                          });
+                        }}
+                      />
+                      {mode}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
             {model.mode === "locked" ? (
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <span className="text-xs text-muted-foreground">Channel</span>
                   <Select
-                    value={String(model.locked_channel ?? sortedChannels[0] ?? 1)}
+                    value={String(model.locked_channel ?? bandChannels[0] ?? sortedChannels[0] ?? 1)}
                     onValueChange={(value) =>
                       setModel((m) =>
                         m ? { ...m, locked_channel: Number(value) || 1 } : m,
@@ -178,7 +241,7 @@ const ScanSetupDialog = ({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {sortedChannels.map((ch) => (
+                      {bandChannels.map((ch) => (
                         <SelectItem key={ch} value={String(ch)}>
                           {ch}
                         </SelectItem>
@@ -189,7 +252,7 @@ const ScanSetupDialog = ({
                 <div className="space-y-1">
                   <span className="text-xs text-muted-foreground">Bandwidth</span>
                   <Select
-                    value={model.locked_ht_mode ?? caps.ht_modes[0] ?? "HT20"}
+                    value={model.locked_ht_mode ?? model.wifi_bandwidths[0] ?? caps.ht_modes[0] ?? "HT20"}
                     onValueChange={(value) =>
                       setModel((m) => (m ? { ...m, locked_ht_mode: value } : m))
                     }
@@ -211,7 +274,7 @@ const ScanSetupDialog = ({
               <div className="space-y-2">
                 <span className="text-xs text-muted-foreground">Hop Channels</span>
                 <div className="max-h-32 overflow-auto rounded border border-border p-2 grid grid-cols-5 gap-1">
-                  {sortedChannels.map((ch) => {
+                  {bandChannels.map((ch) => {
                     const checked = model.hop_channels.includes(ch);
                     return (
                       <label key={ch} className="flex items-center gap-1 text-[11px]">
@@ -251,7 +314,7 @@ const ScanSetupDialog = ({
                   <div className="space-y-1">
                     <span className="text-xs text-muted-foreground">Hop Bandwidth</span>
                     <Select
-                      value={model.hop_ht_mode || caps.ht_modes[0] || "HT20"}
+                      value={model.hop_ht_mode || model.wifi_bandwidths[0] || caps.ht_modes[0] || "HT20"}
                       onValueChange={(value) =>
                         setModel((m) => (m ? { ...m, hop_ht_mode: value } : m))
                       }
@@ -283,7 +346,7 @@ const ScanSetupDialog = ({
             </div>
 
             <div className="space-y-1">
-              <span className="text-xs text-muted-foreground">Controller</span>
+              <span className="text-xs text-muted-foreground">Bluetooth Interface</span>
               <Select
                 value={model.bluetooth_controller ?? "default"}
                 onValueChange={(value) =>

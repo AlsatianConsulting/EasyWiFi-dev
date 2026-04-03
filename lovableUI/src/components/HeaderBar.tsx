@@ -4,6 +4,7 @@ interface HeaderBarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
   scanning: boolean;
+  canStart: boolean;
   onToggleScan: () => void;
   startWifiEnabled: boolean;
   startBluetoothEnabled: boolean;
@@ -24,6 +25,7 @@ const HeaderBar = ({
   activeTab,
   onTabChange,
   scanning,
+  canStart,
   onToggleScan,
   startWifiEnabled,
   startBluetoothEnabled,
@@ -95,10 +97,13 @@ const HeaderBar = ({
 
         <button
           onClick={onToggleScan}
+          disabled={!scanning && !canStart}
           className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors md:gap-1.5 md:px-3 md:py-1.5 md:text-xs ${
             scanning
               ? "bg-destructive text-destructive-foreground"
-              : "bg-primary text-primary-foreground"
+              : canStart
+                ? "bg-primary text-primary-foreground"
+                : "bg-secondary text-muted-foreground"
           }`}
         >
           <span className={`h-2 w-2 rounded-full ${scanning ? "animate-pulse bg-primary-foreground" : "bg-primary-foreground/50"}`} />
