@@ -61,7 +61,7 @@ const ClientsTab = ({ clients, selectedClient, onSelectClient, visibleColumns, o
   const [filter, setFilter] = useState<"all" | "associated" | "unassociated" | "probing">("all");
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
-  const [filterText, setFilterText] = useState("");
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -97,13 +97,14 @@ const ClientsTab = ({ clients, selectedClient, onSelectClient, visibleColumns, o
     if (filter !== "all") {
       data = data.filter(c => getStatus(c) === filter);
     }
-    if (filterText) {
-      const q = filterText.toLowerCase();
-      data = data.filter(c =>
-        c.mac.toLowerCase().includes(q) ||
-        (c.ouiManufacturer ?? "").toLowerCase().includes(q) ||
-        (c.associatedAp ?? "").toLowerCase().includes(q) ||
-        c.probes.join(" ").toLowerCase().includes(q)
+    const activeFilters = Object.entries(columnFilters)
+      .map(([k, v]) => [k, v.trim().toLowerCase()] as const)
+      .filter(([, v]) => v.length > 0);
+    if (activeFilters.length > 0) {
+      data = data.filter((c) =>
+        activeFilters.every(([key, query]) =>
+          String(getSortValue(c, key)).toLowerCase().includes(query),
+        ),
       );
     }
     if (sortKey && sortDir) {
@@ -115,7 +116,7 @@ const ClientsTab = ({ clients, selectedClient, onSelectClient, visibleColumns, o
       });
     }
     return data;
-  }, [clients, filter, sortKey, sortDir, filterText, apFilter]);
+  }, [clients, filter, sortKey, sortDir, columnFilters, apFilter]);
 
   const cols = allColumns.filter(c => visibleColumns.includes(c.key));
 
@@ -147,13 +148,6 @@ const ClientsTab = ({ clients, selectedClient, onSelectClient, visibleColumns, o
               </button>
             ))}
           </div>
-          <input
-            type="text"
-            placeholder="Filter..."
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            className="h-6 w-32 rounded border border-border bg-secondary px-2 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-          />
           <Popover>
             <PopoverTrigger asChild>
               <button className="flex items-center gap-1 rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors" title="Choose columns">
@@ -179,6 +173,21 @@ const ClientsTab = ({ clients, selectedClient, onSelectClient, visibleColumns, o
               {cols.map(col => (
                 <th key={col.key} className={`${col.align} px-3 py-2 font-medium cursor-pointer select-none hover:text-foreground transition-colors`} onClick={() => handleSort(col.key)}>
                   <span className="inline-flex items-center gap-1">{col.label} <SortIcon col={col.key} /></span>
+                </th>
+              ))}
+            </tr>
+            <tr className="border-t border-border/60">
+              {cols.map((col) => (
+                <th key={`filter-${col.key}`} className="px-2 py-1">
+                  <input
+                    type="text"
+                    placeholder={`Filter ${col.label}`}
+                    value={columnFilters[col.key] ?? ""}
+                    onChange={(e) =>
+                      setColumnFilters((prev) => ({ ...prev, [col.key]: e.target.value }))
+                    }
+                    className="h-6 w-full rounded border border-border bg-secondary px-2 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
                 </th>
               ))}
             </tr>

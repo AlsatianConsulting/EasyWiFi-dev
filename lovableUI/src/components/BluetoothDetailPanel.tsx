@@ -4,9 +4,11 @@ import { Bluetooth } from "lucide-react";
 
 interface BluetoothDetailPanelProps {
   device: BluetoothDeviceRecord | null;
+  onEnumerateServices?: (mac: string) => void;
+  enumerationStatus?: { is_error: boolean; message: string } | null;
 }
 
-const BluetoothDetailPanel = ({ device }: BluetoothDetailPanelProps) => {
+const BluetoothDetailPanel = ({ device, onEnumerateServices, enumerationStatus }: BluetoothDetailPanelProps) => {
   if (!device) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
@@ -26,6 +28,19 @@ const BluetoothDetailPanel = ({ device }: BluetoothDetailPanelProps) => {
         </div>
         <p className=" text-[10px] text-muted-foreground mt-0.5">{device.mac}</p>
         {device.ouiManufacturer && <p className="text-[10px] text-muted-foreground mt-0.5">{device.ouiManufacturer}</p>}
+        {onEnumerateServices && (
+          <button
+            className="mt-2 rounded-md border border-border bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground"
+            onClick={() => onEnumerateServices(device.mac)}
+          >
+            Scan Services
+          </button>
+        )}
+        {enumerationStatus?.message && (
+          <p className={`mt-2 text-[10px] ${enumerationStatus.is_error ? "text-destructive" : "text-emerald-400"}`}>
+            {enumerationStatus.message}
+          </p>
+        )}
       </div>
 
       <RSSIMeter rssi={device.rssiDbm ?? -100} />

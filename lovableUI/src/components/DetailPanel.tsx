@@ -6,6 +6,7 @@ interface DetailPanelProps {
   ap: AccessPointRecord | null;
   onNavigateToClients?: (apBssid: string) => void;
   onLockToAp?: (apBssid: string) => void;
+  actionStatus?: { is_error: boolean; message: string } | null;
 }
 
 const PacketPieChart = ({ pm }: { pm: AccessPointRecord["packetMix"] }) => {
@@ -49,7 +50,7 @@ const formatBytes = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 };
 
-const DetailPanel = ({ ap, onNavigateToClients, onLockToAp }: DetailPanelProps) => {
+const DetailPanel = ({ ap, onNavigateToClients, onLockToAp, actionStatus }: DetailPanelProps) => {
   if (!ap) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
@@ -73,6 +74,11 @@ const DetailPanel = ({ ap, onNavigateToClients, onLockToAp }: DetailPanelProps) 
           >
             Lock To AP
           </button>
+        )}
+        {actionStatus?.message && (
+          <p className={`mt-2 text-[10px] ${actionStatus.is_error ? "text-destructive" : "text-emerald-400"}`}>
+            {actionStatus.message}
+          </p>
         )}
       </div>
 

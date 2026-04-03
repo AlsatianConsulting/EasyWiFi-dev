@@ -48,7 +48,7 @@ const getSortValue = (ap: AccessPointRecord, key: string): string | number => {
 const APTable = ({ accessPoints, selectedAP, onSelectAP, visibleColumns, onVisibleColumnsChange }: APTableProps) => {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
-  const [filterText, setFilterText] = useState("");
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -73,13 +73,14 @@ const APTable = ({ accessPoints, selectedAP, onSelectAP, visibleColumns, onVisib
 
   const sorted = useMemo(() => {
     let data = [...accessPoints];
-    if (filterText) {
-      const q = filterText.toLowerCase();
-      data = data.filter(ap =>
-        (ap.ssid ?? "").toLowerCase().includes(q) ||
-        ap.bssid.toLowerCase().includes(q) ||
-        (ap.ouiManufacturer ?? "").toLowerCase().includes(q) ||
-        ap.encryptionShort.toLowerCase().includes(q)
+    const activeFilters = Object.entries(columnFilters)
+      .map(([k, v]) => [k, v.trim().toLowerCase()] as const)
+      .filter(([, v]) => v.length > 0);
+    if (activeFilters.length > 0) {
+      data = data.filter((ap) =>
+        activeFilters.every(([key, query]) =>
+          String(getSortValue(ap, key)).toLowerCase().includes(query),
+        ),
       );
     }
     if (sortKey && sortDir) {
@@ -91,7 +92,7 @@ const APTable = ({ accessPoints, selectedAP, onSelectAP, visibleColumns, onVisib
       });
     }
     return data;
-  }, [accessPoints, sortKey, sortDir, filterText]);
+  }, [accessPoints, sortKey, sortDir, columnFilters]);
 
   const SortIcon = ({ col }: { col: string }) => {
     if (sortKey !== col) return <ArrowUpDown className="h-3 w-3 opacity-30" />;
@@ -105,13 +106,6 @@ const APTable = ({ accessPoints, selectedAP, onSelectAP, visibleColumns, onVisib
           Discovered Access Points
         </h2>
         <div className="flex items-center gap-2">
-          <input
-            type="text"
-            placeholder="Filter..."
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            className="h-6 w-40 rounded border border-border bg-secondary px-2 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-          />
           <Popover>
             <PopoverTrigger asChild>
               <button className="flex items-center gap-1 rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors" title="Choose columns">
@@ -138,6 +132,21 @@ const APTable = ({ accessPoints, selectedAP, onSelectAP, visibleColumns, onVisib
               {cols.map(col => (
                 <th key={col.key} className={`${col.align} px-3 py-2 font-medium cursor-pointer select-none hover:text-foreground transition-colors`} onClick={() => handleSort(col.key)}>
                   <span className="inline-flex items-center gap-1">{col.label} <SortIcon col={col.key} /></span>
+                </th>
+              ))}
+            </tr>
+            <tr className="border-t border-border/60">
+              {cols.map((col) => (
+                <th key={`filter-${col.key}`} className="px-2 py-1">
+                  <input
+                    type="text"
+                    placeholder={`Filter ${col.label}`}
+                    value={columnFilters[col.key] ?? ""}
+                    onChange={(e) =>
+                      setColumnFilters((prev) => ({ ...prev, [col.key]: e.target.value }))
+                    }
+                    className="h-6 w-full rounded border border-border bg-secondary px-2 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
                 </th>
               ))}
             </tr>

@@ -43,6 +43,11 @@ interface MetaResponse {
   watchlist_entries: MetaWatchlistEntry[];
 }
 
+interface BtEnumerationStatus {
+  message: string;
+  is_error: boolean;
+}
+
 const loadColumns = (): { ap: string[]; client: string[]; bt: string[] } => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -72,6 +77,10 @@ const Index = () => {
   const [interfaces, setInterfaces] = useState<MetaInterface[]>([]);
   const [selectedInterface, setSelectedInterface] = useState<string | null>(null);
   const [watchlistEntries, setWatchlistEntries] = useState<MetaWatchlistEntry[]>([]);
+  const [apActionStatus, setApActionStatus] = useState<BtEnumerationStatus | null>(null);
+  const [btEnumerationStatus, setBtEnumerationStatus] = useState<Record<string, BtEnumerationStatus>>({});
+  const [startWifiEnabled, setStartWifiEnabled] = useState(true);
+  const [startBluetoothEnabled, setStartBluetoothEnabled] = useState(true);
 
   const [columns, setColumns] = useState(loadColumns);
 
@@ -100,6 +109,7 @@ const Index = () => {
       setBluetoothDevices(bts);
       setScanningWifi(Boolean(body.scanning_wifi));
       setScanningBluetooth(Boolean(body.scanning_bluetooth));
+      setBtEnumerationStatus(body.bt_enumeration_status ?? {});
       setApiError(null);
     } catch (err) {
       setApiError(String(err));
@@ -109,6 +119,19 @@ const Index = () => {
   const postScan = useCallback(
     async (path: "/api/scan/start" | "/api/scan/stop") => {
       const res = await fetch(path, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await refreshState();
+    },
+    [refreshState],
+  );
+
+  const postStartCustom = useCallback(
+    async (wifiEnabled: boolean, bluetoothEnabled: boolean) => {
+      const res = await fetch("/api/scan/start_custom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wifi_enabled: wifiEnabled, bluetooth_enabled: bluetoothEnabled }),
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       await refreshState();
     },
@@ -204,13 +227,43 @@ const Index = () => {
       case "clients":
         return <ClientDetailPanel client={selectedClient} />;
       case "bluetooth":
-        return <BluetoothDetailPanel device={selectedBTDevice} />;
+        return (
+          <BluetoothDetailPanel
+            device={selectedBTDevice}
+            enumerationStatus={selectedBTDevice ? (btEnumerationStatus[selectedBTDevice.mac] ?? null) : null}
+            onEnumerateServices={(mac) => {
+              setBtEnumerationStatus((prev) => ({
+                ...prev,
+                [mac]: { message: "enumeration running", is_error: false },
+              }));
+              fetch("/api/bluetooth/enumerate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mac }),
+              })
+                .then(async (res) => {
+                  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                  const body = (await res.json()) as BtEnumerationStatus;
+                  setBtEnumerationStatus((prev) => ({ ...prev, [mac]: body }));
+                  return refreshState();
+                })
+                .catch((err) => {
+                  setBtEnumerationStatus((prev) => ({
+                    ...prev,
+                    [mac]: { message: String(err), is_error: true },
+                  }));
+                  setApiError(String(err));
+                });
+            }}
+          />
+        );
       default:
         return (
           <DetailPanel
             ap={selectedAP}
             onNavigateToClients={handleNavigateToClients}
             onLockToAp={(bssid) => {
+              setApActionStatus({ message: "locking AP...", is_error: false });
               fetch("/api/ap/lock", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -218,10 +271,15 @@ const Index = () => {
               })
                 .then((res) => {
                   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                  setApActionStatus({ message: "AP lock applied", is_error: false });
                   return refreshState();
                 })
-                .catch((err) => setApiError(String(err)));
+                .catch((err) => {
+                  setApActionStatus({ message: String(err), is_error: true });
+                  setApiError(String(err));
+                });
             }}
+            actionStatus={apActionStatus}
           />
         );
     }
@@ -233,8 +291,15 @@ const Index = () => {
         activeTab={activeTab}
         onTabChange={(tab) => { setActiveTab(tab); if (tab !== "clients") setApFilter(null); }}
         scanning={scanning}
+        startWifiEnabled={startWifiEnabled}
+        startBluetoothEnabled={startBluetoothEnabled}
+        onStartWifiEnabledChange={setStartWifiEnabled}
+        onStartBluetoothEnabledChange={setStartBluetoothEnabled}
         onToggleScan={() => {
-          postScan(scanning ? "/api/scan/stop" : "/api/scan/start").catch((err) => {
+          const action = scanning
+            ? postScan("/api/scan/stop")
+            : postStartCustom(startWifiEnabled, startBluetoothEnabled);
+          action.catch((err) => {
             setApiError(String(err));
           });
         }}

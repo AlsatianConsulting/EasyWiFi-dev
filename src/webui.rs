@@ -29,7 +29,14 @@ struct WebState {
     clients: HashMap<String, ClientRecord>,
     bluetooth_devices: HashMap<String, BluetoothDeviceRecord>,
     channel_usage: Vec<ChannelUsagePoint>,
+    bt_enumeration_status: HashMap<String, BtEnumerationStatus>,
     logs: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct BtEnumerationStatus {
+    message: String,
+    is_error: bool,
 }
 
 #[derive(Serialize)]
@@ -39,6 +46,7 @@ struct StateResponse {
     access_points: Vec<AccessPointRecord>,
     clients: Vec<ClientRecord>,
     bluetooth_devices: Vec<BluetoothDeviceRecord>,
+    bt_enumeration_status: HashMap<String, BtEnumerationStatus>,
     channel_usage: Vec<ChannelUsagePoint>,
     logs: Vec<String>,
 }
@@ -90,6 +98,17 @@ struct ApLockRequest {
     bssid: String,
 }
 
+#[derive(Deserialize)]
+struct BluetoothEnumerateRequest {
+    mac: String,
+}
+
+#[derive(Deserialize)]
+struct ScanStartCustomRequest {
+    wifi_enabled: bool,
+    bluetooth_enabled: bool,
+}
+
 pub fn run() -> Result<()> {
     let settings = AppSettings::load_from_disk().unwrap_or_default();
     let state = Arc::new(Mutex::new(WebState {
@@ -99,6 +118,7 @@ pub fn run() -> Result<()> {
         clients: HashMap::new(),
         bluetooth_devices: HashMap::new(),
         channel_usage: Vec::new(),
+        bt_enumeration_status: HashMap::new(),
         logs: vec!["web ui initialized".to_string()],
     }));
 
@@ -188,6 +208,13 @@ fn apply_bluetooth_event(state: &mut WebState, event: BluetoothEvent) {
             state.bluetooth_devices.insert(device.mac.clone(), device);
         }
         BluetoothEvent::EnumerationStatus { mac, message, is_error } => {
+            state.bt_enumeration_status.insert(
+                mac.clone(),
+                BtEnumerationStatus {
+                    message: message.clone(),
+                    is_error,
+                },
+            );
             let status = if is_error { "error" } else { "ok" };
             push_log(state, format!("bt enum {status} {mac}: {message}"));
         }
@@ -244,6 +271,7 @@ fn handle_client(
                 access_points: aps,
                 clients,
                 bluetooth_devices: bt,
+                bt_enumeration_status: s.bt_enumeration_status.clone(),
                 channel_usage: s.channel_usage.clone(),
                 logs: s.logs.clone(),
             }
@@ -299,6 +327,20 @@ fn handle_client(
     if method == "POST" && path == "/api/scan/start" {
         let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
         start_scans_if_needed(&mut s, &capture_tx, &bluetooth_tx);
+        return respond_json(&mut stream, "{\"ok\":true}");
+    }
+
+    if method == "POST" && path == "/api/scan/start_custom" {
+        let req = serde_json::from_slice::<ScanStartCustomRequest>(body)
+            .context("invalid /api/scan/start_custom payload")?;
+        let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+        start_scans_with_selection(
+            &mut s,
+            &capture_tx,
+            &bluetooth_tx,
+            req.wifi_enabled,
+            req.bluetooth_enabled,
+        );
         return respond_json(&mut stream, "{\"ok\":true}");
     }
 
@@ -484,6 +526,58 @@ fn handle_client(
         return respond_json(&mut stream, "{\"ok\":true}");
     }
 
+    if method == "POST" && path == "/api/bluetooth/enumerate" {
+        let req = serde_json::from_slice::<BluetoothEnumerateRequest>(body)
+            .context("invalid /api/bluetooth/enumerate payload")?;
+        let mac = req.mac.trim().to_uppercase();
+        if mac.is_empty() {
+            return respond_status(&mut stream, 400, "Bad Request", "text/plain", b"missing mac");
+        }
+
+        let controller = {
+            let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+            s.bt_enumeration_status.insert(
+                mac.clone(),
+                BtEnumerationStatus {
+                    message: "enumeration running".to_string(),
+                    is_error: false,
+                },
+            );
+            s.settings.bluetooth_controller.clone()
+        };
+
+        let result = bluetooth::connect_and_enumerate_device(controller.as_deref(), &mac);
+
+        let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+        match result {
+            Ok(record) => {
+                s.bluetooth_devices.insert(record.mac.clone(), record);
+                let status = BtEnumerationStatus {
+                    message: "enumeration completed".to_string(),
+                    is_error: false,
+                };
+                s.bt_enumeration_status.insert(mac.clone(), status.clone());
+                push_log(&mut s, format!("active bluetooth enumeration completed for {}", mac));
+                let body = serde_json::to_string(&status).context("failed to serialize bt status")?;
+                return respond_json(&mut stream, &body);
+            }
+            Err(err) => {
+                let msg = err.to_string();
+                let status = BtEnumerationStatus {
+                    message: msg.clone(),
+                    is_error: true,
+                };
+                s.bt_enumeration_status.insert(mac.clone(), status.clone());
+                push_log(
+                    &mut s,
+                    format!("active bluetooth enumeration failed for {}: {}", mac, msg),
+                );
+                let body = serde_json::to_string(&status).context("failed to serialize bt status")?;
+                return respond_json(&mut stream, &body);
+            }
+        }
+    }
+
     if method != "GET" {
         return respond_status(
             &mut stream,
@@ -510,6 +604,22 @@ fn start_scans_if_needed(
     bluetooth_tx: &Sender<BluetoothEvent>,
 ) {
     let wifi_enabled = state.settings.interfaces.iter().any(|i| i.enabled);
+    start_scans_with_selection(
+        state,
+        capture_tx,
+        bluetooth_tx,
+        wifi_enabled,
+        state.settings.bluetooth_enabled,
+    );
+}
+
+fn start_scans_with_selection(
+    state: &mut WebState,
+    capture_tx: &Sender<CaptureEvent>,
+    bluetooth_tx: &Sender<BluetoothEvent>,
+    wifi_enabled: bool,
+    bluetooth_enabled: bool,
+) {
     if wifi_enabled && state.runtime.capture.is_none() {
         let config = CaptureConfig {
             interfaces: state.settings.interfaces.clone(),
@@ -522,9 +632,14 @@ fn start_scans_if_needed(
         };
         state.runtime.capture = Some(capture::start_capture(config, capture_tx.clone()));
         push_log(state, "Wi-Fi scanning started".to_string());
+    } else if !wifi_enabled && state.runtime.capture.is_some() {
+        if let Some(runtime) = state.runtime.capture.take() {
+            runtime.stop();
+        }
+        push_log(state, "Wi-Fi scanning stopped".to_string());
     }
 
-    if state.settings.bluetooth_enabled && state.runtime.bluetooth.is_none() {
+    if bluetooth_enabled && state.runtime.bluetooth.is_none() {
         let cfg = BluetoothScanConfig {
             controller: state.settings.bluetooth_controller.clone(),
             source: state.settings.bluetooth_scan_source,
@@ -534,6 +649,11 @@ fn start_scans_if_needed(
         };
         state.runtime.bluetooth = Some(bluetooth::start_scan(cfg, bluetooth_tx.clone()));
         push_log(state, "Bluetooth scanning started".to_string());
+    } else if !bluetooth_enabled && state.runtime.bluetooth.is_some() {
+        if let Some(runtime) = state.runtime.bluetooth.take() {
+            runtime.stop();
+        }
+        push_log(state, "Bluetooth scanning stopped".to_string());
     }
 }
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AppSettings, defaultSettings } from "@/data/mockData";
+import { AppSettings } from "@/data/mockData";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -158,24 +158,6 @@ const PreferencesDialog = ({
             </SettingRow>
           </Section>
 
-          <Separator />
-
-          <Section title="GPS">
-            <SettingRow label="GPS Provider">
-              <Select value={local.gps} onValueChange={(v) => update({ gps: v as AppSettings["gps"] })}>
-                <SelectTrigger className="w-28 h-7 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="disabled">Disabled</SelectItem>
-                  <SelectItem value="gpsd">GPSD</SelectItem>
-                  <SelectItem value="serial">Serial</SelectItem>
-                  <SelectItem value="static">Static</SelectItem>
-                </SelectContent>
-              </Select>
-            </SettingRow>
-          </Section>
-
-          <Separator />
-
           <Section title="Output & Storage">
             <SettingRow label="Output to Files"><Switch checked={local.outputToFiles} onCheckedChange={(v) => update({ outputToFiles: v })} /></SettingRow>
             <SettingRow label="Output Directory">
@@ -192,9 +174,6 @@ const PreferencesDialog = ({
               <Input value={local.ouiSourcePath} onChange={(e) => update({ ouiSourcePath: e.target.value })} className="w-48 h-7 text-xs " />
             </SettingRow>
             <SettingRow label="Auto-check OUI Updates"><Switch checked={local.autoCheckOuiUpdates} onCheckedChange={(v) => update({ autoCheckOuiUpdates: v })} /></SettingRow>
-            <SettingRow label="GeoIP City DB Path">
-              <Input value={local.geoipCityDbPath} onChange={(e) => update({ geoipCityDbPath: e.target.value })} className="w-48 h-7 text-xs " />
-            </SettingRow>
           </Section>
 
           <Separator />

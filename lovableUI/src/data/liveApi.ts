@@ -12,6 +12,7 @@ export interface LiveStateResponse {
   access_points: unknown[];
   clients: unknown[];
   bluetooth_devices: unknown[];
+  bt_enumeration_status?: Record<string, { message: string; is_error: boolean }>;
   channel_usage: unknown[];
   logs: string[];
 }

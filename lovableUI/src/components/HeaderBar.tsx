@@ -5,6 +5,10 @@ interface HeaderBarProps {
   onTabChange: (tab: string) => void;
   scanning: boolean;
   onToggleScan: () => void;
+  startWifiEnabled: boolean;
+  startBluetoothEnabled: boolean;
+  onStartWifiEnabledChange: (enabled: boolean) => void;
+  onStartBluetoothEnabledChange: (enabled: boolean) => void;
   apCount: number;
   clientCount: number;
   onOpenPreferences: () => void;
@@ -16,7 +20,19 @@ const tabs = [
   { id: "bluetooth", label: "Bluetooth", icon: Bluetooth },
 ];
 
-const HeaderBar = ({ activeTab, onTabChange, scanning, onToggleScan, apCount, clientCount, onOpenPreferences }: HeaderBarProps) => {
+const HeaderBar = ({
+  activeTab,
+  onTabChange,
+  scanning,
+  onToggleScan,
+  startWifiEnabled,
+  startBluetoothEnabled,
+  onStartWifiEnabledChange,
+  onStartBluetoothEnabledChange,
+  apCount,
+  clientCount,
+  onOpenPreferences,
+}: HeaderBarProps) => {
   return (
     <header className="flex items-center justify-between border-b border-border bg-card px-4 py-2">
       <div className="flex items-center gap-3">
@@ -57,6 +73,25 @@ const HeaderBar = ({ activeTab, onTabChange, scanning, onToggleScan, apCount, cl
         >
           <Settings className="h-4 w-4" />
         </button>
+
+        {!scanning && (
+          <div className="flex items-center gap-1 rounded-md border border-border bg-secondary/40 p-1 text-[10px]">
+            <button
+              onClick={() => onStartWifiEnabledChange(!startWifiEnabled)}
+              className={`rounded px-2 py-1 ${startWifiEnabled ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+              title="Include Wi-Fi in next scan"
+            >
+              Wi-Fi
+            </button>
+            <button
+              onClick={() => onStartBluetoothEnabledChange(!startBluetoothEnabled)}
+              className={`rounded px-2 py-1 ${startBluetoothEnabled ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+              title="Include Bluetooth in next scan"
+            >
+              Bluetooth
+            </button>
+          </div>
+        )}
 
         <button
           onClick={onToggleScan}
