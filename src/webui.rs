@@ -665,13 +665,14 @@ fn request_body_bytes(request: &[u8]) -> &[u8] {
 }
 
 fn map_path(request_path: &str) -> PathBuf {
+    let ui_root = resolve_ui_root();
     let trimmed = request_path.trim_start_matches('/');
     if trimmed.is_empty() {
-        let dist_index = Path::new("lovableUI").join("dist").join("index.html");
+        let dist_index = ui_root.join("dist").join("index.html");
         if dist_index.exists() {
             return dist_index;
         }
-        return Path::new("lovableUI").join("index.html");
+        return ui_root.join("index.html");
     }
 
     // Block path traversal attempts and keep file serving inside lovableUI.
@@ -680,23 +681,50 @@ fn map_path(request_path: &str) -> PathBuf {
         .components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
-        return Path::new("lovableUI").join("index.html");
+        return ui_root.join("index.html");
     }
 
-    let dist_candidate = Path::new("lovableUI").join("dist").join(trimmed);
+    let dist_candidate = ui_root.join("dist").join(trimmed);
     if dist_candidate.exists() {
         return dist_candidate;
     }
-    let root_candidate = Path::new("lovableUI").join(trimmed);
+    let root_candidate = ui_root.join(trimmed);
     if root_candidate.exists() {
         return root_candidate;
     }
 
-    let dist_index = Path::new("lovableUI").join("dist").join("index.html");
+    let dist_index = ui_root.join("dist").join("index.html");
     if dist_index.exists() {
         return dist_index;
     }
-    Path::new("lovableUI").join("index.html")
+    ui_root.join("index.html")
+}
+
+fn resolve_ui_root() -> PathBuf {
+    if let Ok(custom) = std::env::var("EASYWIFI_UI_ROOT") {
+        let root = PathBuf::from(custom);
+        if root.join("dist").join("index.html").exists() || root.join("index.html").exists() {
+            return root;
+        }
+    }
+
+    let mut candidates = Vec::new();
+    candidates.push(PathBuf::from("lovableUI"));
+    candidates.push(PathBuf::from("/home/user/EasyWiFi/lovableUI"));
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.push(parent.join("lovableUI"));
+            candidates.push(parent.join("../EasyWiFi/lovableUI"));
+            candidates.push(parent.join("../share/easywifi/lovableUI"));
+        }
+    }
+
+    for root in candidates {
+        if root.join("dist").join("index.html").exists() || root.join("index.html").exists() {
+            return root;
+        }
+    }
+    PathBuf::from("lovableUI")
 }
 
 fn mime_for(path: &Path) -> &'static str {
