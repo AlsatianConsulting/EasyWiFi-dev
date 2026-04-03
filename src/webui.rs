@@ -7,7 +7,7 @@ use crate::settings::{
 use anyhow::{Context, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -55,6 +55,8 @@ struct StateResponse {
 struct WebMetaResponse {
     interfaces: Vec<WebInterfaceInfo>,
     selected_interface: Option<String>,
+    bluetooth_controllers: Vec<WebBluetoothControllerInfo>,
+    selected_bluetooth_controller: Option<String>,
     watchlist_entries: Vec<WebWatchlistEntry>,
 }
 
@@ -62,6 +64,13 @@ struct WebMetaResponse {
 struct WebInterfaceInfo {
     name: String,
     if_type: String,
+}
+
+#[derive(Serialize)]
+struct WebBluetoothControllerInfo {
+    id: String,
+    name: String,
+    is_default: bool,
 }
 
 #[derive(Serialize)]
@@ -107,6 +116,41 @@ struct BluetoothEnumerateRequest {
 struct ScanStartCustomRequest {
     wifi_enabled: bool,
     bluetooth_enabled: bool,
+}
+
+#[derive(Serialize)]
+struct InterfaceCapabilitiesResponse {
+    interface_name: String,
+    channels: Vec<u16>,
+    ht_modes: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ScanSetupResponse {
+    wifi_enabled: bool,
+    bluetooth_enabled: bool,
+    selected_interface: Option<String>,
+    mode: String,
+    locked_channel: Option<u16>,
+    locked_ht_mode: Option<String>,
+    hop_channels: Vec<u16>,
+    hop_dwell_ms: u64,
+    hop_ht_mode: String,
+    bluetooth_controller: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ScanSetupRequest {
+    wifi_enabled: bool,
+    bluetooth_enabled: bool,
+    selected_interface: Option<String>,
+    mode: String,
+    locked_channel: Option<u16>,
+    locked_ht_mode: Option<String>,
+    hop_channels: Option<Vec<u16>>,
+    hop_dwell_ms: Option<u64>,
+    hop_ht_mode: Option<String>,
+    bluetooth_controller: Option<String>,
 }
 
 pub fn run() -> Result<()> {
@@ -248,7 +292,8 @@ fn handle_client(
     let request_line = lines.next().unwrap_or_default();
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("GET");
-    let path = parts.next().unwrap_or("/");
+    let raw_path = parts.next().unwrap_or("/");
+    let (path, query) = split_request_path(raw_path);
     let body = request_body_bytes(req_bytes);
 
     if method == "GET" && path == "/api/health" {
@@ -314,14 +359,188 @@ fn handle_client(
                     mac: entry.mac.clone(),
                 })
                 .collect::<Vec<_>>();
+            let bluetooth_controllers = bluetooth::list_controllers()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|ctrl| WebBluetoothControllerInfo {
+                    id: ctrl.id,
+                    name: ctrl.name,
+                    is_default: ctrl.is_default,
+                })
+                .collect::<Vec<_>>();
             WebMetaResponse {
                 interfaces,
                 selected_interface,
+                bluetooth_controllers,
+                selected_bluetooth_controller: s.settings.bluetooth_controller.clone(),
                 watchlist_entries,
             }
         };
         let body = serde_json::to_string(&payload).context("failed to serialize meta payload")?;
         return respond_json(&mut stream, &body);
+    }
+
+    if method == "GET" && path == "/api/interface/capabilities" {
+        let requested = query_param(query.as_deref(), "name").unwrap_or_default();
+        let interface_name = if requested.trim().is_empty() {
+            let s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+            s.settings
+                .interfaces
+                .iter()
+                .find(|iface| iface.enabled)
+                .map(|iface| iface.interface_name.clone())
+                .unwrap_or_default()
+        } else {
+            requested
+        };
+        if interface_name.is_empty() {
+            return respond_status(&mut stream, 400, "Bad Request", "text/plain", b"missing interface");
+        }
+
+        let channels = capture::list_supported_channels(&interface_name).unwrap_or_default();
+        let mut ht_modes = capture::list_supported_ht_modes(&interface_name).unwrap_or_default();
+        if ht_modes.is_empty() {
+            ht_modes.push("HT20".to_string());
+        }
+        ht_modes.sort();
+        ht_modes.dedup();
+        let payload = InterfaceCapabilitiesResponse {
+            interface_name,
+            channels,
+            ht_modes,
+        };
+        let body = serde_json::to_string(&payload).context("failed to serialize capabilities")?;
+        return respond_json(&mut stream, &body);
+    }
+
+    if method == "GET" && path == "/api/scan/setup" {
+        let s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+        let selected_interface = s
+            .settings
+            .interfaces
+            .iter()
+            .find(|iface| iface.enabled)
+            .map(|iface| iface.interface_name.clone());
+        let mut mode = "hop_specific".to_string();
+        let mut locked_channel = None;
+        let mut locked_ht_mode = None;
+        let mut hop_channels = vec![1, 6, 11];
+        let mut hop_dwell_ms = 200_u64;
+        let mut hop_ht_mode = "HT20".to_string();
+        if let Some(iface) = s.settings.interfaces.iter().find(|iface| iface.enabled) {
+            match &iface.channel_mode {
+                ChannelSelectionMode::Locked { channel, ht_mode } => {
+                    mode = "locked".to_string();
+                    locked_channel = Some(*channel);
+                    locked_ht_mode = Some(ht_mode.clone());
+                }
+                ChannelSelectionMode::HopAll {
+                    channels,
+                    dwell_ms,
+                    ht_mode,
+                    ..
+                } => {
+                    mode = "hop_specific".to_string();
+                    hop_channels = channels.clone();
+                    hop_dwell_ms = *dwell_ms;
+                    hop_ht_mode = ht_mode.clone();
+                }
+                ChannelSelectionMode::HopBand { channels, dwell_ms, .. } => {
+                    mode = "hop_specific".to_string();
+                    hop_channels = channels.clone();
+                    hop_dwell_ms = *dwell_ms;
+                }
+            }
+        }
+        let payload = ScanSetupResponse {
+            wifi_enabled: s.settings.interfaces.iter().any(|iface| iface.enabled),
+            bluetooth_enabled: s.settings.bluetooth_enabled,
+            selected_interface,
+            mode,
+            locked_channel,
+            locked_ht_mode,
+            hop_channels,
+            hop_dwell_ms,
+            hop_ht_mode,
+            bluetooth_controller: s.settings.bluetooth_controller.clone(),
+        };
+        let body = serde_json::to_string(&payload).context("failed to serialize scan setup")?;
+        return respond_json(&mut stream, &body);
+    }
+
+    if method == "POST" && path == "/api/scan/setup" {
+        let req = serde_json::from_slice::<ScanSetupRequest>(body)
+            .context("invalid /api/scan/setup payload")?;
+        let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+
+        let mut selected_interface = req.selected_interface.unwrap_or_default().trim().to_string();
+        if selected_interface.is_empty() {
+            if let Some(existing) = s.settings.interfaces.iter().find(|iface| iface.enabled) {
+                selected_interface = existing.interface_name.clone();
+            }
+        }
+        if selected_interface.is_empty() {
+            selected_interface = "wlan0".to_string();
+        }
+
+        let mode = req.mode.trim().to_lowercase();
+        let channel_mode = if mode == "locked" {
+            ChannelSelectionMode::Locked {
+                channel: req.locked_channel.unwrap_or(1),
+                ht_mode: req
+                    .locked_ht_mode
+                    .as_deref()
+                    .unwrap_or("HT20")
+                    .trim()
+                    .to_string(),
+            }
+        } else {
+            ChannelSelectionMode::HopAll {
+                channels: req
+                    .hop_channels
+                    .unwrap_or_else(|| vec![1, 6, 11])
+                    .into_iter()
+                    .filter(|ch| *ch > 0)
+                    .collect::<Vec<_>>(),
+                dwell_ms: req.hop_dwell_ms.unwrap_or(200).max(25),
+                ht_mode: req
+                    .hop_ht_mode
+                    .as_deref()
+                    .unwrap_or("HT20")
+                    .trim()
+                    .to_string(),
+                channel_ht_modes: BTreeMap::new(),
+            }
+        };
+
+        let mut found = false;
+        for iface in &mut s.settings.interfaces {
+            if iface.interface_name == selected_interface {
+                iface.enabled = req.wifi_enabled;
+                iface.channel_mode = channel_mode.clone();
+                found = true;
+            } else {
+                iface.enabled = false;
+            }
+        }
+        if !found {
+            s.settings.interfaces.push(InterfaceSettings {
+                interface_name: selected_interface.clone(),
+                monitor_interface_name: None,
+                channel_mode,
+                enabled: req.wifi_enabled,
+            });
+        }
+        s.settings.bluetooth_enabled = req.bluetooth_enabled;
+        s.settings.bluetooth_controller = req
+            .bluetooth_controller
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        s.settings.save_to_disk().ok();
+        push_log(&mut s, "scan setup updated".to_string());
+        return respond_json(&mut stream, "{\"ok\":true}");
     }
 
     if method == "POST" && path == "/api/scan/start" {
@@ -662,6 +881,27 @@ fn request_body_bytes(request: &[u8]) -> &[u8] {
         return &[];
     };
     &request[(header_end + 4)..]
+}
+
+fn split_request_path(raw_path: &str) -> (&str, Option<String>) {
+    if let Some((path, query)) = raw_path.split_once('?') {
+        return (path, Some(query.to_string()));
+    }
+    (raw_path, None)
+}
+
+fn query_param(query: Option<&str>, key: &str) -> Option<String> {
+    let query = query?;
+    for part in query.split('&') {
+        let (k, v) = match part.split_once('=') {
+            Some(parts) => parts,
+            None => (part, ""),
+        };
+        if k == key {
+            return Some(v.to_string());
+        }
+    }
+    None
 }
 
 fn map_path(request_path: &str) -> PathBuf {

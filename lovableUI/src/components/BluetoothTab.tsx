@@ -65,6 +65,18 @@ const BluetoothTab = ({ devices, selectedDevice, onSelectDevice, visibleColumns,
     }
   };
 
+  const moveColumn = (key: string, direction: -1 | 1) => {
+    const idx = visibleColumns.indexOf(key);
+    if (idx < 0) return;
+    const next = idx + direction;
+    if (next < 0 || next >= visibleColumns.length) return;
+    const updated = [...visibleColumns];
+    const tmp = updated[idx];
+    updated[idx] = updated[next];
+    updated[next] = tmp;
+    onVisibleColumnsChange(updated);
+  };
+
   const sorted = useMemo(() => {
     let data = [...devices];
     const activeFilters = Object.entries(columnFilters)
@@ -88,7 +100,14 @@ const BluetoothTab = ({ devices, selectedDevice, onSelectDevice, visibleColumns,
     return data;
   }, [devices, sortKey, sortDir, columnFilters]);
 
-  const cols = allColumns.filter(c => visibleColumns.includes(c.key));
+  const columnByKey = new Map(allColumns.map((c) => [c.key, c]));
+  const cols = visibleColumns
+    .map((key) => columnByKey.get(key))
+    .filter((c): c is (typeof allColumns)[number] => Boolean(c));
+  const chooserOrder = [
+    ...visibleColumns,
+    ...allColumns.map((c) => c.key).filter((key) => !visibleColumns.includes(key)),
+  ];
 
   const SortIcon = ({ col }: { col: string }) => {
     if (sortKey !== col) return <ArrowUpDown className="h-3 w-3 opacity-30" />;
@@ -110,12 +129,42 @@ const BluetoothTab = ({ devices, selectedDevice, onSelectDevice, visibleColumns,
             </PopoverTrigger>
             <PopoverContent className="w-48 p-2 bg-card border-border" align="end">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-2">Visible Columns</p>
-              {allColumns.map(col => (
-                <label key={col.key} className="flex items-center gap-2 py-1 text-xs cursor-pointer hover:bg-secondary/50 px-1 rounded">
-                  <Checkbox checked={visibleColumns.includes(col.key)} onCheckedChange={() => toggleColumn(col.key)} className="h-3.5 w-3.5" />
-                  {col.label}
-                </label>
-              ))}
+              {chooserOrder.map((key) => {
+                const col = columnByKey.get(key);
+                if (!col) return null;
+                const active = visibleColumns.includes(col.key);
+                const idx = visibleColumns.indexOf(col.key);
+                return (
+                  <div key={col.key} className="flex items-center justify-between gap-1 py-1 px-1 rounded hover:bg-secondary/50">
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <Checkbox checked={active} onCheckedChange={() => toggleColumn(col.key)} className="h-3.5 w-3.5" />
+                      {col.label}
+                    </label>
+                    {active && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="rounded border border-border p-0.5 disabled:opacity-40"
+                          disabled={idx <= 0}
+                          onClick={() => moveColumn(col.key, -1)}
+                          title="Move left"
+                        >
+                          <ArrowUp className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-border p-0.5 disabled:opacity-40"
+                          disabled={idx >= visibleColumns.length - 1}
+                          onClick={() => moveColumn(col.key, 1)}
+                          title="Move right"
+                        >
+                          <ArrowDown className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </PopoverContent>
           </Popover>
           <span className="text-xs text-muted-foreground ">{sorted.length} discovered</span>

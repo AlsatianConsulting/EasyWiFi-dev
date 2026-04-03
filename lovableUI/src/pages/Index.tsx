@@ -7,6 +7,7 @@ import ClientDetailPanel from "@/components/ClientDetailPanel";
 import BluetoothTab from "@/components/BluetoothTab";
 import BluetoothDetailPanel from "@/components/BluetoothDetailPanel";
 import PreferencesDialog from "@/components/PreferencesDialog";
+import ScanSetupDialog, { ScanSetupModel } from "@/components/ScanSetupDialog";
 import {
   AccessPointRecord,
   ClientRecord,
@@ -40,6 +41,8 @@ interface MetaWatchlistEntry {
 interface MetaResponse {
   interfaces: MetaInterface[];
   selected_interface: string | null;
+  bluetooth_controllers?: { id: string; name: string; is_default: boolean }[];
+  selected_bluetooth_controller?: string | null;
   watchlist_entries: MetaWatchlistEntry[];
 }
 
@@ -75,12 +78,18 @@ const Index = () => {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [apFilter, setApFilter] = useState<string | null>(null);
   const [interfaces, setInterfaces] = useState<MetaInterface[]>([]);
+  const [bluetoothControllers, setBluetoothControllers] = useState<
+    { id: string; name: string; is_default: boolean }[]
+  >([]);
   const [selectedInterface, setSelectedInterface] = useState<string | null>(null);
   const [watchlistEntries, setWatchlistEntries] = useState<MetaWatchlistEntry[]>([]);
   const [apActionStatus, setApActionStatus] = useState<BtEnumerationStatus | null>(null);
   const [btEnumerationStatus, setBtEnumerationStatus] = useState<Record<string, BtEnumerationStatus>>({});
   const [startWifiEnabled, setStartWifiEnabled] = useState(true);
   const [startBluetoothEnabled, setStartBluetoothEnabled] = useState(true);
+  const [scanSetupOpen, setScanSetupOpen] = useState(false);
+  const [scanSetupSection, setScanSetupSection] = useState<"wifi" | "bluetooth">("wifi");
+  const [scanSetup, setScanSetup] = useState<ScanSetupModel | null>(null);
   const [compactLayout, setCompactLayout] = useState(false);
 
   const [columns, setColumns] = useState(loadColumns);
@@ -145,11 +154,21 @@ const Index = () => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const meta = (await res.json()) as MetaResponse;
       setInterfaces(meta.interfaces || []);
+      setBluetoothControllers(meta.bluetooth_controllers || []);
       setSelectedInterface(meta.selected_interface || null);
       setWatchlistEntries(meta.watchlist_entries || []);
     } catch (err) {
       setApiError(String(err));
     }
+  }, []);
+
+  const refreshScanSetup = useCallback(async () => {
+    const res = await fetch("/api/scan/setup");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as ScanSetupModel;
+    setScanSetup(body);
+    setStartWifiEnabled(Boolean(body.wifi_enabled));
+    setStartBluetoothEnabled(Boolean(body.bluetooth_enabled));
   }, []);
 
   useEffect(() => {
@@ -161,6 +180,10 @@ const Index = () => {
   useEffect(() => {
     refreshMeta();
   }, [refreshMeta]);
+
+  useEffect(() => {
+    refreshScanSetup().catch((err) => setApiError(String(err)));
+  }, [refreshScanSetup]);
 
   useEffect(() => {
     const evaluate = () => {
@@ -303,8 +326,20 @@ const Index = () => {
         scanning={scanning}
         startWifiEnabled={startWifiEnabled}
         startBluetoothEnabled={startBluetoothEnabled}
-        onStartWifiEnabledChange={setStartWifiEnabled}
-        onStartBluetoothEnabledChange={setStartBluetoothEnabled}
+        onStartWifiEnabledChange={(enabled) => {
+          setStartWifiEnabled(enabled);
+          if (enabled) {
+            setScanSetupSection("wifi");
+            setScanSetupOpen(true);
+          }
+        }}
+        onStartBluetoothEnabledChange={(enabled) => {
+          setStartBluetoothEnabled(enabled);
+          if (enabled) {
+            setScanSetupSection("bluetooth");
+            setScanSetupOpen(true);
+          }
+        }}
         onToggleScan={() => {
           const action = scanning
             ? postScan("/api/scan/stop")
@@ -405,6 +440,25 @@ const Index = () => {
             body: JSON.stringify({ index }),
           });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          await refreshMeta();
+        }}
+      />
+
+      <ScanSetupDialog
+        open={scanSetupOpen}
+        onOpenChange={setScanSetupOpen}
+        initialSection={scanSetupSection}
+        setup={scanSetup}
+        interfaces={interfaces.map((iface) => ({ name: iface.name, ifType: iface.if_type }))}
+        bluetoothControllers={bluetoothControllers.map((ctrl) => ({ id: ctrl.id, name: ctrl.name }))}
+        onApply={async (next) => {
+          const res = await fetch("/api/scan/setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(next),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          await refreshScanSetup();
           await refreshMeta();
         }}
       />
