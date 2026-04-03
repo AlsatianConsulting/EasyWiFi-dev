@@ -7,11 +7,36 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 
+interface InterfaceOption {
+  name: string;
+  ifType: string;
+}
+
+interface WatchlistRow {
+  index: number;
+  label: string;
+  deviceType: string;
+  name: string;
+  mac: string;
+}
+
 interface PreferencesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   settings: AppSettings;
   onSettingsChange: (settings: AppSettings) => void;
+  interfaces: InterfaceOption[];
+  selectedInterface: string | null;
+  onSelectInterface: (name: string) => Promise<void>;
+  watchlistEntries: WatchlistRow[];
+  onAddWatchlistEntry: (entry: {
+    label: string;
+    description: string;
+    name: string;
+    macOrBssid: string;
+    oui: string;
+  }) => Promise<void>;
+  onDeleteWatchlistEntry: (index: number) => Promise<void>;
 }
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
@@ -31,8 +56,24 @@ const SettingRow = ({ label, description, children }: { label: string; descripti
   </div>
 );
 
-const PreferencesDialog = ({ open, onOpenChange, settings, onSettingsChange }: PreferencesDialogProps) => {
+const PreferencesDialog = ({
+  open,
+  onOpenChange,
+  settings,
+  onSettingsChange,
+  interfaces,
+  selectedInterface,
+  onSelectInterface,
+  watchlistEntries,
+  onAddWatchlistEntry,
+  onDeleteWatchlistEntry,
+}: PreferencesDialogProps) => {
   const [local, setLocal] = useState<AppSettings>(settings);
+  const [watchLabel, setWatchLabel] = useState("");
+  const [watchDescription, setWatchDescription] = useState("");
+  const [watchName, setWatchName] = useState("");
+  const [watchMac, setWatchMac] = useState("");
+  const [watchOui, setWatchOui] = useState("");
 
   const update = (patch: Partial<AppSettings>) => {
     const next = { ...local, ...patch };
@@ -69,6 +110,20 @@ const PreferencesDialog = ({ open, onOpenChange, settings, onSettingsChange }: P
           <Separator />
 
           <Section title="WiFi Capture">
+            <SettingRow label="Scanning Interface">
+              <Select value={selectedInterface ?? ""} onValueChange={(v) => void onSelectInterface(v)}>
+                <SelectTrigger className="w-48 h-7 text-xs">
+                  <SelectValue placeholder="Select interface" />
+                </SelectTrigger>
+                <SelectContent>
+                  {interfaces.map((iface) => (
+                    <SelectItem key={iface.name} value={iface.name}>
+                      {iface.name} ({iface.ifType})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingRow>
             <SettingRow label="Packet Header Mode">
               <Select value={local.wifiPacketHeaderMode} onValueChange={(v) => update({ wifiPacketHeaderMode: v as "radiotap" | "ppi" })}>
                 <SelectTrigger className="w-28 h-7 text-xs"><SelectValue /></SelectTrigger>
@@ -147,6 +202,87 @@ const PreferencesDialog = ({ open, onOpenChange, settings, onSettingsChange }: P
           <Section title="Alerts">
             <SettingRow label="Handshake Alerts"><Switch checked={local.enableHandshakeAlerts} onCheckedChange={(v) => update({ enableHandshakeAlerts: v })} /></SettingRow>
             <SettingRow label="Watchlist Alerts"><Switch checked={local.enableWatchlistAlerts} onCheckedChange={(v) => update({ enableWatchlistAlerts: v })} /></SettingRow>
+          </Section>
+
+          <Separator />
+
+          <Section title="Watchlist Editor">
+            <div className="grid grid-cols-1 gap-2">
+              <Input
+                placeholder="Label (required)"
+                value={watchLabel}
+                onChange={(e) => setWatchLabel(e.target.value)}
+                className="h-7 text-xs"
+              />
+              <Input
+                placeholder="Description"
+                value={watchDescription}
+                onChange={(e) => setWatchDescription(e.target.value)}
+                className="h-7 text-xs"
+              />
+              <Input
+                placeholder="SSID / Name"
+                value={watchName}
+                onChange={(e) => setWatchName(e.target.value)}
+                className="h-7 text-xs"
+              />
+              <Input
+                placeholder="MAC / BSSID"
+                value={watchMac}
+                onChange={(e) => setWatchMac(e.target.value)}
+                className="h-7 text-xs"
+              />
+              <Input
+                placeholder="OUI (optional, e.g. AA:BB:CC)"
+                value={watchOui}
+                onChange={(e) => setWatchOui(e.target.value)}
+                className="h-7 text-xs"
+              />
+              <button
+                className="rounded-md border border-border bg-primary px-2 py-1 text-xs text-primary-foreground"
+                onClick={async () => {
+                  if (!watchLabel.trim()) return;
+                  await onAddWatchlistEntry({
+                    label: watchLabel.trim(),
+                    description: watchDescription.trim(),
+                    name: watchName.trim(),
+                    macOrBssid: watchMac.trim(),
+                    oui: watchOui.trim(),
+                  });
+                  setWatchLabel("");
+                  setWatchDescription("");
+                  setWatchName("");
+                  setWatchMac("");
+                  setWatchOui("");
+                }}
+              >
+                Add Watchlist Entry
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              {watchlistEntries.map((entry) => (
+                <div
+                  key={entry.index}
+                  className="flex items-center justify-between rounded border border-border bg-secondary/30 px-2 py-1 text-xs"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{entry.label}</div>
+                    <div className="truncate text-[10px] text-muted-foreground">
+                      {entry.deviceType} | {entry.name || "—"} | {entry.mac || "—"}
+                    </div>
+                  </div>
+                  <button
+                    className="rounded border border-border px-2 py-0.5 text-[10px]"
+                    onClick={async () => {
+                      await onDeleteWatchlistEntry(entry.index);
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
           </Section>
         </div>
       </DialogContent>

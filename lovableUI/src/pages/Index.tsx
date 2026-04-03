@@ -24,6 +24,25 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/componen
 
 const STORAGE_KEY = "easywifi-columns";
 
+interface MetaInterface {
+  name: string;
+  if_type: string;
+}
+
+interface MetaWatchlistEntry {
+  index: number;
+  label: string;
+  device_type: string;
+  name: string;
+  mac: string;
+}
+
+interface MetaResponse {
+  interfaces: MetaInterface[];
+  selected_interface: string | null;
+  watchlist_entries: MetaWatchlistEntry[];
+}
+
 const loadColumns = (): { ap: string[]; client: string[]; bt: string[] } => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -50,6 +69,9 @@ const Index = () => {
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [apFilter, setApFilter] = useState<string | null>(null);
+  const [interfaces, setInterfaces] = useState<MetaInterface[]>([]);
+  const [selectedInterface, setSelectedInterface] = useState<string | null>(null);
+  const [watchlistEntries, setWatchlistEntries] = useState<MetaWatchlistEntry[]>([]);
 
   const [columns, setColumns] = useState(loadColumns);
 
@@ -93,11 +115,28 @@ const Index = () => {
     [refreshState],
   );
 
+  const refreshMeta = useCallback(async () => {
+    try {
+      const res = await fetch("/api/meta");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const meta = (await res.json()) as MetaResponse;
+      setInterfaces(meta.interfaces || []);
+      setSelectedInterface(meta.selected_interface || null);
+      setWatchlistEntries(meta.watchlist_entries || []);
+    } catch (err) {
+      setApiError(String(err));
+    }
+  }, []);
+
   useEffect(() => {
     refreshState();
     const t = window.setInterval(refreshState, 1200);
     return () => window.clearInterval(t);
   }, [refreshState]);
+
+  useEffect(() => {
+    refreshMeta();
+  }, [refreshMeta]);
 
   useEffect(() => {
     if (selectedAP && !accessPoints.some((ap) => ap.bssid === selectedAP.bssid)) {
@@ -167,7 +206,24 @@ const Index = () => {
       case "bluetooth":
         return <BluetoothDetailPanel device={selectedBTDevice} />;
       default:
-        return <DetailPanel ap={selectedAP} onNavigateToClients={handleNavigateToClients} />;
+        return (
+          <DetailPanel
+            ap={selectedAP}
+            onNavigateToClients={handleNavigateToClients}
+            onLockToAp={(bssid) => {
+              fetch("/api/ap/lock", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bssid }),
+              })
+                .then((res) => {
+                  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                  return refreshState();
+                })
+                .catch((err) => setApiError(String(err)));
+            }}
+          />
+        );
     }
   };
 
@@ -219,7 +275,56 @@ const Index = () => {
         </footer>
       )}
 
-      <PreferencesDialog open={prefsOpen} onOpenChange={setPrefsOpen} settings={settings} onSettingsChange={setSettings} />
+      <PreferencesDialog
+        open={prefsOpen}
+        onOpenChange={setPrefsOpen}
+        settings={settings}
+        onSettingsChange={setSettings}
+        interfaces={interfaces.map((iface) => ({ name: iface.name, ifType: iface.if_type }))}
+        selectedInterface={selectedInterface}
+        onSelectInterface={async (name) => {
+          const res = await fetch("/api/interface/select", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ interface_name: name }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          await refreshMeta();
+          await refreshState();
+        }}
+        watchlistEntries={watchlistEntries.map((entry) => ({
+          index: entry.index,
+          label: entry.label,
+          deviceType: entry.device_type,
+          name: entry.name,
+          mac: entry.mac,
+        }))}
+        onAddWatchlistEntry={async (entry) => {
+          const res = await fetch("/api/watchlist/add", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              label: entry.label,
+              description: entry.description,
+              name: entry.name,
+              mac_or_bssid: entry.macOrBssid,
+              oui: entry.oui,
+              device_type: "wifi",
+            }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          await refreshMeta();
+        }}
+        onDeleteWatchlistEntry={async (index) => {
+          const res = await fetch("/api/watchlist/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ index }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          await refreshMeta();
+        }}
+      />
     </div>
   );
 };

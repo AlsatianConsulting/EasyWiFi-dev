@@ -1,10 +1,12 @@
 use crate::bluetooth::{self, BluetoothEvent, BluetoothRuntime, BluetoothScanConfig};
 use crate::capture::{self, CaptureConfig, CaptureEvent, CaptureRuntime};
 use crate::model::{AccessPointRecord, BluetoothDeviceRecord, ChannelUsagePoint, ClientRecord};
-use crate::settings::AppSettings;
+use crate::settings::{
+    AppSettings, ChannelSelectionMode, InterfaceSettings, WatchlistDeviceType, WatchlistEntry,
+};
 use anyhow::{Context, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -39,6 +41,53 @@ struct StateResponse {
     bluetooth_devices: Vec<BluetoothDeviceRecord>,
     channel_usage: Vec<ChannelUsagePoint>,
     logs: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct WebMetaResponse {
+    interfaces: Vec<WebInterfaceInfo>,
+    selected_interface: Option<String>,
+    watchlist_entries: Vec<WebWatchlistEntry>,
+}
+
+#[derive(Serialize)]
+struct WebInterfaceInfo {
+    name: String,
+    if_type: String,
+}
+
+#[derive(Serialize)]
+struct WebWatchlistEntry {
+    index: usize,
+    label: String,
+    device_type: String,
+    name: String,
+    mac: String,
+}
+
+#[derive(Deserialize)]
+struct InterfaceSelectRequest {
+    interface_name: String,
+}
+
+#[derive(Deserialize)]
+struct WatchlistAddRequest {
+    label: String,
+    description: Option<String>,
+    name: Option<String>,
+    mac_or_bssid: Option<String>,
+    oui: Option<String>,
+    device_type: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WatchlistDeleteRequest {
+    index: usize,
+}
+
+#[derive(Deserialize)]
+struct ApLockRequest {
+    bssid: String,
 }
 
 pub fn run() -> Result<()> {
@@ -165,12 +214,15 @@ fn handle_client(
     if read == 0 {
         return Ok(());
     }
-    let req = String::from_utf8_lossy(&buf[..read]);
+
+    let req_bytes = &buf[..read];
+    let req = String::from_utf8_lossy(req_bytes);
     let mut lines = req.lines();
     let request_line = lines.next().unwrap_or_default();
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("GET");
     let path = parts.next().unwrap_or("/");
+    let body = request_body_bytes(req_bytes);
 
     if method == "GET" && path == "/api/health" {
         return respond_json(&mut stream, "{\"status\":\"ok\",\"ui\":\"web\"}");
@@ -200,34 +252,53 @@ fn handle_client(
         return respond_json(&mut stream, &body);
     }
 
+    if method == "GET" && path == "/api/meta" {
+        let payload = {
+            let s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+            let selected_interface = s
+                .settings
+                .interfaces
+                .iter()
+                .find(|iface| iface.enabled)
+                .map(|iface| iface.interface_name.clone());
+            let interfaces = capture::list_interfaces()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|iface| WebInterfaceInfo {
+                    name: iface.name,
+                    if_type: iface.if_type,
+                })
+                .collect::<Vec<_>>();
+            let watchlist_entries = s
+                .settings
+                .watchlists
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| WebWatchlistEntry {
+                    index,
+                    label: entry.label.clone(),
+                    device_type: match entry.device_type {
+                        WatchlistDeviceType::Wifi => "wifi".to_string(),
+                        WatchlistDeviceType::Bluetooth => "bluetooth".to_string(),
+                    },
+                    name: entry.name.clone(),
+                    mac: entry.mac.clone(),
+                })
+                .collect::<Vec<_>>();
+            WebMetaResponse {
+                interfaces,
+                selected_interface,
+                watchlist_entries,
+            }
+        };
+        let body = serde_json::to_string(&payload).context("failed to serialize meta payload")?;
+        return respond_json(&mut stream, &body);
+    }
+
     if method == "POST" && path == "/api/scan/start" {
         let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
-        let wifi_enabled = s.settings.interfaces.iter().any(|i| i.enabled);
-        if wifi_enabled && s.runtime.capture.is_none() {
-            let config = CaptureConfig {
-                interfaces: s.settings.interfaces.clone(),
-                session_pcap_path: None,
-                wifi_packet_header_mode: s.settings.wifi_packet_header_mode,
-                wifi_frame_parsing_enabled: s.settings.enable_wifi_frame_parsing,
-                geoip_city_db_path: None,
-                gps_enabled: false,
-                passive_only: false,
-            };
-            s.runtime.capture = Some(capture::start_capture(config, capture_tx));
-            push_log(&mut s, "Wi-Fi scanning started".to_string());
-        }
-
-        if s.settings.bluetooth_enabled && s.runtime.bluetooth.is_none() {
-            let cfg = BluetoothScanConfig {
-                controller: s.settings.bluetooth_controller.clone(),
-                source: s.settings.bluetooth_scan_source,
-                ubertooth_device: s.settings.ubertooth_device.clone(),
-                scan_timeout_secs: s.settings.bluetooth_scan_timeout_secs,
-                pause_ms: s.settings.bluetooth_scan_pause_ms,
-            };
-            s.runtime.bluetooth = Some(bluetooth::start_scan(cfg, bluetooth_tx));
-            push_log(&mut s, "Bluetooth scanning started".to_string());
-        }
+        start_scans_if_needed(&mut s, &capture_tx, &bluetooth_tx);
         return respond_json(&mut stream, "{\"ok\":true}");
     }
 
@@ -240,6 +311,176 @@ fn handle_client(
             runtime.stop();
         }
         push_log(&mut s, "Scanning stopped".to_string());
+        return respond_json(&mut stream, "{\"ok\":true}");
+    }
+
+    if method == "POST" && path == "/api/interface/select" {
+        let req = serde_json::from_slice::<InterfaceSelectRequest>(body)
+            .context("invalid /api/interface/select payload")?;
+        let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+        let interface_name = req.interface_name.trim().to_string();
+        if interface_name.is_empty() {
+            return respond_status(&mut stream, 400, "Bad Request", "text/plain", b"missing interface");
+        }
+
+        let mut found = false;
+        for iface in &mut s.settings.interfaces {
+            if iface.interface_name == interface_name {
+                iface.enabled = true;
+                found = true;
+            } else {
+                iface.enabled = false;
+            }
+        }
+        if !found {
+            s.settings.interfaces.push(InterfaceSettings {
+                interface_name: interface_name.clone(),
+                monitor_interface_name: None,
+                channel_mode: ChannelSelectionMode::default(),
+                enabled: true,
+            });
+            for iface in &mut s.settings.interfaces {
+                if iface.interface_name != interface_name {
+                    iface.enabled = false;
+                }
+            }
+        }
+        s.settings.save_to_disk().ok();
+        push_log(
+            &mut s,
+            format!("selected scan interface set to {}", interface_name),
+        );
+        if s.runtime.capture.is_some() {
+            if let Some(runtime) = s.runtime.capture.take() {
+                runtime.stop();
+            }
+            start_scans_if_needed(&mut s, &capture_tx, &bluetooth_tx);
+        }
+        return respond_json(&mut stream, "{\"ok\":true}");
+    }
+
+    if method == "POST" && path == "/api/watchlist/add" {
+        let req = serde_json::from_slice::<WatchlistAddRequest>(body)
+            .context("invalid /api/watchlist/add payload")?;
+        let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+        let label = req.label.trim().to_string();
+        if label.is_empty() {
+            return respond_status(
+                &mut stream,
+                400,
+                "Bad Request",
+                "text/plain",
+                b"watchlist label is required",
+            );
+        }
+        let mut entry = WatchlistEntry {
+            label,
+            device_type: match req.device_type.as_deref() {
+                Some("bluetooth") => WatchlistDeviceType::Bluetooth,
+                _ => WatchlistDeviceType::Wifi,
+            },
+            mac: req
+                .mac_or_bssid
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_uppercase(),
+            name: req
+                .name
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            color_hex: "#f59e0b".to_string(),
+        };
+
+        let oui = req.oui.unwrap_or_default().trim().to_uppercase();
+        if !oui.is_empty() {
+            entry.mac = oui;
+        }
+        if let Some(description) = req.description {
+            let d = description.trim();
+            if !d.is_empty() {
+                entry.label = format!("{} - {}", entry.label, d);
+            }
+        }
+        s.settings.watchlists.entries.push(entry);
+        s.settings.save_to_disk().ok();
+        push_log(&mut s, "watchlist entry added".to_string());
+        return respond_json(&mut stream, "{\"ok\":true}");
+    }
+
+    if method == "POST" && path == "/api/watchlist/delete" {
+        let req = serde_json::from_slice::<WatchlistDeleteRequest>(body)
+            .context("invalid /api/watchlist/delete payload")?;
+        let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+        if req.index < s.settings.watchlists.entries.len() {
+            s.settings.watchlists.entries.remove(req.index);
+            s.settings.save_to_disk().ok();
+            push_log(&mut s, "watchlist entry removed".to_string());
+            return respond_json(&mut stream, "{\"ok\":true}");
+        }
+        return respond_status(
+            &mut stream,
+            400,
+            "Bad Request",
+            "text/plain",
+            b"watchlist index out of range",
+        );
+    }
+
+    if method == "POST" && path == "/api/ap/lock" {
+        let req =
+            serde_json::from_slice::<ApLockRequest>(body).context("invalid /api/ap/lock payload")?;
+        let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+        let bssid = req.bssid.trim();
+        if bssid.is_empty() {
+            return respond_status(&mut stream, 400, "Bad Request", "text/plain", b"missing bssid");
+        }
+        let Some(ap) = s.access_points.get(bssid).cloned() else {
+            return respond_status(&mut stream, 404, "Not Found", "text/plain", b"ap not found");
+        };
+        let channel = ap.channel.unwrap_or(1);
+        let mut locked = false;
+        for iface in &mut s.settings.interfaces {
+            if iface.enabled && !locked {
+                iface.channel_mode = ChannelSelectionMode::Locked {
+                    channel,
+                    ht_mode: "HT20".to_string(),
+                };
+                locked = true;
+            }
+        }
+        if !locked {
+            if let Some(first) = s.settings.interfaces.first_mut() {
+                first.enabled = true;
+                first.channel_mode = ChannelSelectionMode::Locked {
+                    channel,
+                    ht_mode: "HT20".to_string(),
+                };
+                locked = true;
+            }
+        }
+        if !locked {
+            return respond_status(
+                &mut stream,
+                400,
+                "Bad Request",
+                "text/plain",
+                b"no interface configured",
+            );
+        }
+        s.settings.save_to_disk().ok();
+        push_log(
+            &mut s,
+            format!("locked selected interface to AP {} channel {}", bssid, channel),
+        );
+        if s.runtime.capture.is_some() {
+            if let Some(runtime) = s.runtime.capture.take() {
+                runtime.stop();
+            }
+            start_scans_if_needed(&mut s, &capture_tx, &bluetooth_tx);
+        }
         return respond_json(&mut stream, "{\"ok\":true}");
     }
 
@@ -261,6 +502,46 @@ fn handle_client(
         .with_context(|| format!("failed reading {}", file_path.display()))?;
     let mime = mime_for(&file_path);
     respond_status(&mut stream, 200, "OK", mime, &bytes)
+}
+
+fn start_scans_if_needed(
+    state: &mut WebState,
+    capture_tx: &Sender<CaptureEvent>,
+    bluetooth_tx: &Sender<BluetoothEvent>,
+) {
+    let wifi_enabled = state.settings.interfaces.iter().any(|i| i.enabled);
+    if wifi_enabled && state.runtime.capture.is_none() {
+        let config = CaptureConfig {
+            interfaces: state.settings.interfaces.clone(),
+            session_pcap_path: None,
+            wifi_packet_header_mode: state.settings.wifi_packet_header_mode,
+            wifi_frame_parsing_enabled: state.settings.enable_wifi_frame_parsing,
+            geoip_city_db_path: None,
+            gps_enabled: false,
+            passive_only: false,
+        };
+        state.runtime.capture = Some(capture::start_capture(config, capture_tx.clone()));
+        push_log(state, "Wi-Fi scanning started".to_string());
+    }
+
+    if state.settings.bluetooth_enabled && state.runtime.bluetooth.is_none() {
+        let cfg = BluetoothScanConfig {
+            controller: state.settings.bluetooth_controller.clone(),
+            source: state.settings.bluetooth_scan_source,
+            ubertooth_device: state.settings.ubertooth_device.clone(),
+            scan_timeout_secs: state.settings.bluetooth_scan_timeout_secs,
+            pause_ms: state.settings.bluetooth_scan_pause_ms,
+        };
+        state.runtime.bluetooth = Some(bluetooth::start_scan(cfg, bluetooth_tx.clone()));
+        push_log(state, "Bluetooth scanning started".to_string());
+    }
+}
+
+fn request_body_bytes(request: &[u8]) -> &[u8] {
+    let Some(header_end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return &[];
+    };
+    &request[(header_end + 4)..]
 }
 
 fn map_path(request_path: &str) -> PathBuf {

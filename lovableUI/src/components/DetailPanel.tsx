@@ -5,6 +5,7 @@ import RSSIMeter from "./RSSIMeter";
 interface DetailPanelProps {
   ap: AccessPointRecord | null;
   onNavigateToClients?: (apBssid: string) => void;
+  onLockToAp?: (apBssid: string) => void;
 }
 
 const PacketPieChart = ({ pm }: { pm: AccessPointRecord["packetMix"] }) => {
@@ -48,7 +49,7 @@ const formatBytes = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 };
 
-const DetailPanel = ({ ap, onNavigateToClients }: DetailPanelProps) => {
+const DetailPanel = ({ ap, onNavigateToClients, onLockToAp }: DetailPanelProps) => {
   if (!ap) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
@@ -65,6 +66,14 @@ const DetailPanel = ({ ap, onNavigateToClients }: DetailPanelProps) => {
         <h3 className="text-sm font-bold text-foreground">{ap.ssid ?? <span className="italic text-muted-foreground">Hidden Network</span>}</h3>
         <p className=" text-[10px] text-muted-foreground mt-0.5">{ap.bssid}</p>
         {ap.ouiManufacturer && <p className="text-[10px] text-muted-foreground mt-0.5">{ap.ouiManufacturer}</p>}
+        {onLockToAp && (
+          <button
+            className="mt-2 rounded-md border border-border bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground"
+            onClick={() => onLockToAp(ap.bssid)}
+          >
+            Lock To AP
+          </button>
+        )}
       </div>
 
       <RSSIMeter rssi={ap.rssiDbm ?? -100} />
