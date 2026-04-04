@@ -272,7 +272,7 @@ const Index = () => {
               fetch("/api/bluetooth/enumerate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ mac }),
+                body: JSON.stringify({ mac, confirm_active: true }),
               })
                 .then(async (res) => {
                   if (!res.ok) throw new Error(`HTTP ${res.status}`);

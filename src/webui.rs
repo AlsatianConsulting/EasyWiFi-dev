@@ -111,6 +111,7 @@ struct ApLockRequest {
 #[derive(Deserialize)]
 struct BluetoothEnumerateRequest {
     mac: String,
+    confirm_active: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -879,6 +880,15 @@ fn handle_client(
     if method == "POST" && path == "/api/bluetooth/enumerate" {
         let req = serde_json::from_slice::<BluetoothEnumerateRequest>(body)
             .context("invalid /api/bluetooth/enumerate payload")?;
+        if !req.confirm_active.unwrap_or(false) {
+            return respond_status(
+                &mut stream,
+                400,
+                "Bad Request",
+                "text/plain",
+                b"active bluetooth enumeration requires explicit confirmation",
+            );
+        }
         let mac = req.mac.trim().to_uppercase();
         if mac.is_empty() {
             return respond_status(&mut stream, 400, "Bad Request", "text/plain", b"missing mac");
