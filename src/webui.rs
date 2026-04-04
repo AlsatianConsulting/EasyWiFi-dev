@@ -1022,24 +1022,29 @@ fn start_scans_with_selection(
 
     if wifi_enabled && state.runtime.capture.is_none() {
         let discovered_ifaces = capture::list_interfaces().unwrap_or_default();
-        let discovered_names = discovered_ifaces
-            .iter()
-            .map(|iface| iface.name.clone())
-            .collect::<HashSet<_>>();
         let mut enabled_interfaces = state
             .settings
             .interfaces
             .iter()
             .filter(|i| i.enabled)
-            .filter(|i| discovered_names.contains(&i.interface_name))
             .cloned()
             .collect::<Vec<_>>();
+        let mut sysfs_candidates = fs::read_dir("/sys/class/net")
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.flatten())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.starts_with("wlx") || name.starts_with("wlan"))
+            .collect::<Vec<_>>();
+        sysfs_candidates.sort();
+        sysfs_candidates.dedup();
         if enabled_interfaces.is_empty() {
             let fallback_name = discovered_ifaces
                 .iter()
                 .find(|iface| iface.name.starts_with("wlx") || iface.name.starts_with("wlan"))
-                .or_else(|| discovered_ifaces.first())
-                .map(|iface| iface.name.clone());
+                .map(|iface| iface.name.clone())
+                .or_else(|| sysfs_candidates.first().cloned())
+                .or_else(|| discovered_ifaces.first().map(|iface| iface.name.clone()));
             if let Some(fallback_name) = fallback_name {
                 push_log(
                     state,
@@ -1075,7 +1080,9 @@ fn start_scans_with_selection(
             }
         }
         let mut prepared_interfaces = Vec::new();
+        let mut attempted_names = HashSet::<String>::new();
         for iface in enabled_interfaces {
+            attempted_names.insert(iface.interface_name.clone());
             match capture::prepare_interface_for_capture(iface.clone(), true) {
                 Ok(prepared) => {
                     for line in prepared.status_lines {
@@ -1096,6 +1103,76 @@ fn start_scans_with_selection(
                         state,
                         format!("failed to prepare {} for capture: {}", iface.interface_name, err),
                     );
+                }
+            }
+        }
+        if prepared_interfaces.is_empty() {
+            let mut fallback_candidates = discovered_ifaces
+                .iter()
+                .filter(|iface| iface.name.starts_with("wlx") || iface.name.starts_with("wlan"))
+                .map(|iface| iface.name.clone())
+                .collect::<Vec<_>>();
+            fallback_candidates.extend(sysfs_candidates.into_iter());
+            fallback_candidates.sort();
+            fallback_candidates.dedup();
+            let channel_mode_template = state
+                .settings
+                .interfaces
+                .iter()
+                .find(|iface| iface.enabled)
+                .map(|iface| iface.channel_mode.clone())
+                .unwrap_or_default();
+            for fallback_name in fallback_candidates {
+                if attempted_names.contains(&fallback_name) {
+                    continue;
+                }
+                let fallback_iface = InterfaceSettings {
+                    interface_name: fallback_name.clone(),
+                    monitor_interface_name: None,
+                    channel_mode: channel_mode_template.clone(),
+                    enabled: true,
+                };
+                match capture::prepare_interface_for_capture(fallback_iface.clone(), true) {
+                    Ok(prepared) => {
+                        push_log(
+                            state,
+                            format!("auto-selected Wi-Fi interface {}", fallback_name),
+                        );
+                        for line in prepared.status_lines {
+                            push_log(state, line);
+                        }
+                        for iface in &mut state.settings.interfaces {
+                            iface.enabled = iface.interface_name == fallback_name;
+                        }
+                        if !state
+                            .settings
+                            .interfaces
+                            .iter()
+                            .any(|iface| iface.interface_name == fallback_name)
+                        {
+                            state.settings.interfaces.push(InterfaceSettings {
+                                interface_name: fallback_name.clone(),
+                                monitor_interface_name: prepared
+                                    .interface
+                                    .monitor_interface_name
+                                    .clone(),
+                                channel_mode: prepared.interface.channel_mode.clone(),
+                                enabled: true,
+                            });
+                        }
+                        state.settings.save_to_disk().ok();
+                        prepared_interfaces.push(prepared.interface);
+                        break;
+                    }
+                    Err(err) => {
+                        push_log(
+                            state,
+                            format!(
+                                "fallback interface {} prepare failed: {}",
+                                fallback_name, err
+                            ),
+                        );
+                    }
                 }
             }
         }
