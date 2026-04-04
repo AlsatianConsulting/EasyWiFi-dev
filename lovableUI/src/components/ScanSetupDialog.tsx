@@ -98,12 +98,14 @@ const ScanSetupDialog = ({
   const [model, setModel] = useState<ScanSetupModel | null>(setup);
   const [caps, setCaps] = useState<InterfaceCapabilities>(defaultCapabilities);
   const [saving, setSaving] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [hopPreset, setHopPreset] = useState<"all" | "all_24" | "all_5" | "all_6" | "selected">("selected");
 
   useEffect(() => {
     if (open) {
       setSection(initialSection);
       setModel(setup);
+      setValidationError(null);
     }
   }, [open, initialSection, setup]);
 
@@ -209,7 +211,10 @@ const ScanSetupDialog = ({
               <span className="text-xs">Enable Wi-Fi Scan</span>
               <Switch
                 checked={model.wifi_enabled}
-                onCheckedChange={(v) => setModel((m) => (m ? { ...m, wifi_enabled: v } : m))}
+                onCheckedChange={(v) => {
+                  setValidationError(null);
+                  setModel((m) => (m ? { ...m, wifi_enabled: v } : m));
+                }}
               />
             </div>
             <div className="flex items-center justify-between">
@@ -483,7 +488,10 @@ const ScanSetupDialog = ({
               <span className="text-xs">Enable Bluetooth Scan</span>
               <Switch
                 checked={model.bluetooth_enabled}
-                onCheckedChange={(v) => setModel((m) => (m ? { ...m, bluetooth_enabled: v } : m))}
+                onCheckedChange={(v) => {
+                  setValidationError(null);
+                  setModel((m) => (m ? { ...m, bluetooth_enabled: v } : m));
+                }}
               />
             </div>
             <div className="flex items-center justify-between">
@@ -534,6 +542,11 @@ const ScanSetupDialog = ({
         )}
 
         <div className="mt-4 flex justify-end gap-2">
+          {validationError && (
+            <div className="mr-auto self-center text-xs text-destructive">
+              {validationError}
+            </div>
+          )}
           <button
             className="rounded border border-border px-2 py-1 text-xs"
             onClick={() => onOpenChange(false)}
@@ -544,6 +557,11 @@ const ScanSetupDialog = ({
             className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-60"
             disabled={saving}
             onClick={async () => {
+              if (!model.wifi_enabled && !model.bluetooth_enabled) {
+                setValidationError("Enable Wi-Fi and/or Bluetooth before starting scan.");
+                return;
+              }
+              setValidationError(null);
               setSaving(true);
               try {
                 const normalizedChannelModes =
@@ -563,14 +581,6 @@ const ScanSetupDialog = ({
                     : {};
                 await onApply({
                   ...model,
-                  wifi_enabled:
-                    section === "bluetooth"
-                      ? (setup?.wifi_enabled ?? model.wifi_enabled)
-                      : model.wifi_enabled,
-                  bluetooth_enabled:
-                    section === "wifi"
-                      ? (setup?.bluetooth_enabled ?? model.bluetooth_enabled)
-                      : model.bluetooth_enabled,
                   wifi_bandwidths:
                     model.mode === "hop_specific" && hopPreset !== "selected"
                       ? []

@@ -999,6 +999,20 @@ fn start_scans_with_selection(
     wifi_enabled: bool,
     bluetooth_enabled: bool,
 ) {
+    if !wifi_enabled && !bluetooth_enabled {
+        if state.runtime.capture.is_some() {
+            stop_wifi_capture(state);
+        }
+        if state.runtime.bluetooth.is_some() {
+            stop_bluetooth_scan(state);
+        }
+        push_log(
+            state,
+            "No scan radios enabled. Enable Wi-Fi and/or Bluetooth in Scan Setup.".to_string(),
+        );
+        return;
+    }
+
     // Starting a new scan should begin from a clean live-state snapshot.
     let starting_fresh = state.runtime.capture.is_none() && state.runtime.bluetooth.is_none();
     if starting_fresh && (wifi_enabled || bluetooth_enabled) {
@@ -1052,19 +1066,20 @@ fn start_scans_with_selection(
                 state,
                 "Wi-Fi scanning not started; no interfaces were successfully prepared".to_string(),
             );
-            return;
         }
-        let config = CaptureConfig {
-            interfaces: prepared_interfaces,
-            session_pcap_path: None,
-            wifi_packet_header_mode: state.settings.wifi_packet_header_mode,
-            wifi_frame_parsing_enabled: state.settings.enable_wifi_frame_parsing,
-            geoip_city_db_path: None,
-            gps_enabled: false,
-            passive_only: false,
-        };
-        state.runtime.capture = Some(capture::start_capture(config, capture_tx.clone()));
-        push_log(state, "Wi-Fi scanning started".to_string());
+        if !prepared_interfaces.is_empty() {
+            let config = CaptureConfig {
+                interfaces: prepared_interfaces,
+                session_pcap_path: None,
+                wifi_packet_header_mode: state.settings.wifi_packet_header_mode,
+                wifi_frame_parsing_enabled: state.settings.enable_wifi_frame_parsing,
+                geoip_city_db_path: None,
+                gps_enabled: false,
+                passive_only: false,
+            };
+            state.runtime.capture = Some(capture::start_capture(config, capture_tx.clone()));
+            push_log(state, "Wi-Fi scanning started".to_string());
+        }
     } else if !wifi_enabled && state.runtime.capture.is_some() {
         stop_wifi_capture(state);
     }
