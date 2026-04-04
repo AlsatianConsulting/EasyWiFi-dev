@@ -88,6 +88,8 @@ struct ScanHit {
     mac: String,
     name: Option<String>,
     rssi_dbm: Option<i32>,
+    uuids: Vec<String>,
+    mfgr_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1208,6 +1210,40 @@ fn run_scan_loop(
                 if hit.rssi_dbm.is_some() {
                     record.rssi_dbm = hit.rssi_dbm;
                 }
+                for uuid in &hit.uuids {
+                    let normalized_uuid = normalize_assigned_uuid(uuid);
+                    if normalized_uuid.is_empty() {
+                        continue;
+                    }
+                    if !record
+                        .uuids
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(&normalized_uuid))
+                    {
+                        record.uuids.push(normalized_uuid.clone());
+                    }
+                    if let Some(name) = resolver.uuid_name(&normalized_uuid) {
+                        if !record.uuid_names.iter().any(|existing| existing == &name) {
+                            record.uuid_names.push(name);
+                        }
+                    }
+                }
+                for mfgr_id in &hit.mfgr_ids {
+                    if !record
+                        .mfgr_ids
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(mfgr_id))
+                    {
+                        record.mfgr_ids.push(mfgr_id.clone());
+                    }
+                    if let Some(id) = parse_company_id(mfgr_id) {
+                        if let Some(name) = resolver.company_name(id) {
+                            if !record.mfgr_names.iter().any(|existing| existing == &name) {
+                                record.mfgr_names.push(name);
+                            }
+                        }
+                    }
+                }
                 if record.transport == "Unknown" {
                     record.transport = if is_ble_only {
                         "BLE".to_string()
@@ -1531,6 +1567,8 @@ fn parse_scan_output(text: &str) -> Vec<ScanHit> {
             mac: mac.clone(),
             name: None,
             rssi_dbm: None,
+            uuids: Vec::new(),
+            mfgr_ids: Vec::new(),
         });
 
         if let Some(rssi_caps) = rssi_paren_re.captures(&rest) {
@@ -1546,6 +1584,50 @@ fn parse_scan_output(text: &str) -> Vec<ScanHit> {
                 .get(1)
                 .and_then(|m| m.as_str().parse::<i32>().ok())
                 .map(|rssi| rssi.clamp(-127, 20));
+            continue;
+        }
+
+        if let Some(value) = rest.strip_prefix("UUID:").or_else(|| rest.strip_prefix("UUIDs:")) {
+            if let Some((_, parsed_uuid)) = parse_uuid_line(value.trim()) {
+                let normalized = normalize_assigned_uuid(&parsed_uuid);
+                if normalized_assigned_uuid_like(&normalized)
+                    && !entry
+                        .uuids
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(&normalized))
+                {
+                    entry.uuids.push(normalized);
+                }
+            }
+            continue;
+        }
+
+        if let Some(value) = rest.strip_prefix("ServiceData Key:") {
+            if let Some((_, parsed_uuid)) = parse_uuid_line(value.trim()) {
+                let normalized = normalize_assigned_uuid(&parsed_uuid);
+                if normalized_assigned_uuid_like(&normalized)
+                    && !entry
+                        .uuids
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(&normalized))
+                {
+                    entry.uuids.push(normalized);
+                }
+            }
+            continue;
+        }
+
+        if let Some(value) = rest.strip_prefix("ManufacturerData Key:") {
+            if let Some(id) = parse_company_id(value.trim()) {
+                let id_label = format!("0x{id:04X}");
+                if !entry
+                    .mfgr_ids
+                    .iter()
+                    .any(|existing| existing.eq_ignore_ascii_case(&id_label))
+                {
+                    entry.mfgr_ids.push(id_label);
+                }
+            }
             continue;
         }
 
@@ -1590,6 +1672,8 @@ fn parse_ubertooth_output(text: &str) -> Vec<ScanHit> {
             mac: mac.clone(),
             name: None,
             rssi_dbm: None,
+            uuids: Vec::new(),
+            mfgr_ids: Vec::new(),
         });
 
         if let Some(caps) = rssi_re.captures(&line) {
@@ -3612,6 +3696,28 @@ mod tests {
         let hits = parse_scan_output(raw);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name, None);
+    }
+
+    #[test]
+    fn parse_scan_output_extracts_uuid_and_manufacturer_fields() {
+        let raw = "\
+[CHG] Device AA:BB:CC:DD:EE:FF UUIDs: Generic Access (00001800-0000-1000-8000-00805f9b34fb)\n\
+[CHG] Device AA:BB:CC:DD:EE:FF ServiceData Key: 0000181c-0000-1000-8000-00805f9b34fb\n\
+[CHG] Device AA:BB:CC:DD:EE:FF ManufacturerData Key: 0x004C\n";
+        let hits = parse_scan_output(raw);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0]
+            .uuids
+            .iter()
+            .any(|uuid| uuid == "00001800-0000-1000-8000-00805f9b34fb"));
+        assert!(hits[0]
+            .uuids
+            .iter()
+            .any(|uuid| uuid == "0000181c-0000-1000-8000-00805f9b34fb"));
+        assert!(hits[0]
+            .mfgr_ids
+            .iter()
+            .any(|id| id.eq_ignore_ascii_case("0x004C")));
     }
 
     #[test]
