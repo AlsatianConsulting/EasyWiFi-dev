@@ -242,6 +242,11 @@ fn spawn_event_pump(
 fn apply_capture_event(state: &mut WebState, event: CaptureEvent) {
     match event {
         CaptureEvent::AccessPointSeen(ap) => {
+            // Do not promote channel-less/frequency-less AP observations into the AP table.
+            // These are usually partial frames and appear as phantom BSSIDs in the UI.
+            if ap.channel.is_none() && ap.frequency_mhz.is_none() {
+                return;
+            }
             state.access_points.insert(ap.bssid.clone(), ap);
         }
         CaptureEvent::ClientSeen(client) => {
@@ -318,7 +323,12 @@ fn handle_client(
     if method == "GET" && path == "/api/state" {
         let payload = {
             let s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
-            let mut aps = s.access_points.values().cloned().collect::<Vec<_>>();
+            let mut aps = s
+                .access_points
+                .values()
+                .filter(|ap| ap.channel.is_some() || ap.frequency_mhz.is_some())
+                .cloned()
+                .collect::<Vec<_>>();
             aps.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
             let mut clients = s.clients.values().cloned().collect::<Vec<_>>();
             clients.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
