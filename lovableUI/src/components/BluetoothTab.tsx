@@ -101,9 +101,11 @@ const BluetoothTab = ({ devices, selectedDevice, onSelectDevice, visibleColumns,
   }, [devices, sortKey, sortDir, columnFilters]);
 
   const columnByKey = new Map(allColumns.map((c) => [c.key, c]));
-  const cols = visibleColumns
+  const colsRaw = visibleColumns
     .map((key) => columnByKey.get(key))
     .filter((c): c is (typeof allColumns)[number] => Boolean(c));
+  const cols = colsRaw.length > 0 ? colsRaw : allColumns;
+  const activeKeys = new Set(cols.map((c) => c.key));
   const chooserOrder = [
     ...visibleColumns,
     ...allColumns.map((c) => c.key).filter((key) => !visibleColumns.includes(key)),
@@ -202,20 +204,20 @@ const BluetoothTab = ({ devices, selectedDevice, onSelectDevice, visibleColumns,
                 className={`cursor-pointer border-b border-border/50 transition-colors ${
                   selectedDevice?.mac === device.mac ? "bg-primary/10 border-l-2 border-l-primary" : "hover:bg-secondary/50"
                 }`}>
-                {visibleColumns.includes("name") && (
+                {activeKeys.has("name") && (
                   <td className="px-3 py-2 font-medium flex items-center gap-1.5">
                     <Bluetooth className="h-3 w-3 text-primary" />
                     {device.advertisedName ?? <span className="text-muted-foreground italic">Unknown</span>}
                   </td>
                 )}
-                {visibleColumns.includes("mac") && <td className="px-3 py-2  text-muted-foreground">{device.mac}</td>}
-                {visibleColumns.includes("oui") && <td className="px-3 py-2 text-muted-foreground truncate max-w-[100px]">{device.ouiManufacturer ?? "—"}</td>}
-                {visibleColumns.includes("rssi") && <td className="text-center px-3 py-2 ">{device.rssiDbm ?? "—"}</td>}
-                {visibleColumns.includes("mfgrIds") && <td className="px-3 py-2  text-[10px] text-muted-foreground truncate max-w-[100px]">{device.mfgrIds.join(", ") || "—"}</td>}
-                {visibleColumns.includes("firstSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{device.firstSeen}</td>}
-                {visibleColumns.includes("lastSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{device.lastSeen}</td>}
-                {visibleColumns.includes("mfgrNames") && <td className="px-3 py-2 text-[10px] text-muted-foreground truncate max-w-[120px]">{device.mfgrNames.join(", ") || "—"}</td>}
-                {visibleColumns.includes("uuids") && <td className="px-3 py-2 text-[10px] text-muted-foreground truncate max-w-[140px]">{device.uuidNames.join(", ") || "—"}</td>}
+                {activeKeys.has("mac") && <td className="px-3 py-2  text-muted-foreground">{device.mac}</td>}
+                {activeKeys.has("oui") && <td className="px-3 py-2 text-muted-foreground truncate max-w-[100px]">{device.ouiManufacturer ?? "—"}</td>}
+                {activeKeys.has("rssi") && <td className="text-center px-3 py-2 ">{device.rssiDbm ?? "—"}</td>}
+                {activeKeys.has("mfgrIds") && <td className="px-3 py-2  text-[10px] text-muted-foreground truncate max-w-[100px]">{device.mfgrIds.join(", ") || "—"}</td>}
+                {activeKeys.has("firstSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{device.firstSeen}</td>}
+                {activeKeys.has("lastSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{device.lastSeen}</td>}
+                {activeKeys.has("mfgrNames") && <td className="px-3 py-2 text-[10px] text-muted-foreground truncate max-w-[120px]">{device.mfgrNames.join(", ") || "—"}</td>}
+                {activeKeys.has("uuids") && <td className="px-3 py-2 text-[10px] text-muted-foreground truncate max-w-[140px]">{device.uuidNames.join(", ") || "—"}</td>}
               </tr>
             ))}
           </tbody>

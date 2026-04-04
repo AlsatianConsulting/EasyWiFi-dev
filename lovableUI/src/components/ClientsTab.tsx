@@ -131,9 +131,11 @@ const ClientsTab = ({ clients, selectedClient, onSelectClient, visibleColumns, o
   }, [clients, filter, sortKey, sortDir, columnFilters, apFilter]);
 
   const columnByKey = new Map(allColumns.map((c) => [c.key, c]));
-  const cols = visibleColumns
+  const colsRaw = visibleColumns
     .map((key) => columnByKey.get(key))
     .filter((c): c is (typeof allColumns)[number] => Boolean(c));
+  const cols = colsRaw.length > 0 ? colsRaw : allColumns;
+  const activeKeys = new Set(cols.map((c) => c.key));
   const chooserOrder = [
     ...visibleColumns,
     ...allColumns.map((c) => c.key).filter((key) => !visibleColumns.includes(key)),
@@ -245,15 +247,15 @@ const ClientsTab = ({ clients, selectedClient, onSelectClient, visibleColumns, o
             {sorted.map((client) => (
               <tr key={client.mac} onClick={() => onSelectClient(client)}
                 className={`cursor-pointer border-b border-border/50 transition-colors ${selectedClient?.mac === client.mac ? "bg-primary/10 border-l-2 border-l-primary" : "hover:bg-secondary/50"}`}>
-                {visibleColumns.includes("mac") && <td className="px-3 py-2  text-muted-foreground">{client.mac}</td>}
-                {visibleColumns.includes("oui") && <td className="px-3 py-2 text-muted-foreground truncate max-w-[100px]">{client.ouiManufacturer ?? "—"}</td>}
-                {visibleColumns.includes("associatedAp") && <td className="px-3 py-2  text-[10px]">{client.associatedAp ?? <span className="text-muted-foreground">—</span>}</td>}
-                {visibleColumns.includes("rssi") && <td className="text-center px-3 py-2 ">{client.rssiDbm ?? "—"}</td>}
-                {visibleColumns.includes("wps") && <td className="text-center px-3 py-2">{client.wps ? "Yes" : "—"}</td>}
-                {visibleColumns.includes("probes") && <td className="px-3 py-2 text-[10px] text-muted-foreground truncate max-w-[150px]">{client.probes.filter(Boolean).join(", ") || "—"}</td>}
-                {visibleColumns.includes("firstSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{client.firstSeen}</td>}
-                {visibleColumns.includes("lastSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{client.lastSeen}</td>}
-                {visibleColumns.includes("data") && <td className="text-center px-3 py-2 ">{formatBytes(client.dataTransferredBytes)}</td>}
+                {activeKeys.has("mac") && <td className="px-3 py-2  text-muted-foreground">{client.mac}</td>}
+                {activeKeys.has("oui") && <td className="px-3 py-2 text-muted-foreground truncate max-w-[100px]">{client.ouiManufacturer ?? "—"}</td>}
+                {activeKeys.has("associatedAp") && <td className="px-3 py-2  text-[10px]">{client.associatedAp ?? <span className="text-muted-foreground">—</span>}</td>}
+                {activeKeys.has("rssi") && <td className="text-center px-3 py-2 ">{client.rssiDbm ?? "—"}</td>}
+                {activeKeys.has("wps") && <td className="text-center px-3 py-2">{client.wps ? "Yes" : "—"}</td>}
+                {activeKeys.has("probes") && <td className="px-3 py-2 text-[10px] text-muted-foreground truncate max-w-[150px]">{client.probes.filter(Boolean).join(", ") || "—"}</td>}
+                {activeKeys.has("firstSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{client.firstSeen}</td>}
+                {activeKeys.has("lastSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{client.lastSeen}</td>}
+                {activeKeys.has("data") && <td className="text-center px-3 py-2 ">{formatBytes(client.dataTransferredBytes)}</td>}
               </tr>
             ))}
           </tbody>

@@ -24,6 +24,15 @@ import {
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 
 const STORAGE_KEY = "easywifi-columns";
+const VALID_AP_COLUMNS = new Set([
+  "ssid","bssid","oui","channel","encryption","rssi","wps","clients","firstSeen","lastSeen","handshakes",
+]);
+const VALID_CLIENT_COLUMNS = new Set([
+  "mac","oui","associatedAp","rssi","wps","probes","firstSeen","lastSeen","data",
+]);
+const VALID_BT_COLUMNS = new Set([
+  "name","mac","oui","rssi","mfgrIds","firstSeen","lastSeen","mfgrNames","uuids",
+]);
 
 interface MetaInterface {
   name: string;
@@ -52,15 +61,26 @@ interface BtEnumerationStatus {
 }
 
 const loadColumns = (): { ap: string[]; client: string[]; bt: string[] } => {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch {}
-  return {
+  const defaults = {
     ap: ["ssid", "bssid", "oui", "channel", "encryption", "rssi", "wps", "clients", "firstSeen", "lastSeen", "handshakes"],
     client: ["mac", "oui", "associatedAp", "rssi", "wps", "probes", "firstSeen", "lastSeen", "data"],
     bt: ["name", "mac", "oui", "rssi", "mfgrIds", "firstSeen", "lastSeen", "mfgrNames", "uuids"],
   };
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved) as { ap?: string[]; client?: string[]; bt?: string[] };
+      const ap = (parsed.ap || []).filter((k) => VALID_AP_COLUMNS.has(k));
+      const client = (parsed.client || []).filter((k) => VALID_CLIENT_COLUMNS.has(k));
+      const bt = (parsed.bt || []).filter((k) => VALID_BT_COLUMNS.has(k));
+      return {
+        ap: ap.length ? ap : defaults.ap,
+        client: client.length ? client : defaults.client,
+        bt: bt.length ? bt : defaults.bt,
+      };
+    }
+  } catch {}
+  return defaults;
 };
 
 const Index = () => {

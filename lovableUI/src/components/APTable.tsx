@@ -82,9 +82,11 @@ const APTable = ({ accessPoints, selectedAP, onSelectAP, visibleColumns, onVisib
   };
 
   const columnByKey = new Map(allColumns.map((c) => [c.key, c]));
-  const cols = visibleColumns
+  const colsRaw = visibleColumns
     .map((key) => columnByKey.get(key))
     .filter((c): c is (typeof allColumns)[number] => Boolean(c));
+  const cols = colsRaw.length > 0 ? colsRaw : allColumns;
+  const activeKeys = new Set(cols.map((c) => c.key));
   const chooserOrder = [
     ...visibleColumns,
     ...allColumns.map((c) => c.key).filter((key) => !visibleColumns.includes(key)),
@@ -211,17 +213,17 @@ const APTable = ({ accessPoints, selectedAP, onSelectAP, visibleColumns, onVisib
                     : "hover:bg-secondary/50"
                 }`}
               >
-                {visibleColumns.includes("ssid") && <td className="px-3 py-2 font-medium text-foreground">{ap.ssid ?? <span className="text-muted-foreground italic">Hidden</span>}</td>}
-                {visibleColumns.includes("bssid") && <td className="px-3 py-2  text-muted-foreground">{ap.bssid}</td>}
-                {visibleColumns.includes("oui") && <td className="px-3 py-2 text-muted-foreground truncate max-w-[120px]">{ap.ouiManufacturer ?? "—"}</td>}
-                {visibleColumns.includes("channel") && <td className="text-center px-3 py-2 ">{ap.channel ?? "—"}</td>}
-                {visibleColumns.includes("encryption") && <td className="text-center px-3 py-2 ">{ap.encryptionShort}</td>}
-                {visibleColumns.includes("rssi") && <td className="text-center px-3 py-2 ">{ap.rssiDbm ?? "—"}</td>}
-                {visibleColumns.includes("wps") && <td className="text-center px-3 py-2">{ap.wps ? "Yes" : "—"}</td>}
-                {visibleColumns.includes("clients") && <td className="text-center px-3 py-2 ">{ap.numberOfClients}</td>}
-                {visibleColumns.includes("firstSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{ap.firstSeen}</td>}
-                {visibleColumns.includes("lastSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{ap.lastSeen}</td>}
-                {visibleColumns.includes("handshakes") && <td className="text-center px-3 py-2 ">{ap.handshakeCount}</td>}
+                {activeKeys.has("ssid") && <td className="px-3 py-2 font-medium text-foreground">{ap.ssid ?? <span className="text-muted-foreground italic">Hidden</span>}</td>}
+                {activeKeys.has("bssid") && <td className="px-3 py-2  text-muted-foreground">{ap.bssid}</td>}
+                {activeKeys.has("oui") && <td className="px-3 py-2 text-muted-foreground truncate max-w-[120px]">{ap.ouiManufacturer ?? "—"}</td>}
+                {activeKeys.has("channel") && <td className="text-center px-3 py-2 ">{ap.channel ?? "—"}</td>}
+                {activeKeys.has("encryption") && <td className="text-center px-3 py-2 ">{ap.encryptionShort}</td>}
+                {activeKeys.has("rssi") && <td className="text-center px-3 py-2 ">{ap.rssiDbm ?? "—"}</td>}
+                {activeKeys.has("wps") && <td className="text-center px-3 py-2">{ap.wps ? "Yes" : "—"}</td>}
+                {activeKeys.has("clients") && <td className="text-center px-3 py-2 ">{ap.numberOfClients}</td>}
+                {activeKeys.has("firstSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{ap.firstSeen}</td>}
+                {activeKeys.has("lastSeen") && <td className="text-center px-3 py-2  text-muted-foreground">{ap.lastSeen}</td>}
+                {activeKeys.has("handshakes") && <td className="text-center px-3 py-2 ">{ap.handshakeCount}</td>}
               </tr>
             ))}
           </tbody>
