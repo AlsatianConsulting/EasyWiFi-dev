@@ -44,6 +44,7 @@ struct BtEnumerationStatus {
 struct StateResponse {
     scanning_wifi: bool,
     scanning_bluetooth: bool,
+    current_hop_channel: Option<u16>,
     access_points: Vec<AccessPointRecord>,
     clients: Vec<ClientRecord>,
     bluetooth_devices: Vec<BluetoothDeviceRecord>,
@@ -323,6 +324,21 @@ fn handle_client(
     if method == "GET" && path == "/api/state" {
         let payload = {
             let s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
+            let scanning_wifi = s.runtime.capture.is_some();
+            let scanning_bluetooth = s.runtime.bluetooth.is_some();
+            let selected_interface = s
+                .settings
+                .interfaces
+                .iter()
+                .find(|iface| iface.enabled)
+                .map(|iface| iface.interface_name.clone());
+            let current_hop_channel = if scanning_wifi {
+                selected_interface
+                    .as_deref()
+                    .and_then(capture::current_channel)
+            } else {
+                None
+            };
             let mut aps = s
                 .access_points
                 .values()
@@ -336,8 +352,9 @@ fn handle_client(
             bt.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
 
             StateResponse {
-                scanning_wifi: s.runtime.capture.is_some(),
-                scanning_bluetooth: s.runtime.bluetooth.is_some(),
+                scanning_wifi,
+                scanning_bluetooth,
+                current_hop_channel,
                 access_points: aps,
                 clients,
                 bluetooth_devices: bt,

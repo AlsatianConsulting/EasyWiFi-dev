@@ -4,6 +4,8 @@ interface HeaderBarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
   scanning: boolean;
+  scanningWifi: boolean;
+  currentHopChannel: number | null;
   onToggleScan: () => void;
   apCount: number;
   clientCount: number;
@@ -20,6 +22,8 @@ const HeaderBar = ({
   activeTab,
   onTabChange,
   scanning,
+  scanningWifi,
+  currentHopChannel,
   onToggleScan,
   apCount,
   clientCount,
@@ -56,6 +60,9 @@ const HeaderBar = ({
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground md:gap-4 md:text-xs">
           <span>APs: <span className=" text-foreground">{apCount}</span></span>
           <span>Clients: <span className=" text-foreground">{clientCount}</span></span>
+          <span>
+            Hop: <span className=" text-foreground">{scanningWifi ? (currentHopChannel ?? "—") : "—"}</span>
+          </span>
         </div>
 
         <button

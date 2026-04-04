@@ -178,6 +178,46 @@ const ScanSetupDialog = ({
   const lockChannel = model?.locked_channel ?? bandChannels[0] ?? sortedChannels[0] ?? 1;
   const lockAllowedModes = useMemo(() => modesForChannel(caps.ht_modes, lockChannel), [caps.ht_modes, lockChannel]);
   if (!model) return null;
+  const handleSaveAndStart = async () => {
+    if (!model.wifi_enabled && !model.bluetooth_enabled) {
+      setValidationError("Enable Wi-Fi and/or Bluetooth before starting scan.");
+      return;
+    }
+    setValidationError(null);
+    setSaving(true);
+    try {
+      const normalizedChannelModes =
+        model.mode === "hop_specific"
+          ? Object.fromEntries(
+              effectiveHopChannels.map((ch) => [
+                String(ch),
+                (
+                  model.channel_ht_modes?.[String(ch)]?.length
+                    ? model.channel_ht_modes?.[String(ch)]
+                    : hopPreset === "selected"
+                      ? model.wifi_bandwidths
+                      : ["HT20"]
+                ).filter((mode) => Boolean(mode) && modeAllowedForChannel(mode, ch)),
+              ]),
+            )
+          : {};
+      await onApply({
+        ...model,
+        wifi_bandwidths:
+          model.mode === "hop_specific" && hopPreset !== "selected"
+            ? []
+            : model.wifi_bandwidths,
+        hop_channels:
+          model.mode === "hop_specific"
+            ? [...effectiveHopChannels]
+            : model.hop_channels,
+        channel_ht_modes: normalizedChannelModes,
+      });
+      onOpenChange(false);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -202,6 +242,29 @@ const ScanSetupDialog = ({
             onClick={() => setSection("bluetooth")}
           >
             Bluetooth
+          </button>
+        </div>
+
+        <div className="mt-3 flex justify-end gap-2">
+          {validationError && (
+            <div className="mr-auto self-center text-xs text-destructive">
+              {validationError}
+            </div>
+          )}
+          <button
+            className="rounded border border-border px-2 py-1 text-xs"
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </button>
+          <button
+            className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-60"
+            disabled={saving}
+            onClick={() => {
+              void handleSaveAndStart();
+            }}
+          >
+            {saving ? "Starting..." : "Save & Start"}
           </button>
         </div>
 
@@ -541,65 +604,6 @@ const ScanSetupDialog = ({
           </div>
         )}
 
-        <div className="mt-4 flex justify-end gap-2">
-          {validationError && (
-            <div className="mr-auto self-center text-xs text-destructive">
-              {validationError}
-            </div>
-          )}
-          <button
-            className="rounded border border-border px-2 py-1 text-xs"
-            onClick={() => onOpenChange(false)}
-          >
-            Cancel
-          </button>
-          <button
-            className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-60"
-            disabled={saving}
-            onClick={async () => {
-              if (!model.wifi_enabled && !model.bluetooth_enabled) {
-                setValidationError("Enable Wi-Fi and/or Bluetooth before starting scan.");
-                return;
-              }
-              setValidationError(null);
-              setSaving(true);
-              try {
-                const normalizedChannelModes =
-                  model.mode === "hop_specific"
-                    ? Object.fromEntries(
-                        effectiveHopChannels.map((ch) => [
-                          String(ch),
-                          (
-                            model.channel_ht_modes?.[String(ch)]?.length
-                              ? model.channel_ht_modes?.[String(ch)]
-                              : hopPreset === "selected"
-                                ? model.wifi_bandwidths
-                                : ["HT20"]
-                          ).filter((mode) => Boolean(mode) && modeAllowedForChannel(mode, ch)),
-                        ]),
-                      )
-                    : {};
-                await onApply({
-                  ...model,
-                  wifi_bandwidths:
-                    model.mode === "hop_specific" && hopPreset !== "selected"
-                      ? []
-                      : model.wifi_bandwidths,
-                  hop_channels:
-                    model.mode === "hop_specific"
-                      ? [...effectiveHopChannels]
-                      : model.hop_channels,
-                  channel_ht_modes: normalizedChannelModes,
-                });
-                onOpenChange(false);
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            {saving ? "Starting..." : "Save & Start"}
-          </button>
-        </div>
       </DialogContent>
     </Dialog>
   );

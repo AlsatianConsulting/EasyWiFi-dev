@@ -991,6 +991,29 @@ pub fn set_channel(interface: &str, channel: u16) -> Result<()> {
     set_channel_with_ht(interface, channel, "HT20")
 }
 
+pub fn current_channel(interface: &str) -> Option<u16> {
+    let output = iw_command()
+        .arg("dev")
+        .arg(interface)
+        .arg("info")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("channel ") {
+            let token = rest.split_whitespace().next().unwrap_or_default();
+            if let Ok(channel) = token.parse::<u16>() {
+                return Some(channel);
+            }
+        }
+    }
+    None
+}
+
 pub fn set_interface_type(interface: &str, if_type: &str) -> Result<()> {
     if is_effective_root() {
         return set_interface_type_direct(interface, if_type);

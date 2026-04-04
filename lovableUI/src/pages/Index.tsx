@@ -140,10 +140,13 @@ const Index = () => {
       setScanningBluetooth(Boolean(body.scanning_bluetooth));
       const usage = Array.isArray(body.channel_usage) ? body.channel_usage : [];
       const lastUsage = usage.length > 0 ? usage[usage.length - 1] : null;
-      const chan =
+      const chanFromState =
+        typeof body.current_hop_channel === "number" ? body.current_hop_channel : null;
+      const chanFromUsage =
         lastUsage && typeof (lastUsage as { channel?: unknown }).channel === "number"
           ? ((lastUsage as { channel: number }).channel ?? null)
           : null;
+      const chan = chanFromState ?? chanFromUsage;
       setCurrentHopChannel(chan);
       setBtEnumerationStatus(body.bt_enumeration_status ?? {});
       setApiError(null);
@@ -349,6 +352,8 @@ const Index = () => {
         activeTab={activeTab}
         onTabChange={(tab) => { setActiveTab(tab); if (tab !== "clients") setApFilter(null); }}
         scanning={scanning}
+        scanningWifi={scanningWifi}
+        currentHopChannel={currentHopChannel}
         onToggleScan={() => {
           if (scanning) {
             postScan("/api/scan/stop").catch((err) => {

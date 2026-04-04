@@ -9,6 +9,7 @@ import {
 export interface LiveStateResponse {
   scanning_wifi: boolean;
   scanning_bluetooth: boolean;
+  current_hop_channel?: number | null;
   access_points: unknown[];
   clients: unknown[];
   bluetooth_devices: unknown[];
