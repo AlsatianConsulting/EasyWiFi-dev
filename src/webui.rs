@@ -243,9 +243,11 @@ fn spawn_event_pump(
 fn apply_capture_event(state: &mut WebState, event: CaptureEvent) {
     match event {
         CaptureEvent::AccessPointSeen(ap) => {
-            // Do not promote channel-less/frequency-less AP observations into the AP table.
-            // These are usually partial frames and appear as phantom BSSIDs in the UI.
-            if ap.channel.is_none() && ap.frequency_mhz.is_none() {
+            // Suppress only low-confidence phantom AP rows; keep meaningful no-channel APs.
+            if ap.channel.is_none()
+                && ap.frequency_mhz.is_none()
+                && !ap_has_meaningful_identity(&ap)
+            {
                 return;
             }
             state.access_points.insert(ap.bssid.clone(), ap);
@@ -268,6 +270,19 @@ fn apply_capture_event(state: &mut WebState, event: CaptureEvent) {
         }
         CaptureEvent::Log(line) => push_log(state, line),
     }
+}
+
+fn ap_has_meaningful_identity(ap: &AccessPointRecord) -> bool {
+    let has_named_ssid = ap
+        .ssid
+        .as_deref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    let has_wps = ap.wps.is_some();
+    let has_encryption = !(ap.encryption_short.eq_ignore_ascii_case("unknown")
+        && ap.encryption_full.eq_ignore_ascii_case("unknown"));
+    let has_management = ap.packet_mix.management > 0;
+    has_named_ssid || has_wps || has_encryption || has_management
 }
 
 fn apply_bluetooth_event(state: &mut WebState, event: BluetoothEvent) {
@@ -342,7 +357,9 @@ fn handle_client(
             let mut aps = s
                 .access_points
                 .values()
-                .filter(|ap| ap.channel.is_some() || ap.frequency_mhz.is_some())
+                .filter(|ap| {
+                    ap.channel.is_some() || ap.frequency_mhz.is_some() || ap_has_meaningful_identity(ap)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             aps.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
