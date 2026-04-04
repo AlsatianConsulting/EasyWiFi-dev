@@ -50,6 +50,19 @@ const formatBytes = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 };
 
+const formatUptime = (seconds: number | null): string => {
+  if (seconds === null || seconds <= 0) return "—";
+  const total = Math.floor(seconds);
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (d > 0) return `${d}d ${h}h ${m}m ${s}s`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+};
+
 const DetailPanel = ({ ap, onNavigateToClients, onLockToAp, actionStatus }: DetailPanelProps) => {
   if (!ap) {
     return (
@@ -96,7 +109,8 @@ const DetailPanel = ({ ap, onNavigateToClients, onLockToAp, actionStatus }: Deta
           { label: "First Seen", value: ap.firstSeen },
           { label: "Last Seen", value: ap.lastSeen },
           { label: "Handshakes", value: ap.handshakeCount },
-          { label: "Beacons", value: ap.uptimeBeacons?.toLocaleString() ?? "—" },
+          { label: "Uptime", value: formatUptime(ap.uptimeBeacons) },
+          { label: "Uptime (s)", value: ap.uptimeBeacons?.toLocaleString() ?? "—" },
           { label: "Country", value: ap.countryCode80211d ?? "—" },
           { label: "Total Packets", value: totalPackets.toLocaleString() },
           { label: "Source Adapters", value: ap.sourceAdapters.join(", ") || "—" },

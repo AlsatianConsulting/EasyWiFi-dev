@@ -1402,6 +1402,8 @@ fn run_interface_capture(
     let supports_wps_model_name_field = tshark_supports_field("wps.model_name");
     let supports_wps_model_number_field = tshark_supports_field("wps.model_number");
     let supports_wps_serial_number_field = tshark_supports_field("wps.serial_number");
+    let supports_wps_device_name_field = tshark_supports_field("wps.device_name");
+    let supports_wps_ssid_field = tshark_supports_field("wps.ssid");
     let supports_radiotap_rssi_field = tshark_supports_field("radiotap.dbm_antsignal");
     let supports_ppi_rssi_field = tshark_supports_field("ppi.dbm_antsignal");
     if !supports_radiotap_rssi_field && !supports_ppi_rssi_field {
@@ -1440,6 +1442,8 @@ fn run_interface_capture(
         has_wps_model_name_field: supports_wps_model_name_field,
         has_wps_model_number_field: supports_wps_model_number_field,
         has_wps_serial_number_field: supports_wps_serial_number_field,
+        has_wps_device_name_field: supports_wps_device_name_field,
+        has_wps_ssid_field: supports_wps_ssid_field,
     };
 
     let build_decoder_args = |link_type: &str| {
@@ -1559,6 +1563,12 @@ fn run_interface_capture(
         }
         if supports_wps_serial_number_field {
             push_decoder_field("wps.serial_number");
+        }
+        if supports_wps_device_name_field {
+            push_decoder_field("wps.device_name");
+        }
+        if supports_wps_ssid_field {
+            push_decoder_field("wps.ssid");
         }
         decoder_args
     };
@@ -2509,6 +2519,8 @@ struct TSharkParseLayout {
     has_wps_model_name_field: bool,
     has_wps_model_number_field: bool,
     has_wps_serial_number_field: bool,
+    has_wps_device_name_field: bool,
+    has_wps_ssid_field: bool,
 }
 
 fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFrame> {
@@ -2742,6 +2754,20 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
         None
     };
     let wps_serial_number = if layout.has_wps_serial_number_field {
+        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let wps_device_name = if layout.has_wps_device_name_field {
+        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let wps_ssid = if layout.has_wps_ssid_field {
         parse_opt_string(fields.get(i).copied().unwrap_or(""))
     } else {
         None
@@ -2754,13 +2780,15 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
         || wps_model_name.is_some()
         || wps_model_number.is_some()
         || wps_serial_number.is_some()
+        || wps_device_name.is_some()
+        || wps_ssid.is_some()
     {
         Some(WpsInfo {
             version: wps_version,
             state: wps_state,
             config_methods: wps_config_methods,
             manufacturer: wps_manufacturer,
-            model_name: wps_model_name,
+            model_name: wps_model_name.or(wps_device_name).or(wps_ssid),
             model_number: wps_model_number,
             serial_number: wps_serial_number,
         })
@@ -3124,6 +3152,8 @@ mod tests {
             has_wps_model_name_field: false,
             has_wps_model_number_field: false,
             has_wps_serial_number_field: false,
+            has_wps_device_name_field: false,
+            has_wps_ssid_field: false,
         }
     }
 
