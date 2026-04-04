@@ -173,13 +173,14 @@ const ScanSetupDialog = ({
     if (hopPreset === "selected") return [...model.hop_channels].sort((a, b) => a - b);
     return [...hopPresetChannels].sort((a, b) => a - b);
   }, [model, hopPreset, hopPresetChannels]);
-  const lockChannel = model.locked_channel ?? bandChannels[0] ?? sortedChannels[0] ?? 1;
+  const lockChannel = model?.locked_channel ?? bandChannels[0] ?? sortedChannels[0] ?? 1;
   const lockAllowedModes = useMemo(() => modesForChannel(caps.ht_modes, lockChannel), [caps.ht_modes, lockChannel]);
   const selectableGlobalModes = useMemo(() => {
+    if (!model) return [] as string[];
     if (model.mode === "locked") return lockAllowedModes;
     if (hopPreset === "selected") return caps.ht_modes;
     return [] as string[];
-  }, [model.mode, hopPreset, lockAllowedModes, caps.ht_modes]);
+  }, [model, hopPreset, lockAllowedModes, caps.ht_modes]);
 
   if (!model) return null;
 
