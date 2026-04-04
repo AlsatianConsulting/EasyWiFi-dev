@@ -240,6 +240,8 @@ struct SigResolver {
     company_names: HashMap<u16, String>,
     uuid_names: HashMap<String, String>,
     uuid_metadata: HashMap<String, BluetoothUuidMetadata>,
+    uuid_sig_names: HashMap<String, String>,
+    uuid_possible_names: HashMap<String, Vec<String>>,
 }
 
 impl SigResolver {
@@ -249,6 +251,8 @@ impl SigResolver {
             company_names: HashMap::new(),
             uuid_names: HashMap::new(),
             uuid_metadata: HashMap::new(),
+            uuid_sig_names: HashMap::new(),
+            uuid_possible_names: HashMap::new(),
         };
         resolver.load_company_kismet_gz(PathBuf::from(
             "/usr/share/kismet/kismet_bluetooth_manuf.txt.gz",
@@ -352,6 +356,18 @@ impl SigResolver {
             sources,
             uncertainty,
         } = row;
+        let is_sig_resolution = uuid_resolution_is_sig(&kind, &sources, uncertainty.as_deref());
+        if is_sig_resolution {
+            self.uuid_sig_names
+                .entry(uuid.clone())
+                .and_modify(|existing| {
+                    *existing = merge_resolution_labels(existing, &name);
+                })
+                .or_insert_with(|| name.clone());
+        } else {
+            let possible = self.uuid_possible_names.entry(uuid.clone()).or_default();
+            push_unique_resolution_label(possible, &name);
+        }
 
         self.uuid_metadata
             .entry(uuid.clone())
@@ -391,14 +407,24 @@ impl SigResolver {
 
     fn uuid_name(&self, uuid: &str) -> Option<String> {
         let normalized = normalize_assigned_uuid(uuid);
-        let resolved = self.uuid_names.get(&normalized).cloned();
-        let fallback = fallback_uuid_name(&normalized);
-        match (resolved, fallback) {
-            (Some(primary), Some(secondary)) => Some(merge_resolution_labels(&primary, &secondary)),
-            (Some(primary), None) => Some(primary),
-            (None, Some(secondary)) => Some(secondary),
-            (None, None) => None,
+        let sig_name = self
+            .uuid_sig_names
+            .get(&normalized)
+            .cloned()
+            .or_else(|| fallback_uuid_name(&normalized));
+
+        let mut possible = self
+            .uuid_possible_names
+            .get(&normalized)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(legacy) = self.uuid_names.get(&normalized) {
+            for label in legacy.split(" / ").map(str::trim).filter(|v| !v.is_empty()) {
+                push_unique_resolution_label(&mut possible, label);
+            }
         }
+
+        Some(format_uuid_resolution_label(sig_name.as_deref(), &possible))
     }
 
     fn uuid_metadata(&self, uuid: &str) -> Option<BluetoothUuidMetadata> {
@@ -744,6 +770,79 @@ fn merge_optional_resolution_label(
 
 fn normalize_resolution_label(value: &str) -> String {
     collapse_whitespace(value).to_ascii_lowercase()
+}
+
+fn push_unique_resolution_label(out: &mut Vec<String>, incoming: &str) {
+    let candidate = collapse_whitespace(incoming);
+    if candidate.is_empty() {
+        return;
+    }
+    let key = normalize_resolution_label(&candidate);
+    if !out
+        .iter()
+        .any(|existing| normalize_resolution_label(existing) == key)
+    {
+        out.push(candidate);
+    }
+}
+
+fn uuid_resolution_is_sig(
+    kind: &Option<String>,
+    sources: &[String],
+    uncertainty: Option<&str>,
+) -> bool {
+    if uncertainty.map(str::trim).is_some_and(|value| !value.is_empty()) {
+        return false;
+    }
+
+    if sources.iter().any(|source| {
+        let lower = source.to_ascii_lowercase();
+        lower.contains("bluetooth.com")
+            || lower.contains("assigned_numbers")
+            || lower.contains("bluetooth sig")
+    }) {
+        return true;
+    }
+
+    if let Some(kind) = kind {
+        let lower = kind.to_ascii_lowercase();
+        return matches!(
+            lower.as_str(),
+            "service"
+                | "characteristic"
+                | "descriptor"
+                | "assigned number"
+                | "member service"
+        );
+    }
+    false
+}
+
+fn format_uuid_resolution_label(sig_name: Option<&str>, possible_names: &[String]) -> String {
+    let mut out = Vec::<String>::new();
+    if let Some(sig) = sig_name.map(collapse_whitespace).filter(|value| !value.is_empty()) {
+        out.push(format!("BLESIG/{sig}"));
+    }
+
+    for possible in possible_names {
+        let value = collapse_whitespace(possible);
+        if value.is_empty() {
+            continue;
+        }
+        if sig_name
+            .map(normalize_resolution_label)
+            .is_some_and(|sig| sig == normalize_resolution_label(&value))
+        {
+            continue;
+        }
+        out.push(format!("*{value}*"));
+    }
+
+    if out.is_empty() {
+        "Unknown UUID".to_string()
+    } else {
+        out.join("/")
+    }
 }
 
 pub fn list_controllers() -> Result<Vec<BluetoothControllerInfo>> {
@@ -3444,10 +3543,11 @@ mod tests {
     use super::{
         appearance_name, bluez_error_looks_like_process_crash, bluez_failure_backoff_duration,
         controller_matches_adapter, decode_characteristic_value, decode_descriptor_value,
-        fallback_uuid_name, is_placeholder_scan_name, merge_resolution_labels,
-        normalize_assigned_uuid, parse_company_id, parse_scan_output,
+        fallback_uuid_name, format_uuid_resolution_label, is_placeholder_scan_name,
+        merge_resolution_labels, normalize_assigned_uuid, parse_company_id, parse_scan_output,
         parse_sig_uuid_map_from_assigned_numbers_html, parse_tab_separated_mappings,
         parse_uuid_line, parse_uuid_mappings_csv, resolve_bluez_targets, resolve_ubertooth_targets,
+        uuid_resolution_is_sig,
     };
 
     #[test]
@@ -3590,6 +3690,50 @@ mod tests {
             merge_resolution_labels("Battery Level / Battery Charge Level", "battery level"),
             "Battery Level / Battery Charge Level"
         );
+    }
+
+    #[test]
+    fn formats_uuid_resolution_with_confirmed_and_possible_labels() {
+        let out = format_uuid_resolution_label(
+            Some("Generic Access"),
+            &[
+                "Generic Access".to_string(),
+                "Alt Paper Label".to_string(),
+                "Git Label".to_string(),
+            ],
+        );
+        assert_eq!(
+            out,
+            "BLESIG/Generic Access/*Alt Paper Label*/*Git Label*"
+        );
+    }
+
+    #[test]
+    fn formats_uuid_resolution_with_possible_only_labels() {
+        let out = format_uuid_resolution_label(
+            None,
+            &["Vendor Guess".to_string(), "Research Alias".to_string()],
+        );
+        assert_eq!(out, "*Vendor Guess*/*Research Alias*");
+    }
+
+    #[test]
+    fn classifies_uuid_sources_as_sig_or_possible() {
+        assert!(uuid_resolution_is_sig(
+            &Some("Service".to_string()),
+            &[String::from("https://www.bluetooth.com/assigned_numbers")],
+            None,
+        ));
+        assert!(!uuid_resolution_is_sig(
+            &Some("Vendor Custom".to_string()),
+            &[String::from("https://github.com/vendor/spec")],
+            None,
+        ));
+        assert!(!uuid_resolution_is_sig(
+            &Some("Service".to_string()),
+            &[String::from("https://www.bluetooth.com/assigned_numbers")],
+            Some("SIG lists company only"),
+        ));
     }
 
     #[test]
