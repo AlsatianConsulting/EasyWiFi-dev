@@ -477,9 +477,10 @@ fn handle_client(
             }
             wifi_band = infer_band_from_channels(&hop_channels, locked_channel);
         }
+        let wifi_enabled = s.settings.interfaces.iter().any(|iface| iface.enabled);
         let payload = ScanSetupResponse {
-            wifi_enabled: false,
-            bluetooth_enabled: false,
+            wifi_enabled,
+            bluetooth_enabled: s.settings.bluetooth_enabled,
             selected_interface,
             mode,
             locked_channel,

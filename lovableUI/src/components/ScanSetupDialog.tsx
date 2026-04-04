@@ -50,6 +50,37 @@ const defaultCapabilities: InterfaceCapabilities = {
   ht_modes: ["HT20"],
 };
 
+const modeAllowedForChannel = (mode: string, channel: number): boolean => {
+  const normalized = mode.trim().toUpperCase();
+  if (!normalized) return false;
+  const is24 = channel >= 1 && channel <= 14;
+  const is5 = channel >= 32 && channel <= 177;
+  const is6 = channel > 177;
+  if (is24) {
+    return ["NOHT", "HT20", "HT40+", "HT40-", "5MHZ", "10MHZ"].includes(normalized);
+  }
+  if (is5) {
+    return [
+      "NOHT",
+      "HT20",
+      "HT40+",
+      "HT40-",
+      "5MHZ",
+      "10MHZ",
+      "80MHZ",
+      "160MHZ",
+      "80+80MHZ",
+    ].includes(normalized);
+  }
+  if (is6) {
+    return ["HT20", "HT40+", "HT40-", "80MHZ", "160MHZ", "80+80MHZ"].includes(normalized);
+  }
+  return false;
+};
+
+const modesForChannel = (modes: string[], channel: number): string[] =>
+  modes.filter((mode) => modeAllowedForChannel(mode, channel));
+
 const ScanSetupDialog = ({
   open,
   onOpenChange,
@@ -142,6 +173,8 @@ const ScanSetupDialog = ({
     if (hopPreset === "selected") return [...model.hop_channels].sort((a, b) => a - b);
     return [...hopPresetChannels].sort((a, b) => a - b);
   }, [model, hopPreset, hopPresetChannels]);
+  const lockChannel = model.locked_channel ?? bandChannels[0] ?? sortedChannels[0] ?? 1;
+  const lockAllowedModes = useMemo(() => modesForChannel(caps.ht_modes, lockChannel), [caps.ht_modes, lockChannel]);
 
   if (!model) return null;
 
@@ -293,7 +326,11 @@ const ScanSetupDialog = ({
                 <div className="space-y-1">
                   <span className="text-xs text-muted-foreground">Bandwidth</span>
                   <Select
-                    value={model.locked_ht_mode ?? model.wifi_bandwidths[0] ?? caps.ht_modes[0] ?? "HT20"}
+                    value={
+                      model.locked_ht_mode && lockAllowedModes.includes(model.locked_ht_mode)
+                        ? model.locked_ht_mode
+                        : lockAllowedModes[0] ?? "HT20"
+                    }
                     onValueChange={(value) =>
                       setModel((m) => (m ? { ...m, locked_ht_mode: value } : m))
                     }
@@ -302,7 +339,7 @@ const ScanSetupDialog = ({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {caps.ht_modes.map((mode) => (
+                      {lockAllowedModes.map((mode) => (
                         <SelectItem key={mode} value={mode}>
                           {mode}
                         </SelectItem>
@@ -374,7 +411,7 @@ const ScanSetupDialog = ({
                                 : m.hop_channels.filter((value) => value !== ch);
                                   const channelModes = { ...(m.channel_ht_modes ?? {}) };
                                   if (enabled) {
-                                    channelModes[String(ch)] = [...caps.ht_modes];
+                                    channelModes[String(ch)] = modesForChannel(caps.ht_modes, ch);
                                   } else {
                                     delete channelModes[String(ch)];
                                   }
@@ -399,14 +436,17 @@ const ScanSetupDialog = ({
                     <span className="text-xs text-muted-foreground">Per-Channel Bandwidths</span>
                     <div className="max-h-44 overflow-auto rounded border border-border p-2 space-y-2">
                       {effectiveHopChannels.map((ch) => {
+                        const allowedModes = modesForChannel(caps.ht_modes, ch);
                         const selectedForChannel = new Set(
-                          model.channel_ht_modes?.[String(ch)] ?? caps.ht_modes,
+                          (model.channel_ht_modes?.[String(ch)] ?? allowedModes).filter((mode) =>
+                            modeAllowedForChannel(mode, ch),
+                          ),
                         );
                         return (
                           <div key={ch} className="border-b border-border/40 pb-1 last:border-b-0">
                             <div className="text-[11px] font-medium mb-1">Channel {ch}</div>
                             <div className="grid grid-cols-3 gap-1">
-                              {caps.ht_modes.map((mode) => {
+                              {allowedModes.map((mode) => {
                                 const checked = selectedForChannel.has(mode);
                                 return (
                                   <label key={`${ch}-${mode}`} className="flex items-center gap-1 text-[11px]">
@@ -418,7 +458,9 @@ const ScanSetupDialog = ({
                                         setModel((m) => {
                                           if (!m) return m;
                                           const current = new Set(
-                                            m.channel_ht_modes?.[String(ch)] ?? caps.ht_modes,
+                                            (m.channel_ht_modes?.[String(ch)] ?? allowedModes).filter((entry) =>
+                                              modeAllowedForChannel(entry, ch),
+                                            ),
                                           );
                                           if (enabled) current.add(mode);
                                           else current.delete(mode);
@@ -516,13 +558,19 @@ const ScanSetupDialog = ({
                           (
                             model.channel_ht_modes?.[String(ch)]?.length
                               ? model.channel_ht_modes?.[String(ch)]
-                              : model.wifi_bandwidths
-                          ).filter(Boolean),
+                              : hopPreset === "selected"
+                                ? model.wifi_bandwidths
+                                : caps.ht_modes
+                          ).filter((mode) => Boolean(mode) && modeAllowedForChannel(mode, ch)),
                         ]),
                       )
                     : {};
                 await onApply({
                   ...model,
+                  wifi_bandwidths:
+                    model.mode === "hop_specific" && hopPreset !== "selected"
+                      ? []
+                      : model.wifi_bandwidths,
                   hop_channels:
                     model.mode === "hop_specific"
                       ? [...effectiveHopChannels]

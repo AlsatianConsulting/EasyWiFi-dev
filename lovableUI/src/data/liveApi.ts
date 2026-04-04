@@ -161,6 +161,31 @@ const mapActiveEnumeration = (raw: unknown): BluetoothDeviceRecord["activeEnumer
   };
 };
 
+const normalizeBluetoothUuidNames = (namesRaw: unknown[]): string[] => {
+  const names = namesRaw.map((v) => asString(v)).map((v) => v.trim()).filter(Boolean);
+  let unknownCount = 0;
+  const known = new Set<string>();
+
+  for (const name of names) {
+    const lowered = name.toLowerCase();
+    const isUnknown =
+      lowered === "unknown" ||
+      lowered === "unknown uuid" ||
+      lowered.startsWith("unknown uuid ");
+    if (isUnknown) {
+      unknownCount += 1;
+      continue;
+    }
+    known.add(name);
+  }
+
+  const out = Array.from(known);
+  if (unknownCount > 0) {
+    out.push(`*Unknown* (${unknownCount})`);
+  }
+  return out;
+};
+
 export const mapBluetooth = (raw: unknown): BluetoothDeviceRecord => {
   const r = (raw || {}) as Record<string, unknown>;
   return {
@@ -179,7 +204,7 @@ export const mapBluetooth = (raw: unknown): BluetoothDeviceRecord => {
     mfgrIds: asArray(r.mfgr_ids).map((v) => asString(v)).filter(Boolean),
     mfgrNames: asArray(r.mfgr_names).map((v) => asString(v)).filter(Boolean),
     uuids: asArray(r.uuids).map((v) => asString(v)).filter(Boolean),
-    uuidNames: asArray(r.uuid_names).map((v) => asString(v)).filter(Boolean),
+    uuidNames: normalizeBluetoothUuidNames(asArray(r.uuid_names)),
     activeEnumeration: mapActiveEnumeration(r.active_enumeration),
     observations: [],
   };

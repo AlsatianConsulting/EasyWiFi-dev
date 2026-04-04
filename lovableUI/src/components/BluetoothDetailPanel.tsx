@@ -29,12 +29,17 @@ const BluetoothDetailPanel = ({ device, onEnumerateServices, enumerationStatus }
         <p className=" text-[10px] text-muted-foreground mt-0.5">{device.mac}</p>
         {device.ouiManufacturer && <p className="text-[10px] text-muted-foreground mt-0.5">{device.ouiManufacturer}</p>}
         {onEnumerateServices && (
-          <button
-            className="mt-2 rounded-md border border-border bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground"
-            onClick={() => onEnumerateServices(device.mac)}
-          >
-            Scan Services
-          </button>
+          <>
+            <button
+              className="mt-2 rounded-md border border-border bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground"
+              onClick={() => onEnumerateServices(device.mac)}
+            >
+              Scan Services
+            </button>
+            <p className="mt-1 text-[10px] text-amber-400">
+              Active scan warning: this can trigger pairing prompts or visible activity on the target device.
+            </p>
+          </>
         )}
         {enumerationStatus?.message && (
           <p className={`mt-2 text-[10px] ${enumerationStatus.is_error ? "text-destructive" : "text-emerald-400"}`}>
