@@ -1914,10 +1914,9 @@ fn process_live_tshark_fields(
             let is_probe_response = frame.fc_type == Some(0) && frame.subtype == Some(5);
             let is_beacon = frame.fc_type == Some(0) && frame.subtype == Some(8);
 
-            // Seed AP records from any valid BSSID-bearing frame, not only beacons/probe responses.
-            // Some adapters/channels deliver sparse management frames but still carry useful BSSID
-            // context in data/control traffic; this keeps the AP table populated in those cases.
-            let should_seed_ap = true;
+            // Seed AP records only when we have reliable AP evidence.
+            // This avoids promoting transient/channelless BSSID observations into phantom AP rows.
+            let should_seed_ap = is_beacon || is_probe_response || frame.channel.is_some();
             let should_update_existing_ap = ap_state.contains_key(&bssid);
             if !bssid.is_empty()
                 && !bssid_is_broadcast
@@ -1946,11 +1945,21 @@ fn process_live_tshark_fields(
                         ap.uptime_beacons = Some(tsf_us / 1_000_000);
                     }
                 }
-                ap.channel = frame.channel;
-                ap.frequency_mhz = frame.frequency;
-                ap.channel_width_mhz = frame.channel_width_mhz.or(ap.channel_width_mhz);
-                ap.band = SpectrumBand::from_frequency_mhz(ap.frequency_mhz);
-                ap.rssi_dbm = frame.rssi;
+                if let Some(channel) = frame.channel {
+                    ap.channel = Some(channel);
+                }
+                if let Some(frequency) = frame.frequency {
+                    ap.frequency_mhz = Some(frequency);
+                }
+                if let Some(width_mhz) = frame.channel_width_mhz {
+                    ap.channel_width_mhz = Some(width_mhz);
+                }
+                if ap.frequency_mhz.is_some() {
+                    ap.band = SpectrumBand::from_frequency_mhz(ap.frequency_mhz);
+                }
+                if let Some(rssi_dbm) = frame.rssi {
+                    ap.rssi_dbm = Some(rssi_dbm);
+                }
                 if let Some((short, full)) = classify_ap_encryption(&frame) {
                     ap.encryption_short = short;
                     ap.encryption_full = full;
