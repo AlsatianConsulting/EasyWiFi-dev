@@ -3212,6 +3212,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_tshark_line_extracts_wps_fields_when_present() {
+        let mut layout = base_parse_layout();
+        layout.has_wps_version_field = true;
+        layout.has_wps_state_field = true;
+        layout.has_wps_config_methods_field = true;
+        layout.has_wps_manufacturer_field = true;
+        layout.has_wps_model_name_field = true;
+        layout.has_wps_model_number_field = true;
+        layout.has_wps_serial_number_field = true;
+        let line = "1710000000.0\t150\t11:22:33:44:55:66\taa:bb:cc:dd:ee:ff\t11:22:33:44:55:66\t-48\t-62\t6\t2437\t2\t8\t1\t2.0\tConfigured\tPushButton\tVendorX\tAP-Model\t42\tSN-123";
+        let parsed = parse_tshark_line(line, layout).expect("parse frame");
+        let wps = parsed.wps.expect("wps parsed");
+        assert_eq!(wps.version.as_deref(), Some("2.0"));
+        assert_eq!(wps.state.as_deref(), Some("Configured"));
+        assert_eq!(wps.config_methods.as_deref(), Some("PushButton"));
+        assert_eq!(wps.manufacturer.as_deref(), Some("VendorX"));
+        assert_eq!(wps.model_name.as_deref(), Some("AP-Model"));
+        assert_eq!(wps.model_number.as_deref(), Some("42"));
+        assert_eq!(wps.serial_number.as_deref(), Some("SN-123"));
+    }
+
+    #[test]
     fn parse_ssid_value_decodes_ascii_hex_payloads() {
         assert_eq!(
             parse_ssid_value("486f6d654e6574776f726b").as_deref(),
