@@ -707,6 +707,8 @@ fn handle_client(
         let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
         stop_wifi_capture(&mut s);
         stop_bluetooth_scan(&mut s);
+        clear_live_scan_state(&mut s);
+        push_log(&mut s, "Live tables cleared".to_string());
         push_log(&mut s, "Scanning stopped".to_string());
         return respond_json(&mut stream, "{\"ok\":true}");
     }
@@ -997,6 +999,13 @@ fn start_scans_with_selection(
     wifi_enabled: bool,
     bluetooth_enabled: bool,
 ) {
+    // Starting a new scan should begin from a clean live-state snapshot.
+    let starting_fresh = state.runtime.capture.is_none() && state.runtime.bluetooth.is_none();
+    if starting_fresh && (wifi_enabled || bluetooth_enabled) {
+        clear_live_scan_state(state);
+        push_log(state, "cleared previous scan state".to_string());
+    }
+
     if wifi_enabled && state.runtime.capture.is_none() {
         let enabled_interfaces = state
             .settings
@@ -1111,6 +1120,14 @@ fn stop_bluetooth_scan(state: &mut WebState) {
     }
     maybe_export_bluetooth_data(state);
     push_log(state, "Bluetooth scanning stopped".to_string());
+}
+
+fn clear_live_scan_state(state: &mut WebState) {
+    state.access_points.clear();
+    state.clients.clear();
+    state.bluetooth_devices.clear();
+    state.channel_usage.clear();
+    state.bt_enumeration_status.clear();
 }
 
 fn maybe_export_wifi_data(state: &mut WebState) {
