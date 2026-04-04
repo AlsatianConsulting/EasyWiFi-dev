@@ -135,12 +135,8 @@ const ScanSetupDialog = ({
     [caps.channels],
   );
   const bandChannels = useMemo(() => {
-    const band = model?.wifi_band ?? "all";
-    if (band === "all") return sortedChannels;
-    if (band === "2.4") return sortedChannels.filter((ch) => ch >= 1 && ch <= 14);
-    if (band === "5") return sortedChannels.filter((ch) => ch >= 32 && ch <= 177);
-    return sortedChannels.filter((ch) => ch > 177);
-  }, [model?.wifi_band, sortedChannels]);
+    return sortedChannels;
+  }, [sortedChannels]);
 
   useEffect(() => {
     if (!open || !model) return;
@@ -169,8 +165,8 @@ const ScanSetupDialog = ({
     if (hopPreset === "all_24") return sortedChannels.filter((ch) => ch >= 1 && ch <= 14);
     if (hopPreset === "all_5") return sortedChannels.filter((ch) => ch >= 32 && ch <= 177);
     if (hopPreset === "all_6") return sortedChannels.filter((ch) => ch > 177);
-    return bandChannels;
-  }, [hopPreset, sortedChannels, bandChannels]);
+    return sortedChannels;
+  }, [hopPreset, sortedChannels]);
 
   const effectiveHopChannels = useMemo(() => {
     if (!model || model.mode !== "hop_specific") return [] as number[];
@@ -279,26 +275,6 @@ const ScanSetupDialog = ({
               </Select>
             </div>
 
-            <div className="space-y-1">
-              <span className="text-xs text-muted-foreground">Band</span>
-              <Select
-                value={model.wifi_band}
-                onValueChange={(value) =>
-                  setModel((m) => (m ? { ...m, wifi_band: value as "all" | "2.4" | "5" | "6" } : m))
-                }
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Bands</SelectItem>
-                  <SelectItem value="2.4">2.4 GHz</SelectItem>
-                  <SelectItem value="5">5 GHz</SelectItem>
-                  <SelectItem value="6">6 GHz</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
             {model.mode === "locked" && (
               <div className="space-y-2">
                 <span className="text-xs text-muted-foreground">
@@ -322,11 +298,10 @@ const ScanSetupDialog = ({
                                 ? [...m.wifi_bandwidths, mode]
                                 : m.wifi_bandwidths.filter((value) => value !== mode);
                               if (m.mode === "locked") {
-                                const filtered = next.filter((entry) => modeAllowedForChannel(entry, lockChannel));
-                                const lockedMode = m.locked_ht_mode && filtered.includes(m.locked_ht_mode)
-                                  ? m.locked_ht_mode
-                                  : filtered[0] ?? lockAllowedModes[0] ?? "HT20";
-                                return { ...m, wifi_bandwidths: filtered, locked_ht_mode: lockedMode };
+                                if (!enabled) {
+                                  return m;
+                                }
+                                return { ...m, wifi_bandwidths: [mode], locked_ht_mode: mode };
                               }
                               return { ...m, wifi_bandwidths: next };
                             });
@@ -341,26 +316,23 @@ const ScanSetupDialog = ({
             )}
 
             {model.mode === "locked" ? (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-2">
                 <div className="space-y-1">
                   <span className="text-xs text-muted-foreground">Channel</span>
                   <Select
-                    value={String(model.locked_channel ?? bandChannels[0] ?? sortedChannels[0] ?? 1)}
+                    value={String(model.locked_channel ?? sortedChannels[0] ?? 1)}
                     onValueChange={(value) =>
                       setModel((m) => {
                         if (!m) return m;
                         const nextChannel = Number(value) || 1;
                         const nextAllowed = modesForChannel(caps.ht_modes, nextChannel);
-                        const nextBandwidths = m.wifi_bandwidths.filter((entry) =>
-                          modeAllowedForChannel(entry, nextChannel),
-                        );
                         const nextLocked = m.locked_ht_mode && nextAllowed.includes(m.locked_ht_mode)
                           ? m.locked_ht_mode
                           : nextAllowed[0] ?? "HT20";
                         return {
                           ...m,
                           locked_channel: nextChannel,
-                          wifi_bandwidths: nextBandwidths,
+                          wifi_bandwidths: [nextLocked],
                           locked_ht_mode: nextLocked,
                         };
                       })
@@ -370,33 +342,9 @@ const ScanSetupDialog = ({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {bandChannels.map((ch) => (
+                      {sortedChannels.map((ch) => (
                         <SelectItem key={ch} value={String(ch)}>
                           {ch}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <span className="text-xs text-muted-foreground">Bandwidth</span>
-                  <Select
-                    value={
-                      model.locked_ht_mode && lockAllowedModes.includes(model.locked_ht_mode)
-                        ? model.locked_ht_mode
-                        : lockAllowedModes[0] ?? "HT20"
-                    }
-                    onValueChange={(value) =>
-                      setModel((m) => (m ? { ...m, locked_ht_mode: value } : m))
-                    }
-                  >
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {lockAllowedModes.map((mode) => (
-                        <SelectItem key={mode} value={mode}>
-                          {mode}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -426,7 +374,6 @@ const ScanSetupDialog = ({
                           ? {
                               ...m,
                               hop_channels: next,
-                              wifi_band: "all",
                               channel_ht_modes: preset === "selected" ? m.channel_ht_modes : {},
                             }
                           : m,
@@ -448,49 +395,10 @@ const ScanSetupDialog = ({
 
                 {hopPreset === "selected" && (
                   <>
-                    <span className="text-xs text-muted-foreground">Hop Channels</span>
-                    <div className="max-h-32 overflow-auto rounded border border-border p-2 grid grid-cols-5 gap-1">
-                      {bandChannels.map((ch) => {
+                    <span className="text-xs text-muted-foreground">Hop Channels + Bandwidths</span>
+                    <div className="max-h-52 overflow-auto rounded border border-border p-2 space-y-2">
+                      {sortedChannels.map((ch) => {
                         const checked = model.hop_channels.includes(ch);
-                        return (
-                          <label key={ch} className="flex items-center gap-1 text-[11px]">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(e) => {
-                                const enabled = e.target.checked;
-                                setModel((m) => {
-                              if (!m) return m;
-                              const next = enabled
-                                ? [...m.hop_channels, ch]
-                                : m.hop_channels.filter((value) => value !== ch);
-                                  const channelModes = { ...(m.channel_ht_modes ?? {}) };
-                                  if (enabled) {
-                                    channelModes[String(ch)] = modesForChannel(caps.ht_modes, ch);
-                                  } else {
-                                    delete channelModes[String(ch)];
-                                  }
-                                  return {
-                                    ...m,
-                                    hop_channels: next.sort((a, b) => a - b),
-                                    channel_ht_modes: channelModes,
-                                  };
-                            });
-                          }}
-                        />
-                            {ch}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </>
-                )}
-
-                {hopPreset === "selected" && (
-                  <div className="space-y-1">
-                    <span className="text-xs text-muted-foreground">Per-Channel Bandwidths</span>
-                    <div className="max-h-44 overflow-auto rounded border border-border p-2 space-y-2">
-                      {effectiveHopChannels.map((ch) => {
                         const allowedModes = modesForChannel(caps.ht_modes, ch);
                         const selectedForChannel = new Set(
                           (model.channel_ht_modes?.[String(ch)] ?? allowedModes).filter((mode) =>
@@ -498,46 +406,72 @@ const ScanSetupDialog = ({
                           ),
                         );
                         return (
-                          <div key={ch} className="border-b border-border/40 pb-1 last:border-b-0">
-                            <div className="text-[11px] font-medium mb-1">Channel {ch}</div>
-                            <div className="grid grid-cols-3 gap-1">
-                              {allowedModes.map((mode) => {
-                                const checked = selectedForChannel.has(mode);
-                                return (
-                                  <label key={`${ch}-${mode}`} className="flex items-center gap-1 text-[11px]">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={(e) => {
-                                        const enabled = e.target.checked;
-                                        setModel((m) => {
-                                          if (!m) return m;
-                                          const current = new Set(
-                                            (m.channel_ht_modes?.[String(ch)] ?? allowedModes).filter((entry) =>
+                          <div key={ch} className="rounded border border-border/40 p-2">
+                            <div className="flex items-center gap-2 text-[11px] mb-1">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  const enabled = e.target.checked;
+                                  setModel((m) => {
+                                    if (!m) return m;
+                                    const next = enabled
+                                      ? [...m.hop_channels, ch]
+                                      : m.hop_channels.filter((value) => value !== ch);
+                                    const channelModes = { ...(m.channel_ht_modes ?? {}) };
+                                    if (enabled) {
+                                      channelModes[String(ch)] =
+                                        m.channel_ht_modes?.[String(ch)]?.length
+                                          ? m.channel_ht_modes[String(ch)].filter((entry) =>
                                               modeAllowedForChannel(entry, ch),
-                                            ),
-                                          );
-                                          if (enabled) current.add(mode);
-                                          else current.delete(mode);
-                                          const channelModes = { ...(m.channel_ht_modes ?? {}) };
-                                          channelModes[String(ch)] = Array.from(current).sort();
-                                          return { ...m, channel_ht_modes: channelModes };
-                                        });
-                                      }}
-                                    />
-                                    {mode}
-                                  </label>
-                                );
-                              })}
+                                            )
+                                          : allowedModes;
+                                    } else {
+                                      delete channelModes[String(ch)];
+                                    }
+                                    return {
+                                      ...m,
+                                      hop_channels: next.sort((a, b) => a - b),
+                                      channel_ht_modes: channelModes,
+                                    };
+                                  });
+                                }}
+                              />
+                              <span>Channel {ch}</span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-1">
+                              {allowedModes.map((mode) => (
+                                <label key={`${ch}-${mode}`} className="flex items-center gap-1 text-[11px]">
+                                  <input
+                                    type="checkbox"
+                                    disabled={!checked}
+                                    checked={checked && selectedForChannel.has(mode)}
+                                    onChange={(e) => {
+                                      const enabled = e.target.checked;
+                                      setModel((m) => {
+                                        if (!m) return m;
+                                        const current = new Set(
+                                          (m.channel_ht_modes?.[String(ch)] ?? allowedModes).filter((entry) =>
+                                            modeAllowedForChannel(entry, ch),
+                                          ),
+                                        );
+                                        if (enabled) current.add(mode);
+                                        else current.delete(mode);
+                                        const channelModes = { ...(m.channel_ht_modes ?? {}) };
+                                        channelModes[String(ch)] = Array.from(current).sort();
+                                        return { ...m, channel_ht_modes: channelModes };
+                                      });
+                                    }}
+                                  />
+                                  {mode}
+                                </label>
+                              ))}
                             </div>
                           </div>
                         );
                       })}
-                      {effectiveHopChannels.length === 0 && (
-                        <div className="text-[11px] text-muted-foreground">No hop channels selected.</div>
-                      )}
                     </div>
-                  </div>
+                  </>
                 )}
 
                 <div className="grid grid-cols-2 gap-2">
