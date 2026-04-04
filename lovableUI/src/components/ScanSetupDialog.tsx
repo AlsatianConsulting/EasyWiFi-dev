@@ -175,6 +175,11 @@ const ScanSetupDialog = ({
   }, [model, hopPreset, hopPresetChannels]);
   const lockChannel = model.locked_channel ?? bandChannels[0] ?? sortedChannels[0] ?? 1;
   const lockAllowedModes = useMemo(() => modesForChannel(caps.ht_modes, lockChannel), [caps.ht_modes, lockChannel]);
+  const selectableGlobalModes = useMemo(() => {
+    if (model.mode === "locked") return lockAllowedModes;
+    if (hopPreset === "selected") return caps.ht_modes;
+    return [] as string[];
+  }, [model.mode, hopPreset, lockAllowedModes, caps.ht_modes]);
 
   if (!model) return null;
 
@@ -271,9 +276,13 @@ const ScanSetupDialog = ({
 
             {(model.mode === "locked" || hopPreset === "selected") && (
               <div className="space-y-2">
-                <span className="text-xs text-muted-foreground">Bandwidths (default: all)</span>
+                <span className="text-xs text-muted-foreground">
+                  {model.mode === "locked"
+                    ? `Bandwidths for Channel ${lockChannel}`
+                    : "Bandwidths (default: all)"}
+                </span>
                 <div className="max-h-24 overflow-auto rounded border border-border p-2 grid grid-cols-3 gap-1">
-                  {caps.ht_modes.map((mode) => {
+                  {selectableGlobalModes.map((mode) => {
                     const checked = model.wifi_bandwidths.includes(mode);
                     return (
                       <label key={mode} className="flex items-center gap-1 text-[11px]">
@@ -287,6 +296,13 @@ const ScanSetupDialog = ({
                               const next = enabled
                                 ? [...m.wifi_bandwidths, mode]
                                 : m.wifi_bandwidths.filter((value) => value !== mode);
+                              if (m.mode === "locked") {
+                                const filtered = next.filter((entry) => modeAllowedForChannel(entry, lockChannel));
+                                const lockedMode = m.locked_ht_mode && filtered.includes(m.locked_ht_mode)
+                                  ? m.locked_ht_mode
+                                  : filtered[0] ?? lockAllowedModes[0] ?? "HT20";
+                                return { ...m, wifi_bandwidths: filtered, locked_ht_mode: lockedMode };
+                              }
                               return { ...m, wifi_bandwidths: next };
                             });
                           }}
@@ -306,9 +322,23 @@ const ScanSetupDialog = ({
                   <Select
                     value={String(model.locked_channel ?? bandChannels[0] ?? sortedChannels[0] ?? 1)}
                     onValueChange={(value) =>
-                      setModel((m) =>
-                        m ? { ...m, locked_channel: Number(value) || 1 } : m,
-                      )
+                      setModel((m) => {
+                        if (!m) return m;
+                        const nextChannel = Number(value) || 1;
+                        const nextAllowed = modesForChannel(caps.ht_modes, nextChannel);
+                        const nextBandwidths = m.wifi_bandwidths.filter((entry) =>
+                          modeAllowedForChannel(entry, nextChannel),
+                        );
+                        const nextLocked = m.locked_ht_mode && nextAllowed.includes(m.locked_ht_mode)
+                          ? m.locked_ht_mode
+                          : nextAllowed[0] ?? "HT20";
+                        return {
+                          ...m,
+                          locked_channel: nextChannel,
+                          wifi_bandwidths: nextBandwidths,
+                          locked_ht_mode: nextLocked,
+                        };
+                      })
                     }
                   >
                     <SelectTrigger className="h-8 text-xs">
