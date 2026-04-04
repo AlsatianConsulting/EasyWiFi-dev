@@ -1,6 +1,6 @@
 use crate::model::{
     AccessPointRecord, ChannelUsagePoint, ClientRecord, GeoObservation, HandshakeRecord,
-    PacketTypeBreakdown, SpectrumBand,
+    PacketTypeBreakdown, SpectrumBand, WpsInfo,
 };
 use crate::privilege::{HelperRequest, HelperResponse};
 use crate::settings::{ChannelSelectionMode, InterfaceSettings, WifiPacketHeaderMode};
@@ -1395,6 +1395,13 @@ fn run_interface_capture(
     let supports_reason_code_field = tshark_supports_field("wlan.fixed.reason_code");
     let supports_listen_interval_field = tshark_supports_field("wlan.fixed.listen_ival");
     let supports_pmkid_count_field = tshark_supports_field("wlan.rsn.pmkid.count");
+    let supports_wps_version_field = tshark_supports_field("wps.version");
+    let supports_wps_state_field = tshark_supports_field("wps.wifi_protected_setup_state");
+    let supports_wps_config_methods_field = tshark_supports_field("wps.config_methods");
+    let supports_wps_manufacturer_field = tshark_supports_field("wps.manufacturer");
+    let supports_wps_model_name_field = tshark_supports_field("wps.model_name");
+    let supports_wps_model_number_field = tshark_supports_field("wps.model_number");
+    let supports_wps_serial_number_field = tshark_supports_field("wps.serial_number");
     let supports_radiotap_rssi_field = tshark_supports_field("radiotap.dbm_antsignal");
     let supports_ppi_rssi_field = tshark_supports_field("ppi.dbm_antsignal");
     if !supports_radiotap_rssi_field && !supports_ppi_rssi_field {
@@ -1426,6 +1433,13 @@ fn run_interface_capture(
         has_reason_code_field: supports_reason_code_field,
         has_listen_interval_field: supports_listen_interval_field,
         has_pmkid_count_field: supports_pmkid_count_field,
+        has_wps_version_field: supports_wps_version_field,
+        has_wps_state_field: supports_wps_state_field,
+        has_wps_config_methods_field: supports_wps_config_methods_field,
+        has_wps_manufacturer_field: supports_wps_manufacturer_field,
+        has_wps_model_name_field: supports_wps_model_name_field,
+        has_wps_model_number_field: supports_wps_model_number_field,
+        has_wps_serial_number_field: supports_wps_serial_number_field,
     };
 
     let build_decoder_args = |link_type: &str| {
@@ -1524,6 +1538,27 @@ fn run_interface_capture(
         }
         if supports_pmkid_count_field {
             push_decoder_field("wlan.rsn.pmkid.count");
+        }
+        if supports_wps_version_field {
+            push_decoder_field("wps.version");
+        }
+        if supports_wps_state_field {
+            push_decoder_field("wps.wifi_protected_setup_state");
+        }
+        if supports_wps_config_methods_field {
+            push_decoder_field("wps.config_methods");
+        }
+        if supports_wps_manufacturer_field {
+            push_decoder_field("wps.manufacturer");
+        }
+        if supports_wps_model_name_field {
+            push_decoder_field("wps.model_name");
+        }
+        if supports_wps_model_number_field {
+            push_decoder_field("wps.model_number");
+        }
+        if supports_wps_serial_number_field {
+            push_decoder_field("wps.serial_number");
         }
         decoder_args
     };
@@ -1856,6 +1891,7 @@ fn process_live_tshark_fields(
                     ap.encryption_short = short;
                     ap.encryption_full = full;
                 }
+                ap.wps = merge_wps_info(ap.wps.take(), frame.wps.clone());
                 ap.number_of_clients =
                     ap_clients.get(&bssid).map(|set| set.len()).unwrap_or(0) as u32;
 
@@ -2439,6 +2475,7 @@ struct ParsedFrame {
     reason_code: Option<u16>,
     listen_interval: Option<u16>,
     pmkid_count: Option<u16>,
+    wps: Option<WpsInfo>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2465,6 +2502,13 @@ struct TSharkParseLayout {
     has_reason_code_field: bool,
     has_listen_interval_field: bool,
     has_pmkid_count_field: bool,
+    has_wps_version_field: bool,
+    has_wps_state_field: bool,
+    has_wps_config_methods_field: bool,
+    has_wps_manufacturer_field: bool,
+    has_wps_model_name_field: bool,
+    has_wps_model_number_field: bool,
+    has_wps_serial_number_field: bool,
 }
 
 fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFrame> {
@@ -2651,6 +2695,78 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
     } else {
         None
     };
+    if layout.has_pmkid_count_field {
+        i += 1;
+    }
+
+    let wps_version = if layout.has_wps_version_field {
+        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let wps_state = if layout.has_wps_state_field {
+        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let wps_config_methods = if layout.has_wps_config_methods_field {
+        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let wps_manufacturer = if layout.has_wps_manufacturer_field {
+        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let wps_model_name = if layout.has_wps_model_name_field {
+        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let wps_model_number = if layout.has_wps_model_number_field {
+        let v = parse_opt_string(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let wps_serial_number = if layout.has_wps_serial_number_field {
+        parse_opt_string(fields.get(i).copied().unwrap_or(""))
+    } else {
+        None
+    };
+
+    let wps = if wps_version.is_some()
+        || wps_state.is_some()
+        || wps_config_methods.is_some()
+        || wps_manufacturer.is_some()
+        || wps_model_name.is_some()
+        || wps_model_number.is_some()
+        || wps_serial_number.is_some()
+    {
+        Some(WpsInfo {
+            version: wps_version,
+            state: wps_state,
+            config_methods: wps_config_methods,
+            manufacturer: wps_manufacturer,
+            model_name: wps_model_name,
+            model_number: wps_model_number,
+            serial_number: wps_serial_number,
+        })
+    } else {
+        None
+    };
 
     Some(ParsedFrame {
         epoch,
@@ -2684,7 +2800,40 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
         reason_code,
         listen_interval,
         pmkid_count,
+        wps,
     })
+}
+
+fn merge_wps_info(existing: Option<WpsInfo>, incoming: Option<WpsInfo>) -> Option<WpsInfo> {
+    match (existing, incoming) {
+        (None, None) => None,
+        (Some(current), None) => Some(current),
+        (None, Some(new)) => Some(new),
+        (Some(mut current), Some(new)) => {
+            if current.version.is_none() {
+                current.version = new.version;
+            }
+            if current.state.is_none() {
+                current.state = new.state;
+            }
+            if current.config_methods.is_none() {
+                current.config_methods = new.config_methods;
+            }
+            if current.manufacturer.is_none() {
+                current.manufacturer = new.manufacturer;
+            }
+            if current.model_name.is_none() {
+                current.model_name = new.model_name;
+            }
+            if current.model_number.is_none() {
+                current.model_number = new.model_number;
+            }
+            if current.serial_number.is_none() {
+                current.serial_number = new.serial_number;
+            }
+            Some(current)
+        }
+    }
 }
 
 fn parse_opt_string(raw: &str) -> Option<String> {
@@ -2968,6 +3117,13 @@ mod tests {
             has_reason_code_field: false,
             has_listen_interval_field: false,
             has_pmkid_count_field: false,
+            has_wps_version_field: false,
+            has_wps_state_field: false,
+            has_wps_config_methods_field: false,
+            has_wps_manufacturer_field: false,
+            has_wps_model_name_field: false,
+            has_wps_model_number_field: false,
+            has_wps_serial_number_field: false,
         }
     }
 

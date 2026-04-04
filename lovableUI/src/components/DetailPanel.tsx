@@ -67,6 +67,10 @@ const DetailPanel = ({ ap, onNavigateToClients, onLockToAp, actionStatus }: Deta
         <h3 className="text-sm font-bold text-foreground">{ap.ssid ?? <span className="italic text-muted-foreground">Hidden Network</span>}</h3>
         <p className=" text-[10px] text-muted-foreground mt-0.5">{ap.bssid}</p>
         {ap.ouiManufacturer && <p className="text-[10px] text-muted-foreground mt-0.5">{ap.ouiManufacturer}</p>}
+      </div>
+
+      <div className="rounded-lg border border-border bg-secondary/30 p-3">
+        <RSSIMeter rssi={ap.rssiDbm ?? -100} />
         {onLockToAp && (
           <button
             className="mt-2 rounded-md border border-border bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground"
@@ -81,8 +85,6 @@ const DetailPanel = ({ ap, onNavigateToClients, onLockToAp, actionStatus }: Deta
           </p>
         )}
       </div>
-
-      <RSSIMeter rssi={ap.rssiDbm ?? -100} />
 
       <div className="grid grid-cols-2 gap-2">
         {[

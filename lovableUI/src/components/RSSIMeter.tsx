@@ -8,10 +8,10 @@ interface RSSIMeterProps {
 const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi, compactOnWide = true }) => {
   const needleRef = useRef<SVGLineElement>(null);
 
-  // Map RSSI (-100 to -30) to angle (-135 to 135 degrees, left=weak right=strong)
+  // Map RSSI (-100 to -30) across the visible top semicircle (left=weak right=strong).
   const clampedRssi = Math.max(-100, Math.min(-30, rssi));
   const normalized = (clampedRssi + 100) / 70; // 0 (weak) to 1 (strong)
-  const angle = -135 + normalized * 270; // -135° (left/red) to +135° (right/green)
+  const angle = -180 + normalized * 180; // -180° (left/red) to 0° (right/green)
 
   useEffect(() => {
     if (needleRef.current) {
@@ -69,7 +69,7 @@ const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi, compactOnWide = true }) => 
 
         {/* Tick marks */}
         {Array.from({ length: 8 }).map((_, i) => {
-          const tickAngle = -135 + i * (270 / 7);
+          const tickAngle = -180 + i * (180 / 7);
           const rad = (tickAngle * Math.PI) / 180;
           const innerR = 105;
           const outerR = 118;
@@ -100,8 +100,8 @@ const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi, compactOnWide = true }) => 
           ref={needleRef}
           x1="150"
           y1="130"
-          x2="150"
-          y2="35"
+          x2="55"
+          y2="130"
           stroke="hsl(27, 76%, 53%)"
           strokeWidth="2.5"
           strokeLinecap="round"
