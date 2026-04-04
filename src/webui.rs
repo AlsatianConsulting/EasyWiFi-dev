@@ -25,6 +25,7 @@ struct RuntimeHandles {
 struct WebState {
     settings: AppSettings,
     runtime: RuntimeHandles,
+    wifi_interface_restore_types: HashMap<String, String>,
     access_points: HashMap<String, AccessPointRecord>,
     clients: HashMap<String, ClientRecord>,
     bluetooth_devices: HashMap<String, BluetoothDeviceRecord>,
@@ -164,6 +165,7 @@ pub fn run() -> Result<()> {
     let state = Arc::new(Mutex::new(WebState {
         settings,
         runtime: RuntimeHandles::default(),
+        wifi_interface_restore_types: HashMap::new(),
         access_points: HashMap::new(),
         clients: HashMap::new(),
         bluetooth_devices: HashMap::new(),
@@ -287,21 +289,18 @@ fn handle_client(
     capture_tx: Sender<CaptureEvent>,
     bluetooth_tx: Sender<BluetoothEvent>,
 ) -> Result<()> {
-    let mut buf = [0_u8; 8192];
-    let read = stream.read(&mut buf).context("failed reading request")?;
-    if read == 0 {
+    let req_bytes = read_http_request(&mut stream)?;
+    if req_bytes.is_empty() {
         return Ok(());
     }
-
-    let req_bytes = &buf[..read];
-    let req = String::from_utf8_lossy(req_bytes);
+    let req = String::from_utf8_lossy(&req_bytes);
     let mut lines = req.lines();
     let request_line = lines.next().unwrap_or_default();
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("GET");
     let raw_path = parts.next().unwrap_or("/");
     let (path, query) = split_request_path(raw_path);
-    let body = request_body_bytes(req_bytes);
+    let body = request_body_bytes(&req_bytes);
 
     if method == "GET" && path == "/api/health" {
         return respond_json(&mut stream, "{\"status\":\"ok\",\"ui\":\"web\"}");
@@ -679,9 +678,7 @@ fn handle_client(
 
     if method == "POST" && path == "/api/scan/stop" {
         let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
-        if let Some(runtime) = s.runtime.capture.take() {
-            runtime.stop();
-        }
+        stop_wifi_capture(&mut s);
         if let Some(runtime) = s.runtime.bluetooth.take() {
             runtime.stop();
         }
@@ -726,9 +723,7 @@ fn handle_client(
             format!("selected scan interface set to {}", interface_name),
         );
         if s.runtime.capture.is_some() {
-            if let Some(runtime) = s.runtime.capture.take() {
-                runtime.stop();
-            }
+            stop_wifi_capture(&mut s);
             start_scans_if_needed(&mut s, &capture_tx, &bluetooth_tx);
         }
         return respond_json(&mut stream, "{\"ok\":true}");
@@ -851,9 +846,7 @@ fn handle_client(
             format!("locked selected interface to AP {} channel {}", bssid, channel),
         );
         if s.runtime.capture.is_some() {
-            if let Some(runtime) = s.runtime.capture.take() {
-                runtime.stop();
-            }
+            stop_wifi_capture(&mut s);
             start_scans_if_needed(&mut s, &capture_tx, &bluetooth_tx);
         }
         return respond_json(&mut stream, "{\"ok\":true}");
@@ -954,8 +947,55 @@ fn start_scans_with_selection(
     bluetooth_enabled: bool,
 ) {
     if wifi_enabled && state.runtime.capture.is_none() {
+        let enabled_interfaces = state
+            .settings
+            .interfaces
+            .iter()
+            .filter(|i| i.enabled)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut prepared_interfaces = Vec::new();
+        for iface in enabled_interfaces {
+            match capture::prepare_interface_for_capture(iface.clone(), true) {
+                Ok(prepared) => {
+                    for line in prepared.status_lines {
+                        push_log(state, line);
+                    }
+                    if let Some(original) = prepared.original_type.as_deref() {
+                        if !original.eq_ignore_ascii_case("monitor") {
+                            state.wifi_interface_restore_types.insert(
+                                prepared.interface.interface_name.clone(),
+                                original.to_string(),
+                            );
+                        }
+                    }
+                    prepared_interfaces.push(prepared.interface);
+                }
+                Err(err) => {
+                    push_log(
+                        state,
+                        format!("failed to prepare {} for capture: {}", iface.interface_name, err),
+                    );
+                }
+            }
+        }
+        for prepared in &prepared_interfaces {
+            for iface in &mut state.settings.interfaces {
+                if iface.interface_name == prepared.interface_name {
+                    iface.monitor_interface_name = prepared.monitor_interface_name.clone();
+                    iface.channel_mode = prepared.channel_mode.clone();
+                }
+            }
+        }
+        if prepared_interfaces.is_empty() {
+            push_log(
+                state,
+                "Wi-Fi scanning not started; no interfaces were successfully prepared".to_string(),
+            );
+            return;
+        }
         let config = CaptureConfig {
-            interfaces: state.settings.interfaces.clone(),
+            interfaces: prepared_interfaces,
             session_pcap_path: None,
             wifi_packet_header_mode: state.settings.wifi_packet_header_mode,
             wifi_frame_parsing_enabled: state.settings.enable_wifi_frame_parsing,
@@ -966,10 +1006,7 @@ fn start_scans_with_selection(
         state.runtime.capture = Some(capture::start_capture(config, capture_tx.clone()));
         push_log(state, "Wi-Fi scanning started".to_string());
     } else if !wifi_enabled && state.runtime.capture.is_some() {
-        if let Some(runtime) = state.runtime.capture.take() {
-            runtime.stop();
-        }
-        push_log(state, "Wi-Fi scanning stopped".to_string());
+        stop_wifi_capture(state);
     }
 
     if bluetooth_enabled && state.runtime.bluetooth.is_none() {
@@ -988,6 +1025,86 @@ fn start_scans_with_selection(
         }
         push_log(state, "Bluetooth scanning stopped".to_string());
     }
+}
+
+fn stop_wifi_capture(state: &mut WebState) {
+    if let Some(runtime) = state.runtime.capture.take() {
+        runtime.stop();
+    }
+    let mut status_lines = Vec::<String>::new();
+    for iface in &mut state.settings.interfaces {
+        if let Some(restore_type) = state
+            .wifi_interface_restore_types
+            .remove(&iface.interface_name)
+        {
+            match capture::set_interface_type(&iface.interface_name, &restore_type) {
+                Ok(()) => status_lines.push(format!(
+                    "{} restored to {}",
+                    iface.interface_name, restore_type
+                )),
+                Err(err) => status_lines.push(format!(
+                    "failed to restore {} to {}: {}",
+                    iface.interface_name, restore_type, err
+                )),
+            }
+        }
+        iface.monitor_interface_name = None;
+    }
+    for line in status_lines {
+        push_log(state, line);
+    }
+    push_log(state, "Wi-Fi scanning stopped".to_string());
+}
+
+fn read_http_request(stream: &mut TcpStream) -> Result<Vec<u8>> {
+    let mut request = Vec::<u8>::with_capacity(8192);
+    let mut chunk = [0_u8; 4096];
+    let mut header_end: Option<usize> = None;
+    let mut expected_body_len = 0usize;
+
+    loop {
+        let read = stream.read(&mut chunk).context("failed reading request")?;
+        if read == 0 {
+            break;
+        }
+        request.extend_from_slice(&chunk[..read]);
+
+        if header_end.is_none() {
+            if let Some(pos) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                let end = pos + 4;
+                header_end = Some(end);
+                expected_body_len = content_length_from_headers(&request[..end]);
+                if request.len() >= end + expected_body_len {
+                    request.truncate(end + expected_body_len);
+                    break;
+                }
+            }
+        } else if let Some(end) = header_end {
+            if request.len() >= end + expected_body_len {
+                request.truncate(end + expected_body_len);
+                break;
+            }
+        }
+
+        if request.len() > 2_000_000 {
+            anyhow::bail!("request too large");
+        }
+    }
+
+    Ok(request)
+}
+
+fn content_length_from_headers(headers: &[u8]) -> usize {
+    let text = String::from_utf8_lossy(headers);
+    for line in text.lines() {
+        let lower = line.to_ascii_lowercase();
+        if let Some(value) = lower.strip_prefix("content-length:") {
+            if let Ok(parsed) = value.trim().parse::<usize>() {
+                return parsed;
+            }
+        }
+    }
+    0
 }
 
 fn request_body_bytes(request: &[u8]) -> &[u8] {
