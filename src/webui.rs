@@ -245,6 +245,38 @@ fn apply_capture_event(state: &mut WebState, event: CaptureEvent) {
             state.access_points.insert(ap.bssid.clone(), ap);
         }
         CaptureEvent::ClientSeen(client) => {
+            // In sparse capture environments we may see client traffic before
+            // beacon/probe management frames. Seed placeholder AP rows so the
+            // UI still reflects active BSSIDs.
+            let mut candidate_bssids = client
+                .associated_ap
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            for bssid in &client.seen_access_points {
+                if !candidate_bssids.iter().any(|entry| entry == bssid) {
+                    candidate_bssids.push(bssid.clone());
+                }
+            }
+            for bssid in candidate_bssids {
+                if bssid.trim().is_empty() {
+                    continue;
+                }
+                if let Some(existing) = state.access_points.get_mut(&bssid) {
+                    existing.last_seen = client.last_seen;
+                    if existing.rssi_dbm.is_none() {
+                        existing.rssi_dbm = client.rssi_dbm;
+                    }
+                    continue;
+                }
+                let mut seeded = AccessPointRecord::new(bssid.clone(), client.last_seen);
+                seeded.last_seen = client.last_seen;
+                seeded.rssi_dbm = client.rssi_dbm;
+                seeded.band = client.network_intel.band.clone();
+                seeded.source_adapters = client.source_adapters.clone();
+                seeded.number_of_clients = 1;
+                state.access_points.insert(bssid, seeded);
+            }
             state.clients.insert(client.mac.clone(), client);
         }
         CaptureEvent::ChannelUsage(usage) => {
