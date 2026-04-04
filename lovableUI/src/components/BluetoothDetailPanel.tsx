@@ -43,7 +43,9 @@ const BluetoothDetailPanel = ({ device, onEnumerateServices, enumerationStatus }
         )}
       </div>
 
-      <RSSIMeter rssi={device.rssiDbm ?? -100} />
+      <div className="self-stretch 2xl:self-start">
+        <RSSIMeter rssi={device.rssiDbm ?? -100} compactOnWide />
+      </div>
 
       <div className="grid grid-cols-2 gap-2">
         {[

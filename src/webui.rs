@@ -527,11 +527,12 @@ fn handle_client(
                 .filter(|mode| supported_modes.contains(mode))
                 .collect::<Vec<_>>();
         }
-        let primary_ht_mode = wifi_bandwidths
-            .first()
-            .cloned()
-            .or_else(|| req.locked_ht_mode.clone())
+        let requested_primary = req
+            .locked_ht_mode
+            .clone()
             .or_else(|| req.hop_ht_mode.clone())
+            .or_else(|| wifi_bandwidths.first().cloned());
+        let mut primary_ht_mode = requested_primary
             .filter(|mode| supported_modes.is_empty() || supported_modes.contains(mode))
             .unwrap_or_else(|| {
                 supported_modes
@@ -548,6 +549,13 @@ fn handle_client(
             } else {
                 supported_channels.first().copied().unwrap_or(requested_lock)
             };
+            if !mode_allowed_for_channel(&primary_ht_mode, locked_channel) {
+                let per_channel_modes = modes_for_channel(&supported_modes, locked_channel);
+                primary_ht_mode = per_channel_modes
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "HT20".to_string());
+            }
             ChannelSelectionMode::Locked {
                 channel: locked_channel,
                 ht_mode: primary_ht_mode.clone(),
@@ -585,6 +593,11 @@ fn handle_client(
             }
             let mut channel_ht_modes = BTreeMap::<u16, Vec<String>>::new();
             let requested_channel_ht_modes = req.channel_ht_modes.unwrap_or_default();
+            let all_supported_channel_modes = if wifi_bandwidths.is_empty() {
+                supported_modes.clone()
+            } else {
+                wifi_bandwidths.clone()
+            };
             if !requested_channel_ht_modes.is_empty() {
                 for channel in &channels {
                     let requested_modes = requested_channel_ht_modes
@@ -592,21 +605,17 @@ fn handle_client(
                         .cloned()
                         .or_else(|| requested_channel_ht_modes.get(&0).cloned())
                         .unwrap_or_default();
-                    let mut filtered_modes = requested_modes
-                        .into_iter()
-                        .map(|mode| mode.trim().to_string())
-                        .filter(|mode| !mode.is_empty())
-                        .filter(|mode| supported_modes.is_empty() || supported_modes.contains(mode))
-                        .collect::<Vec<_>>();
-                    filtered_modes.sort();
-                    filtered_modes.dedup();
+                    let filtered_modes = modes_for_channel(&requested_modes, *channel);
                     if !filtered_modes.is_empty() {
                         channel_ht_modes.insert(*channel, filtered_modes);
                     }
                 }
-            } else if !wifi_bandwidths.is_empty() {
+            } else if !all_supported_channel_modes.is_empty() {
                 for channel in &channels {
-                    channel_ht_modes.insert(*channel, wifi_bandwidths.clone());
+                    let per_channel = modes_for_channel(&all_supported_channel_modes, *channel);
+                    if !per_channel.is_empty() {
+                        channel_ht_modes.insert(*channel, per_channel);
+                    }
                 }
             }
             ChannelSelectionMode::HopAll {
@@ -1036,6 +1045,18 @@ fn actionable_ht_modes_for_interface(interface: &str) -> Vec<String> {
         .map(|mode| mode.trim().to_string())
         .filter(|mode| !mode.is_empty())
         .filter(|mode| !mode.contains("device capability"))
+        .filter(|mode| matches!(
+            mode.as_str(),
+            "NOHT"
+                | "HT20"
+                | "HT40+"
+                | "HT40-"
+                | "5MHz"
+                | "10MHz"
+                | "80MHz"
+                | "160MHz"
+                | "80+80MHz"
+        ))
         .collect::<Vec<_>>();
     if modes.is_empty() {
         modes.push("HT20".to_string());
@@ -1059,6 +1080,58 @@ fn actionable_channels_for_interface(interface: &str) -> Vec<u16> {
     channels.sort_unstable();
     channels.dedup();
     channels
+}
+
+fn channel_band_kind(channel: u16) -> &'static str {
+    if (1..=14).contains(&channel) {
+        "2.4"
+    } else if (32..=177).contains(&channel) {
+        "5"
+    } else {
+        "6"
+    }
+}
+
+fn mode_allowed_for_channel(mode: &str, channel: u16) -> bool {
+    let normalized = mode.trim().to_ascii_uppercase();
+    if normalized.is_empty() || normalized.contains("DEVICE CAPABILITY") {
+        return false;
+    }
+
+    match channel_band_kind(channel) {
+        "2.4" => matches!(
+            normalized.as_str(),
+            "NOHT" | "HT20" | "HT40+" | "HT40-" | "5MHZ" | "10MHZ"
+        ),
+        "5" => matches!(
+            normalized.as_str(),
+            "NOHT"
+                | "HT20"
+                | "HT40+"
+                | "HT40-"
+                | "5MHZ"
+                | "10MHZ"
+                | "80MHZ"
+                | "160MHZ"
+                | "80+80MHZ"
+        ),
+        _ => matches!(
+            normalized.as_str(),
+            "HT20" | "HT40+" | "HT40-" | "80MHZ" | "160MHZ" | "80+80MHZ"
+        ),
+    }
+}
+
+fn modes_for_channel(requested: &[String], channel: u16) -> Vec<String> {
+    let mut filtered = requested
+        .iter()
+        .map(|mode| mode.trim().to_string())
+        .filter(|mode| !mode.is_empty())
+        .filter(|mode| mode_allowed_for_channel(mode, channel))
+        .collect::<Vec<_>>();
+    filtered.sort();
+    filtered.dedup();
+    filtered
 }
 
 fn map_path(request_path: &str) -> PathBuf {

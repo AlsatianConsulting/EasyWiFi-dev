@@ -2,9 +2,10 @@ import React, { useEffect, useRef } from "react";
 
 interface RSSIMeterProps {
   rssi: number;
+  compactOnWide?: boolean;
 }
 
-const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi }) => {
+const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi, compactOnWide = true }) => {
   const needleRef = useRef<SVGLineElement>(null);
 
   // Map RSSI (-100 to -30) to angle (-135 to 135 degrees, left=weak right=strong)
@@ -29,15 +30,15 @@ const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi }) => {
   };
 
   return (
-    <div className="rounded-lg border border-border bg-card p-3">
-      <div className="flex items-center justify-between mb-1">
+    <div className={`rounded-lg border border-border bg-card p-3 ${compactOnWide ? "2xl:max-w-[260px] 2xl:p-2" : ""}`}>
+      <div className="mb-1 flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
           Signal Strength Meter
         </span>
-        <span className=" text-sm font-bold text-foreground">{rssi} dBm</span>
+        <span className={`${compactOnWide ? "2xl:text-xs" : ""} text-sm font-bold text-foreground`}>{rssi} dBm</span>
       </div>
 
-      <svg viewBox="0 0 300 170" className="w-full">
+      <svg viewBox="0 0 300 170" className={`${compactOnWide ? "2xl:h-[96px]" : ""} w-full`}>
         {/* Arc background segments: Red → Yellow → Green */}
         <defs>
           <linearGradient id="meterGradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -108,7 +109,7 @@ const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi }) => {
         />
 
         {/* Label */}
-        <text x="150" y="160" textAnchor="middle" fill="hsl(210, 20%, 92%)" fontSize="11" fontWeight="600">
+        <text x="150" y="160" textAnchor="middle" fill="hsl(210, 20%, 92%)" fontSize={compactOnWide ? "10" : "11"} fontWeight="600">
           {getLabel()}
         </text>
       </svg>
