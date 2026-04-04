@@ -896,36 +896,53 @@ fn handle_client(
             s.settings.bluetooth_controller.clone()
         };
 
-        let result = bluetooth::connect_and_enumerate_device(controller.as_deref(), &mac);
+        let state_for_task = state.clone();
+        let mac_for_task = mac.clone();
+        thread::spawn(move || {
+            let result = bluetooth::connect_and_enumerate_device(controller.as_deref(), &mac_for_task);
+            if let Ok(mut s) = state_for_task.lock() {
+                match result {
+                    Ok(record) => {
+                        s.bluetooth_devices.insert(record.mac.clone(), record);
+                        s.bt_enumeration_status.insert(
+                            mac_for_task.clone(),
+                            BtEnumerationStatus {
+                                message: "enumeration completed".to_string(),
+                                is_error: false,
+                            },
+                        );
+                        push_log(
+                            &mut s,
+                            format!("active bluetooth enumeration completed for {}", mac_for_task),
+                        );
+                    }
+                    Err(err) => {
+                        let msg = err.to_string();
+                        s.bt_enumeration_status.insert(
+                            mac_for_task.clone(),
+                            BtEnumerationStatus {
+                                message: msg.clone(),
+                                is_error: true,
+                            },
+                        );
+                        push_log(
+                            &mut s,
+                            format!(
+                                "active bluetooth enumeration failed for {}: {}",
+                                mac_for_task, msg
+                            ),
+                        );
+                    }
+                }
+            }
+        });
 
-        let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
-        match result {
-            Ok(record) => {
-                s.bluetooth_devices.insert(record.mac.clone(), record);
-                let status = BtEnumerationStatus {
-                    message: "enumeration completed".to_string(),
-                    is_error: false,
-                };
-                s.bt_enumeration_status.insert(mac.clone(), status.clone());
-                push_log(&mut s, format!("active bluetooth enumeration completed for {}", mac));
-                let body = serde_json::to_string(&status).context("failed to serialize bt status")?;
-                return respond_json(&mut stream, &body);
-            }
-            Err(err) => {
-                let msg = err.to_string();
-                let status = BtEnumerationStatus {
-                    message: msg.clone(),
-                    is_error: true,
-                };
-                s.bt_enumeration_status.insert(mac.clone(), status.clone());
-                push_log(
-                    &mut s,
-                    format!("active bluetooth enumeration failed for {}: {}", mac, msg),
-                );
-                let body = serde_json::to_string(&status).context("failed to serialize bt status")?;
-                return respond_json(&mut stream, &body);
-            }
-        }
+        let status = BtEnumerationStatus {
+            message: "enumeration running".to_string(),
+            is_error: false,
+        };
+        let body = serde_json::to_string(&status).context("failed to serialize bt status")?;
+        return respond_json(&mut stream, &body);
     }
 
     if method != "GET" {
