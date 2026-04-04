@@ -1864,7 +1864,10 @@ fn process_live_tshark_fields(
             let is_probe_response = frame.fc_type == Some(0) && frame.subtype == Some(5);
             let is_beacon = frame.fc_type == Some(0) && frame.subtype == Some(8);
 
-            let should_seed_ap = is_beacon || is_probe_response;
+            // Seed AP records from any valid BSSID-bearing frame, not only beacons/probe responses.
+            // Some adapters/channels deliver sparse management frames but still carry useful BSSID
+            // context in data/control traffic; this keeps the AP table populated in those cases.
+            let should_seed_ap = true;
             let should_update_existing_ap = ap_state.contains_key(&bssid);
             if !bssid.is_empty()
                 && !bssid_is_broadcast
