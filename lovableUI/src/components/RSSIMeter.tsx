@@ -9,7 +9,8 @@ const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi, compactOnWide = true }) => 
   // Map RSSI (-100 to -30) across the visible top semicircle (left=weak right=strong).
   const clampedRssi = Math.max(-100, Math.min(-30, rssi));
   const normalized = (clampedRssi + 100) / 70; // 0 (weak) to 1 (strong)
-  const angle = -180 + normalized * 180; // -180° (left/red) to 0° (right/green)
+  // The needle baseline points left; rotate 0..180 so weak stays left and strong moves right.
+  const angle = normalized * 180;
 
   const getLabel = () => {
     if (rssi >= -40) return "Excellent";
