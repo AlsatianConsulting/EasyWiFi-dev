@@ -14,7 +14,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Default)]
 struct RuntimeHandles {
@@ -140,6 +140,10 @@ struct ScanSetupResponse {
     channel_ht_modes: BTreeMap<u16, Vec<String>>,
     wifi_band: String,
     wifi_bandwidths: Vec<String>,
+    wifi_export_enabled: bool,
+    wifi_export_dir: String,
+    bluetooth_export_enabled: bool,
+    bluetooth_export_dir: String,
     bluetooth_controller: Option<String>,
 }
 
@@ -157,6 +161,10 @@ struct ScanSetupRequest {
     channel_ht_modes: Option<BTreeMap<u16, Vec<String>>>,
     wifi_band: Option<String>,
     wifi_bandwidths: Option<Vec<String>>,
+    wifi_export_enabled: bool,
+    wifi_export_dir: String,
+    bluetooth_export_enabled: bool,
+    bluetooth_export_dir: String,
     bluetooth_controller: Option<String>,
 }
 
@@ -490,6 +498,14 @@ fn handle_client(
             channel_ht_modes,
             wifi_band,
             wifi_bandwidths,
+            wifi_export_enabled: s.settings.wifi_export_enabled,
+            wifi_export_dir: s.settings.wifi_export_dir.to_string_lossy().to_string(),
+            bluetooth_export_enabled: s.settings.bluetooth_export_enabled,
+            bluetooth_export_dir: s
+                .settings
+                .bluetooth_export_dir
+                .to_string_lossy()
+                .to_string(),
             bluetooth_controller: s.settings.bluetooth_controller.clone(),
         };
         let body = serde_json::to_string(&payload).context("failed to serialize scan setup")?;
@@ -645,6 +661,16 @@ fn handle_client(
             });
         }
         s.settings.bluetooth_enabled = req.bluetooth_enabled;
+        s.settings.wifi_export_enabled = req.wifi_export_enabled;
+        s.settings.bluetooth_export_enabled = req.bluetooth_export_enabled;
+        let wifi_export_dir = req.wifi_export_dir.trim();
+        if !wifi_export_dir.is_empty() {
+            s.settings.wifi_export_dir = PathBuf::from(wifi_export_dir);
+        }
+        let bluetooth_export_dir = req.bluetooth_export_dir.trim();
+        if !bluetooth_export_dir.is_empty() {
+            s.settings.bluetooth_export_dir = PathBuf::from(bluetooth_export_dir);
+        }
         s.settings.bluetooth_controller = req
             .bluetooth_controller
             .as_deref()
@@ -679,9 +705,7 @@ fn handle_client(
     if method == "POST" && path == "/api/scan/stop" {
         let mut s = state.lock().map_err(|_| anyhow::anyhow!("state mutex poisoned"))?;
         stop_wifi_capture(&mut s);
-        if let Some(runtime) = s.runtime.bluetooth.take() {
-            runtime.stop();
-        }
+        stop_bluetooth_scan(&mut s);
         push_log(&mut s, "Scanning stopped".to_string());
         return respond_json(&mut stream, "{\"ok\":true}");
     }
@@ -1020,10 +1044,7 @@ fn start_scans_with_selection(
         state.runtime.bluetooth = Some(bluetooth::start_scan(cfg, bluetooth_tx.clone()));
         push_log(state, "Bluetooth scanning started".to_string());
     } else if !bluetooth_enabled && state.runtime.bluetooth.is_some() {
-        if let Some(runtime) = state.runtime.bluetooth.take() {
-            runtime.stop();
-        }
-        push_log(state, "Bluetooth scanning stopped".to_string());
+        stop_bluetooth_scan(state);
     }
 }
 
@@ -1053,7 +1074,91 @@ fn stop_wifi_capture(state: &mut WebState) {
     for line in status_lines {
         push_log(state, line);
     }
+    maybe_export_wifi_data(state);
     push_log(state, "Wi-Fi scanning stopped".to_string());
+}
+
+fn stop_bluetooth_scan(state: &mut WebState) {
+    if let Some(runtime) = state.runtime.bluetooth.take() {
+        runtime.stop();
+    }
+    maybe_export_bluetooth_data(state);
+    push_log(state, "Bluetooth scanning stopped".to_string());
+}
+
+fn maybe_export_wifi_data(state: &mut WebState) {
+    if !state.settings.wifi_export_enabled {
+        return;
+    }
+    let dir = state.settings.wifi_export_dir.clone();
+    if let Err(err) = fs::create_dir_all(&dir) {
+        push_log(
+            state,
+            format!(
+                "wifi export failed: unable to create {}: {}",
+                dir.display(),
+                err
+            ),
+        );
+        return;
+    }
+    let ts = epoch_timestamp();
+    let path = dir.join(format!("easywifi_wifi_export_{}.json", ts));
+    let payload = serde_json::json!({
+        "timestamp": ts,
+        "access_points": state.access_points.values().cloned().collect::<Vec<_>>(),
+        "clients": state.clients.values().cloned().collect::<Vec<_>>(),
+        "channel_usage": state.channel_usage,
+    });
+    match serde_json::to_vec_pretty(&payload)
+        .ok()
+        .and_then(|bytes| fs::write(&path, bytes).ok())
+    {
+        Some(()) => push_log(state, format!("wifi export saved to {}", path.display())),
+        None => push_log(state, format!("wifi export failed for {}", path.display())),
+    }
+}
+
+fn maybe_export_bluetooth_data(state: &mut WebState) {
+    if !state.settings.bluetooth_export_enabled {
+        return;
+    }
+    let dir = state.settings.bluetooth_export_dir.clone();
+    if let Err(err) = fs::create_dir_all(&dir) {
+        push_log(
+            state,
+            format!(
+                "bluetooth export failed: unable to create {}: {}",
+                dir.display(),
+                err
+            ),
+        );
+        return;
+    }
+    let ts = epoch_timestamp();
+    let path = dir.join(format!("easywifi_bluetooth_export_{}.json", ts));
+    let payload = serde_json::json!({
+        "timestamp": ts,
+        "devices": state.bluetooth_devices.values().cloned().collect::<Vec<_>>(),
+        "enumeration_status": state.bt_enumeration_status,
+    });
+    match serde_json::to_vec_pretty(&payload)
+        .ok()
+        .and_then(|bytes| fs::write(&path, bytes).ok())
+    {
+        Some(()) => push_log(state, format!("bluetooth export saved to {}", path.display())),
+        None => push_log(
+            state,
+            format!("bluetooth export failed for {}", path.display()),
+        ),
+    }
+}
+
+fn epoch_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn read_http_request(stream: &mut TcpStream) -> Result<Vec<u8>> {

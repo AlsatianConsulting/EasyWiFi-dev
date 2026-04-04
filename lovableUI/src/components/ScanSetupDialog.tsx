@@ -27,6 +27,10 @@ export interface ScanSetupModel {
   channel_ht_modes?: Record<string, string[]>;
   wifi_band: "all" | "2.4" | "5" | "6";
   wifi_bandwidths: string[];
+  wifi_export_enabled: boolean;
+  wifi_export_dir: string;
+  bluetooth_export_enabled: boolean;
+  bluetooth_export_dir: string;
   bluetooth_controller: string | null;
 }
 
@@ -215,6 +219,26 @@ const ScanSetupDialog = ({
                 onCheckedChange={(v) => setModel((m) => (m ? { ...m, wifi_enabled: v } : m))}
               />
             </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs">Export Data</span>
+              <Switch
+                checked={model.wifi_export_enabled}
+                onCheckedChange={(v) => setModel((m) => (m ? { ...m, wifi_export_enabled: v } : m))}
+              />
+            </div>
+            {model.wifi_export_enabled && (
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Wi-Fi Export Folder</span>
+                <Input
+                  className="h-8 text-xs"
+                  value={model.wifi_export_dir}
+                  onChange={(e) =>
+                    setModel((m) => (m ? { ...m, wifi_export_dir: e.target.value } : m))
+                  }
+                  placeholder="/path/to/wifi/exports"
+                />
+              </div>
+            )}
 
             <div className="space-y-1">
               <span className="text-xs text-muted-foreground">Interface</span>
@@ -543,6 +567,28 @@ const ScanSetupDialog = ({
                 onCheckedChange={(v) => setModel((m) => (m ? { ...m, bluetooth_enabled: v } : m))}
               />
             </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs">Export Data</span>
+              <Switch
+                checked={model.bluetooth_export_enabled}
+                onCheckedChange={(v) =>
+                  setModel((m) => (m ? { ...m, bluetooth_export_enabled: v } : m))
+                }
+              />
+            </div>
+            {model.bluetooth_export_enabled && (
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Bluetooth Export Folder</span>
+                <Input
+                  className="h-8 text-xs"
+                  value={model.bluetooth_export_dir}
+                  onChange={(e) =>
+                    setModel((m) => (m ? { ...m, bluetooth_export_dir: e.target.value } : m))
+                  }
+                  placeholder="/path/to/bluetooth/exports"
+                />
+              </div>
+            )}
 
             <div className="space-y-1">
               <span className="text-xs text-muted-foreground">Bluetooth Interface</span>
@@ -598,6 +644,14 @@ const ScanSetupDialog = ({
                     : {};
                 await onApply({
                   ...model,
+                  wifi_enabled:
+                    section === "bluetooth"
+                      ? (setup?.wifi_enabled ?? model.wifi_enabled)
+                      : model.wifi_enabled,
+                  bluetooth_enabled:
+                    section === "wifi"
+                      ? (setup?.bluetooth_enabled ?? model.bluetooth_enabled)
+                      : model.bluetooth_enabled,
                   wifi_bandwidths:
                     model.mode === "hop_specific" && hopPreset !== "selected"
                       ? []

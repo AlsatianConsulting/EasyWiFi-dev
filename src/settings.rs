@@ -33,6 +33,14 @@ pub fn default_output_root() -> PathBuf {
         .join("output")
 }
 
+pub fn default_wifi_export_dir() -> PathBuf {
+    default_output_root().join("wifi")
+}
+
+pub fn default_bluetooth_export_dir() -> PathBuf {
+    default_output_root().join("bluetooth")
+}
+
 pub fn default_geoip_city_db_path() -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut candidates = Vec::new();
@@ -899,6 +907,14 @@ pub struct AppSettings {
     pub output_to_files: bool,
     #[serde(default = "default_output_root")]
     pub output_root: PathBuf,
+    #[serde(default)]
+    pub wifi_export_enabled: bool,
+    #[serde(default = "default_wifi_export_dir")]
+    pub wifi_export_dir: PathBuf,
+    #[serde(default)]
+    pub bluetooth_export_enabled: bool,
+    #[serde(default = "default_bluetooth_export_dir")]
+    pub bluetooth_export_dir: PathBuf,
     #[serde(default = "default_geoip_city_db_path")]
     pub geoip_city_db_path: PathBuf,
     #[serde(default)]
@@ -966,6 +982,10 @@ impl Default for AppSettings {
             enable_wifi_frame_parsing: default_enable_wifi_frame_parsing(),
             output_to_files: false,
             output_root: default_output_root(),
+            wifi_export_enabled: false,
+            wifi_export_dir: default_wifi_export_dir(),
+            bluetooth_export_enabled: false,
+            bluetooth_export_dir: default_bluetooth_export_dir(),
             geoip_city_db_path: default_geoip_city_db_path(),
             interfaces: Vec::new(),
             bluetooth_enabled: default_bluetooth_enabled(),

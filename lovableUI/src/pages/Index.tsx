@@ -167,8 +167,8 @@ const Index = () => {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = (await res.json()) as ScanSetupModel;
     setScanSetup(body);
-    setStartWifiEnabled(false);
-    setStartBluetoothEnabled(false);
+    setStartWifiEnabled(Boolean(body.wifi_enabled));
+    setStartBluetoothEnabled(Boolean(body.bluetooth_enabled));
   }, []);
 
   useEffect(() => {
