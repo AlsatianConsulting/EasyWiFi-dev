@@ -125,13 +125,9 @@ const PreferencesDialog = ({
               </Select>
             </SettingRow>
             <SettingRow label="Packet Header Mode">
-              <Select value={local.wifiPacketHeaderMode} onValueChange={(v) => update({ wifiPacketHeaderMode: v as "radiotap" | "ppi" })}>
-                <SelectTrigger className="w-28 h-7 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="radiotap">Radiotap</SelectItem>
-                  <SelectItem value="ppi">PPI</SelectItem>
-                </SelectContent>
-              </Select>
+              <span className="inline-flex h-7 items-center rounded border border-border px-2 text-xs text-foreground">
+                Radiotap (fixed)
+              </span>
             </SettingRow>
             <SettingRow label="Enable WiFi Frame Parsing"><Switch checked={local.enableWifiFrameParsing} onCheckedChange={(v) => update({ enableWifiFrameParsing: v })} /></SettingRow>
           </Section>

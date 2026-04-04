@@ -3,6 +3,7 @@ use crate::capture::{self, CaptureConfig, CaptureEvent, CaptureRuntime};
 use crate::model::{AccessPointRecord, BluetoothDeviceRecord, ChannelUsagePoint, ClientRecord};
 use crate::settings::{
     AppSettings, ChannelSelectionMode, InterfaceSettings, WatchlistDeviceType, WatchlistEntry,
+    WifiPacketHeaderMode,
 };
 use anyhow::{Context, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -1236,7 +1237,7 @@ fn start_scans_with_selection(
             let config = CaptureConfig {
                 interfaces: prepared_interfaces,
                 session_pcap_path: None,
-                wifi_packet_header_mode: state.settings.wifi_packet_header_mode,
+                wifi_packet_header_mode: WifiPacketHeaderMode::Radiotap,
                 wifi_frame_parsing_enabled: state.settings.enable_wifi_frame_parsing,
                 geoip_city_db_path: None,
                 gps_enabled: false,

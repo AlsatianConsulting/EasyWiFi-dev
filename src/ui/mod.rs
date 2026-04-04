@@ -1169,7 +1169,7 @@ impl AppState {
         let interfaces = self.settings.interfaces.clone();
         let session_capture_path = self.session_capture_path.clone();
         let geoip_city_db_path = self.settings.geoip_city_db_path.clone();
-        let wifi_packet_header_mode = self.settings.wifi_packet_header_mode;
+        let wifi_packet_header_mode = WifiPacketHeaderMode::Radiotap;
         let wifi_frame_parsing_enabled = self.settings.enable_wifi_frame_parsing;
         let gps_enabled = !matches!(self.settings.gps, GpsSettings::Disabled);
         let capture_sender = self.capture_sender.clone();
