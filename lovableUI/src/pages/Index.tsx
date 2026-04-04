@@ -85,8 +85,6 @@ const Index = () => {
   const [watchlistEntries, setWatchlistEntries] = useState<MetaWatchlistEntry[]>([]);
   const [apActionStatus, setApActionStatus] = useState<BtEnumerationStatus | null>(null);
   const [btEnumerationStatus, setBtEnumerationStatus] = useState<Record<string, BtEnumerationStatus>>({});
-  const [startWifiEnabled, setStartWifiEnabled] = useState(false);
-  const [startBluetoothEnabled, setStartBluetoothEnabled] = useState(false);
   const [scanSetupOpen, setScanSetupOpen] = useState(false);
   const [scanSetupSection, setScanSetupSection] = useState<"wifi" | "bluetooth">("wifi");
   const [scanSetup, setScanSetup] = useState<ScanSetupModel | null>(null);
@@ -167,8 +165,6 @@ const Index = () => {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = (await res.json()) as ScanSetupModel;
     setScanSetup(body);
-    setStartWifiEnabled(Boolean(body.wifi_enabled));
-    setStartBluetoothEnabled(Boolean(body.bluetooth_enabled));
   }, []);
 
   useEffect(() => {
@@ -325,32 +321,20 @@ const Index = () => {
         activeTab={activeTab}
         onTabChange={(tab) => { setActiveTab(tab); if (tab !== "clients") setApFilter(null); }}
         scanning={scanning}
-        canStart={startWifiEnabled || startBluetoothEnabled}
-        startWifiEnabled={startWifiEnabled}
-        startBluetoothEnabled={startBluetoothEnabled}
-        onStartWifiEnabledChange={(enabled) => {
-          setStartWifiEnabled(enabled);
-          setScanSetup((prev) => (prev ? { ...prev, wifi_enabled: enabled } : prev));
-          if (enabled) {
-            setScanSetupSection("wifi");
-            setScanSetupOpen(true);
-          }
-        }}
-        onStartBluetoothEnabledChange={(enabled) => {
-          setStartBluetoothEnabled(enabled);
-          setScanSetup((prev) => (prev ? { ...prev, bluetooth_enabled: enabled } : prev));
-          if (enabled) {
-            setScanSetupSection("bluetooth");
-            setScanSetupOpen(true);
-          }
-        }}
         onToggleScan={() => {
-          const action = scanning
-            ? postScan("/api/scan/stop")
-            : postStartCustom(startWifiEnabled, startBluetoothEnabled);
-          action.catch((err) => {
-            setApiError(String(err));
-          });
+          if (scanning) {
+            postScan("/api/scan/stop").catch((err) => {
+              setApiError(String(err));
+            });
+            return;
+          }
+          setScanSetupSection("wifi");
+          refreshScanSetup()
+            .then(() => setScanSetupOpen(true))
+            .catch((err) => {
+              setApiError(String(err));
+              setScanSetupOpen(true);
+            });
         }}
         apCount={accessPoints.length}
         clientCount={allClients.length}
@@ -462,10 +446,9 @@ const Index = () => {
             body: JSON.stringify(next),
           });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          await postStartCustom(Boolean(next.wifi_enabled), Boolean(next.bluetooth_enabled));
           await refreshScanSetup();
           await refreshMeta();
-          setStartWifiEnabled(Boolean(next.wifi_enabled));
-          setStartBluetoothEnabled(Boolean(next.bluetooth_enabled));
         }}
       />
     </div>

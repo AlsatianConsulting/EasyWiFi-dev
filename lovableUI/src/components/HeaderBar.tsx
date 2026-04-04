@@ -4,12 +4,7 @@ interface HeaderBarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
   scanning: boolean;
-  canStart: boolean;
   onToggleScan: () => void;
-  startWifiEnabled: boolean;
-  startBluetoothEnabled: boolean;
-  onStartWifiEnabledChange: (enabled: boolean) => void;
-  onStartBluetoothEnabledChange: (enabled: boolean) => void;
   apCount: number;
   clientCount: number;
   onOpenPreferences: () => void;
@@ -25,12 +20,7 @@ const HeaderBar = ({
   activeTab,
   onTabChange,
   scanning,
-  canStart,
   onToggleScan,
-  startWifiEnabled,
-  startBluetoothEnabled,
-  onStartWifiEnabledChange,
-  onStartBluetoothEnabledChange,
   apCount,
   clientCount,
   onOpenPreferences,
@@ -76,34 +66,12 @@ const HeaderBar = ({
           <Settings className="h-3.5 w-3.5 md:h-4 md:w-4" />
         </button>
 
-        {!scanning && (
-          <div className="flex items-center gap-1 rounded-md border border-border bg-secondary/40 p-1 text-[10px]">
-            <button
-              onClick={() => onStartWifiEnabledChange(!startWifiEnabled)}
-              className={`rounded px-2 py-1 ${startWifiEnabled ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
-              title="Include Wi-Fi in next scan"
-            >
-              Wi-Fi
-            </button>
-            <button
-              onClick={() => onStartBluetoothEnabledChange(!startBluetoothEnabled)}
-              className={`rounded px-2 py-1 ${startBluetoothEnabled ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
-              title="Include Bluetooth in next scan"
-            >
-              Bluetooth
-            </button>
-          </div>
-        )}
-
         <button
           onClick={onToggleScan}
-          disabled={!scanning && !canStart}
           className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors md:gap-1.5 md:px-3 md:py-1.5 md:text-xs ${
             scanning
               ? "bg-destructive text-destructive-foreground"
-              : canStart
-                ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-muted-foreground"
+              : "bg-primary text-primary-foreground"
           }`}
         >
           <span className={`h-2 w-2 rounded-full ${scanning ? "animate-pulse bg-primary-foreground" : "bg-primary-foreground/50"}`} />

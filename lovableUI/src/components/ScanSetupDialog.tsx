@@ -186,13 +186,17 @@ const ScanSetupDialog = ({
 
         <div className="mt-2 flex items-center gap-2">
           <button
-            className={`rounded px-2 py-1 text-xs ${section === "wifi" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}
+            className={`rounded px-2 py-1 text-xs transition-colors ${
+              model.wifi_enabled ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+            } ${section === "wifi" ? "ring-2 ring-primary/60" : ""}`}
             onClick={() => setSection("wifi")}
           >
             Wi-Fi
           </button>
           <button
-            className={`rounded px-2 py-1 text-xs ${section === "bluetooth" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}
+            className={`rounded px-2 py-1 text-xs transition-colors ${
+              model.bluetooth_enabled ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+            } ${section === "bluetooth" ? "ring-2 ring-primary/60" : ""}`}
             onClick={() => setSection("bluetooth")}
           >
             Bluetooth
@@ -583,7 +587,7 @@ const ScanSetupDialog = ({
               }
             }}
           >
-            {saving ? "Saving..." : "Save"}
+            {saving ? "Starting..." : "Save & Start"}
           </button>
         </div>
       </DialogContent>
