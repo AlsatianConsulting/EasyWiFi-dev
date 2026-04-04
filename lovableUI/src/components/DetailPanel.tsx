@@ -1,9 +1,11 @@
 import { AccessPointRecord } from "@/data/mockData";
+import { ClientRecord } from "@/data/mockData";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import RSSIMeter from "./RSSIMeter";
 
 interface DetailPanelProps {
   ap: AccessPointRecord | null;
+  clients?: ClientRecord[];
   onNavigateToClients?: (apBssid: string) => void;
   onLockToAp?: (apBssid: string) => void;
   actionStatus?: { is_error: boolean; message: string } | null;
@@ -42,14 +44,6 @@ const PacketPieChart = ({ pm }: { pm: AccessPointRecord["packetMix"] }) => {
   );
 };
 
-const formatBytes = (bytes: number) => {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-};
-
 const formatUptime = (seconds: number | null): string => {
   if (seconds === null || seconds <= 0) return "—";
   const total = Math.floor(seconds);
@@ -63,7 +57,7 @@ const formatUptime = (seconds: number | null): string => {
   return `${s}s`;
 };
 
-const DetailPanel = ({ ap, onNavigateToClients, onLockToAp, actionStatus }: DetailPanelProps) => {
+const DetailPanel = ({ ap, clients = [], onNavigateToClients, onLockToAp, actionStatus }: DetailPanelProps) => {
   if (!ap) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
@@ -73,6 +67,15 @@ const DetailPanel = ({ ap, onNavigateToClients, onLockToAp, actionStatus }: Deta
   }
 
   const totalPackets = ap.packetMix.management + ap.packetMix.control + ap.packetMix.data + ap.packetMix.other;
+  const observedClientBands = Array.from(
+    new Set(
+      clients
+        .filter((c) => c.associatedAp?.toUpperCase() === ap.bssid.toUpperCase())
+        .map((c) => c.networkIntel.band)
+        .filter((band) => band && band !== "Unknown"),
+    ),
+  );
+  const observedClientBandLabel = observedClientBands.length > 0 ? observedClientBands.join(", ") : "—";
 
   return (
     <div className="flex flex-col gap-3 p-3 overflow-auto h-full">
@@ -104,6 +107,7 @@ const DetailPanel = ({ ap, onNavigateToClients, onLockToAp, actionStatus }: Deta
           { label: "Channel", value: ap.channel ?? "—" },
           { label: "Frequency", value: ap.frequencyMhz ? `${ap.frequencyMhz} MHz` : "—" },
           { label: "Band", value: ap.band },
+          { label: "Observed Client Bandwidth", value: observedClientBandLabel },
           { label: "Encryption", value: ap.encryptionShort },
           { label: "Full Encryption", value: ap.encryptionFull },
           { label: "First Seen", value: ap.firstSeen },

@@ -294,6 +294,7 @@ const Index = () => {
         return (
           <DetailPanel
             ap={selectedAP}
+            clients={allClients}
             onNavigateToClients={handleNavigateToClients}
             onLockToAp={(bssid) => {
               setApActionStatus({ message: "locking AP...", is_error: false });

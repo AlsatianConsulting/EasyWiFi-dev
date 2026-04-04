@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React from "react";
 
 interface RSSIMeterProps {
   rssi: number;
@@ -6,20 +6,10 @@ interface RSSIMeterProps {
 }
 
 const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi, compactOnWide = true }) => {
-  const needleRef = useRef<SVGLineElement>(null);
-
   // Map RSSI (-100 to -30) across the visible top semicircle (left=weak right=strong).
   const clampedRssi = Math.max(-100, Math.min(-30, rssi));
   const normalized = (clampedRssi + 100) / 70; // 0 (weak) to 1 (strong)
   const angle = -180 + normalized * 180; // -180° (left/red) to 0° (right/green)
-
-  useEffect(() => {
-    if (needleRef.current) {
-      needleRef.current.style.transition = "transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)";
-      needleRef.current.style.transformOrigin = "150px 130px";
-      needleRef.current.style.transform = `rotate(${angle}deg)`;
-    }
-  }, [angle]);
 
   const getLabel = () => {
     if (rssi >= -40) return "Excellent";
@@ -97,7 +87,6 @@ const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi, compactOnWide = true }) => 
 
         {/* Needle */}
         <line
-          ref={needleRef}
           x1="150"
           y1="130"
           x2="55"
@@ -105,7 +94,11 @@ const RSSIMeter: React.FC<RSSIMeterProps> = ({ rssi, compactOnWide = true }) => 
           stroke="hsl(27, 76%, 53%)"
           strokeWidth="2.5"
           strokeLinecap="round"
-          style={{ transformOrigin: "150px 130px" }}
+          style={{
+            transformOrigin: "150px 130px",
+            transform: `rotate(${angle}deg)`,
+            transition: "transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)",
+          }}
         />
 
         {/* Label */}
