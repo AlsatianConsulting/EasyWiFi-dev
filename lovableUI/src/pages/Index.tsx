@@ -93,6 +93,7 @@ const Index = () => {
   const [bluetoothDevices, setBluetoothDevices] = useState<BluetoothDeviceRecord[]>([]);
   const [scanningWifi, setScanningWifi] = useState(false);
   const [scanningBluetooth, setScanningBluetooth] = useState(false);
+  const [currentHopChannel, setCurrentHopChannel] = useState<number | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
@@ -137,6 +138,13 @@ const Index = () => {
       setBluetoothDevices(bts);
       setScanningWifi(Boolean(body.scanning_wifi));
       setScanningBluetooth(Boolean(body.scanning_bluetooth));
+      const usage = Array.isArray(body.channel_usage) ? body.channel_usage : [];
+      const lastUsage = usage.length > 0 ? usage[usage.length - 1] : null;
+      const chan =
+        lastUsage && typeof (lastUsage as { channel?: unknown }).channel === "number"
+          ? ((lastUsage as { channel: number }).channel ?? null)
+          : null;
+      setCurrentHopChannel(chan);
       setBtEnumerationStatus(body.bt_enumeration_status ?? {});
       setApiError(null);
     } catch (err) {
@@ -390,6 +398,11 @@ const Index = () => {
           <div className="flex items-center gap-4">
             <span>Interface: <span className=" text-foreground">{accessPoints[0]?.sourceAdapters?.[0] ?? "—"}</span></span>
             <span>Mode: <span className=" text-foreground">{scanningWifi ? "Monitor" : "Idle"}</span></span>
+            {scanningWifi && (
+              <span>
+                Hop Channel: <span className=" text-foreground">{currentHopChannel ?? "—"}</span>
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-4">
             {apiError && <span className=" text-destructive">API error: {apiError}</span>}
