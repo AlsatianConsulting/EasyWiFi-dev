@@ -7,7 +7,7 @@ use crate::settings::{
 use anyhow::{Context, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -1021,13 +1021,59 @@ fn start_scans_with_selection(
     }
 
     if wifi_enabled && state.runtime.capture.is_none() {
-        let enabled_interfaces = state
+        let discovered_ifaces = capture::list_interfaces().unwrap_or_default();
+        let discovered_names = discovered_ifaces
+            .iter()
+            .map(|iface| iface.name.clone())
+            .collect::<HashSet<_>>();
+        let mut enabled_interfaces = state
             .settings
             .interfaces
             .iter()
             .filter(|i| i.enabled)
+            .filter(|i| discovered_names.contains(&i.interface_name))
             .cloned()
             .collect::<Vec<_>>();
+        if enabled_interfaces.is_empty() {
+            let fallback_name = discovered_ifaces
+                .iter()
+                .find(|iface| iface.name.starts_with("wlx") || iface.name.starts_with("wlan"))
+                .or_else(|| discovered_ifaces.first())
+                .map(|iface| iface.name.clone());
+            if let Some(fallback_name) = fallback_name {
+                push_log(
+                    state,
+                    format!(
+                        "selected Wi-Fi interface unavailable; falling back to {}",
+                        fallback_name
+                    ),
+                );
+                for iface in &mut state.settings.interfaces {
+                    iface.enabled = iface.interface_name == fallback_name;
+                }
+                if !state
+                    .settings
+                    .interfaces
+                    .iter()
+                    .any(|iface| iface.interface_name == fallback_name)
+                {
+                    state.settings.interfaces.push(InterfaceSettings {
+                        interface_name: fallback_name.clone(),
+                        monitor_interface_name: None,
+                        channel_mode: ChannelSelectionMode::default(),
+                        enabled: true,
+                    });
+                }
+                state.settings.save_to_disk().ok();
+                enabled_interfaces = state
+                    .settings
+                    .interfaces
+                    .iter()
+                    .filter(|i| i.enabled && i.interface_name == fallback_name)
+                    .cloned()
+                    .collect::<Vec<_>>();
+            }
+        }
         let mut prepared_interfaces = Vec::new();
         for iface in enabled_interfaces {
             match capture::prepare_interface_for_capture(iface.clone(), true) {
