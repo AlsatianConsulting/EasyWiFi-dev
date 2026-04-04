@@ -175,13 +175,6 @@ const ScanSetupDialog = ({
   }, [model, hopPreset, hopPresetChannels]);
   const lockChannel = model?.locked_channel ?? bandChannels[0] ?? sortedChannels[0] ?? 1;
   const lockAllowedModes = useMemo(() => modesForChannel(caps.ht_modes, lockChannel), [caps.ht_modes, lockChannel]);
-  const selectableGlobalModes = useMemo(() => {
-    if (!model) return [] as string[];
-    if (model.mode === "locked") return lockAllowedModes;
-    if (hopPreset === "selected") return caps.ht_modes;
-    return [] as string[];
-  }, [model, hopPreset, lockAllowedModes, caps.ht_modes]);
-
   if (!model) return null;
 
   return (
@@ -275,50 +268,10 @@ const ScanSetupDialog = ({
               </Select>
             </div>
 
-            {model.mode === "locked" && (
-              <div className="space-y-2">
-                <span className="text-xs text-muted-foreground">
-                  {model.mode === "locked"
-                    ? `Bandwidths for Channel ${lockChannel}`
-                    : "Bandwidths (default: all)"}
-                </span>
-                <div className="max-h-24 overflow-auto rounded border border-border p-2 grid grid-cols-3 gap-1">
-                  {selectableGlobalModes.map((mode) => {
-                    const checked = model.wifi_bandwidths.includes(mode);
-                    return (
-                      <label key={mode} className="flex items-center gap-1 text-[11px]">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            const enabled = e.target.checked;
-                            setModel((m) => {
-                              if (!m) return m;
-                              const next = enabled
-                                ? [...m.wifi_bandwidths, mode]
-                                : m.wifi_bandwidths.filter((value) => value !== mode);
-                              if (m.mode === "locked") {
-                                if (!enabled) {
-                                  return m;
-                                }
-                                return { ...m, wifi_bandwidths: [mode], locked_ht_mode: mode };
-                              }
-                              return { ...m, wifi_bandwidths: next };
-                            });
-                          }}
-                        />
-                        {mode}
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
             {model.mode === "locked" ? (
-              <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <span className="text-xs text-muted-foreground">Channel</span>
+                  <span className="text-xs text-muted-foreground">Channel Dropdown</span>
                   <Select
                     value={String(model.locked_channel ?? sortedChannels[0] ?? 1)}
                     onValueChange={(value) =>
@@ -345,6 +298,34 @@ const ScanSetupDialog = ({
                       {sortedChannels.map((ch) => (
                         <SelectItem key={ch} value={String(ch)}>
                           {ch}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Bandwidth Dropdown</span>
+                  <Select
+                    value={
+                      model.locked_ht_mode && lockAllowedModes.includes(model.locked_ht_mode)
+                        ? model.locked_ht_mode
+                        : lockAllowedModes[0] ?? "HT20"
+                    }
+                    onValueChange={(value) =>
+                      setModel((m) =>
+                        m
+                          ? { ...m, locked_ht_mode: value, wifi_bandwidths: [value] }
+                          : m,
+                      )
+                    }
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {lockAllowedModes.map((mode) => (
+                        <SelectItem key={mode} value={mode}>
+                          {mode}
                         </SelectItem>
                       ))}
                     </SelectContent>
