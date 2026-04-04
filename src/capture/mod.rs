@@ -2358,19 +2358,28 @@ fn run_channel_control_loop(
                 "channel hop set failed on {} channel {} ({}): {}",
                 interface_name, channel, ht_mode, err
             )));
-            active_targets.retain(|(candidate, _)| *candidate != channel);
+            active_targets.retain(|(candidate, mode)| {
+                !(*candidate == channel && mode.eq_ignore_ascii_case(&ht_mode))
+            });
             if active_targets.is_empty() {
                 let _ = sender.send(CaptureEvent::Log(format!(
-                    "channel hopper stopped on {}; no valid channels remain after removing channel {}",
-                    interface_name, channel
+                    "channel hopper stopped on {}; no valid channel/width targets remain after removing {} ({})",
+                    interface_name, channel, ht_mode
                 )));
                 break;
             }
+            let remaining_channels = active_targets
+                .iter()
+                .map(|(ch, _)| *ch)
+                .collect::<HashSet<_>>()
+                .len();
             let _ = sender.send(CaptureEvent::Log(format!(
-                "removed invalid channel {} from hopper on {}; {} channels remain",
+                "removed invalid target {} ({}) from hopper on {}; {} targets across {} channels remain",
                 channel,
+                ht_mode,
                 interface_name,
-                active_targets.len()
+                active_targets.len(),
+                remaining_channels
             )));
             if index >= active_targets.len() {
                 index = 0;

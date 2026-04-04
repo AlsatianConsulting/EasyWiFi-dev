@@ -1089,12 +1089,10 @@ fn start_scans_with_selection(
                         push_log(state, line);
                     }
                     if let Some(original) = prepared.original_type.as_deref() {
-                        if !original.eq_ignore_ascii_case("monitor") {
-                            state.wifi_interface_restore_types.insert(
-                                prepared.interface.interface_name.clone(),
-                                original.to_string(),
-                            );
-                        }
+                        state.wifi_interface_restore_types.insert(
+                            prepared.interface.interface_name.clone(),
+                            original.to_string(),
+                        );
                     }
                     prepared_interfaces.push(prepared.interface);
                 }

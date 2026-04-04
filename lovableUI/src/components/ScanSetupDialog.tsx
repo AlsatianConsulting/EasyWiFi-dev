@@ -574,7 +574,7 @@ const ScanSetupDialog = ({
                               ? model.channel_ht_modes?.[String(ch)]
                               : hopPreset === "selected"
                                 ? model.wifi_bandwidths
-                                : caps.ht_modes
+                                : ["HT20"]
                           ).filter((mode) => Boolean(mode) && modeAllowedForChannel(mode, ch)),
                         ]),
                       )
