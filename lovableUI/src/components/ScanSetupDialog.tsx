@@ -299,7 +299,7 @@ const ScanSetupDialog = ({
               </Select>
             </div>
 
-            {(model.mode === "locked" || hopPreset === "selected") && (
+            {model.mode === "locked" && (
               <div className="space-y-2">
                 <span className="text-xs text-muted-foreground">
                   {model.mode === "locked"
