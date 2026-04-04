@@ -556,6 +556,7 @@ impl StorageEngine {
                 country_code_80211d: row.get(4)?,
                 channel: channel_opt.map(|v| v as u16),
                 frequency_mhz: frequency_opt.map(|v| v as u32),
+                channel_width_mhz: None,
                 band: parse_band_label(&band_label),
                 encryption_short: row.get(8)?,
                 encryption_full: row.get(9)?,

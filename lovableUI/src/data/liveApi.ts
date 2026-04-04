@@ -85,6 +85,7 @@ export const mapAccessPoint = (raw: unknown): AccessPointRecord => {
     countryCode80211d: asString(r.country_code_80211d) || null,
     channel: asNullableNumber(r.channel),
     frequencyMhz: asNullableNumber(r.frequency_mhz),
+    channelWidthMhz: asNullableNumber(r.channel_width_mhz),
     band: toBand(r.band),
     encryptionShort: asString(r.encryption_short, "Unknown"),
     encryptionFull: asString(r.encryption_full, "Unknown"),

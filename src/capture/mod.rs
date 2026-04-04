@@ -840,16 +840,45 @@ pub fn prepare_interface_for_capture(
         ));
         interface.interface_name.clone()
     } else {
-        let active_iface = set_interface_monitor_mode(
-            &interface.interface_name,
-            interface.monitor_interface_name.as_deref(),
-        )
-        .with_context(|| {
-            format!(
-                "failed to enable monitor mode on {}",
-                interface.interface_name
-            )
-        })?;
+        let mut last_err = None;
+        let mut active_iface = None::<String>;
+        for attempt in 0..3 {
+            match set_interface_monitor_mode(
+                &interface.interface_name,
+                interface.monitor_interface_name.as_deref(),
+            ) {
+                Ok(name) => {
+                    active_iface = Some(name);
+                    break;
+                }
+                Err(err) => {
+                    let err_text = format!("{err:#}");
+                    last_err = Some(err);
+                    if err_text.to_lowercase().contains("resource busy") && attempt < 2 {
+                        thread::sleep(Duration::from_millis(300));
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+        let active_iface = match active_iface {
+            Some(name) => name,
+            None => {
+                let err = last_err.unwrap_or_else(|| {
+                    anyhow::anyhow!(
+                        "failed to enable monitor mode on {}",
+                        interface.interface_name
+                    )
+                });
+                return Err(err).with_context(|| {
+                    format!(
+                        "failed to enable monitor mode on {}",
+                        interface.interface_name
+                    )
+                });
+            }
+        };
         if active_iface != interface.interface_name {
             interface.monitor_interface_name = Some(active_iface.clone());
         } else {
@@ -1404,6 +1433,11 @@ fn run_interface_capture(
     let supports_wps_serial_number_field = tshark_supports_field("wps.serial_number");
     let supports_wps_device_name_field = tshark_supports_field("wps.device_name");
     let supports_wps_ssid_field = tshark_supports_field("wps.ssid");
+    let supports_wlan_radio_11n_bandwidth_field = tshark_supports_field("wlan_radio.11n.bandwidth");
+    let supports_wlan_radio_11ac_bandwidth_field =
+        tshark_supports_field("wlan_radio.11ac.bandwidth");
+    let supports_wlan_ht_info_chanwidth_field = tshark_supports_field("wlan.ht.info.chanwidth");
+    let supports_wlan_vht_op_channelwidth_field = tshark_supports_field("wlan.vht.op.channelwidth");
     let supports_radiotap_rssi_field = tshark_supports_field("radiotap.dbm_antsignal");
     let supports_ppi_rssi_field = tshark_supports_field("ppi.dbm_antsignal");
     if !supports_radiotap_rssi_field && !supports_ppi_rssi_field {
@@ -1444,6 +1478,10 @@ fn run_interface_capture(
         has_wps_serial_number_field: supports_wps_serial_number_field,
         has_wps_device_name_field: supports_wps_device_name_field,
         has_wps_ssid_field: supports_wps_ssid_field,
+        has_wlan_radio_11n_bandwidth_field: supports_wlan_radio_11n_bandwidth_field,
+        has_wlan_radio_11ac_bandwidth_field: supports_wlan_radio_11ac_bandwidth_field,
+        has_wlan_ht_info_chanwidth_field: supports_wlan_ht_info_chanwidth_field,
+        has_wlan_vht_op_channelwidth_field: supports_wlan_vht_op_channelwidth_field,
     };
 
     let build_decoder_args = |link_type: &str| {
@@ -1483,6 +1521,18 @@ fn run_interface_capture(
         }
         push_decoder_field("wlan_radio.channel");
         push_decoder_field("wlan_radio.frequency");
+        if supports_wlan_radio_11n_bandwidth_field {
+            push_decoder_field("wlan_radio.11n.bandwidth");
+        }
+        if supports_wlan_radio_11ac_bandwidth_field {
+            push_decoder_field("wlan_radio.11ac.bandwidth");
+        }
+        if supports_wlan_ht_info_chanwidth_field {
+            push_decoder_field("wlan.ht.info.chanwidth");
+        }
+        if supports_wlan_vht_op_channelwidth_field {
+            push_decoder_field("wlan.vht.op.channelwidth");
+        }
         push_decoder_field("wlan.fc.type");
         push_decoder_field("wlan.fc.subtype");
         if let Some(field) = &eapol_msg_field {
@@ -1898,6 +1948,7 @@ fn process_live_tshark_fields(
                 }
                 ap.channel = frame.channel;
                 ap.frequency_mhz = frame.frequency;
+                ap.channel_width_mhz = frame.channel_width_mhz.or(ap.channel_width_mhz);
                 ap.band = SpectrumBand::from_frequency_mhz(ap.frequency_mhz);
                 ap.rssi_dbm = frame.rssi;
                 if let Some((short, full)) = classify_ap_encryption(&frame) {
@@ -2466,6 +2517,7 @@ struct ParsedFrame {
     rssi: Option<i32>,
     channel: Option<u16>,
     frequency: Option<u32>,
+    channel_width_mhz: Option<u32>,
     fc_type: Option<u8>,
     subtype: Option<u8>,
     eapol_msg: Option<u8>,
@@ -2524,6 +2576,10 @@ struct TSharkParseLayout {
     has_wps_serial_number_field: bool,
     has_wps_device_name_field: bool,
     has_wps_ssid_field: bool,
+    has_wlan_radio_11n_bandwidth_field: bool,
+    has_wlan_radio_11ac_bandwidth_field: bool,
+    has_wlan_ht_info_chanwidth_field: bool,
+    has_wlan_vht_op_channelwidth_field: bool,
 }
 
 fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFrame> {
@@ -2568,6 +2624,43 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
     i += 1;
     let frequency = parse_opt_u32(fields.get(i).copied().unwrap_or(""));
     i += 1;
+    let bandwidth_11n = if layout.has_wlan_radio_11n_bandwidth_field {
+        let v = parse_opt_u32(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let bandwidth_11ac = if layout.has_wlan_radio_11ac_bandwidth_field {
+        let v = parse_opt_u32(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let ht_info_chanwidth = if layout.has_wlan_ht_info_chanwidth_field {
+        let v = parse_opt_bool(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let vht_op_channelwidth = if layout.has_wlan_vht_op_channelwidth_field {
+        let v = parse_opt_u8(fields.get(i).copied().unwrap_or(""));
+        i += 1;
+        v
+    } else {
+        None
+    };
+    let vht_width_mhz = match vht_op_channelwidth {
+        Some(0) => None,
+        Some(1) => Some(80),
+        Some(2) => Some(160),
+        Some(3) => Some(160),
+        _ => None,
+    };
+    let ht_width_mhz = ht_info_chanwidth.map(|is_40| if is_40 { 40 } else { 20 });
+    let channel_width_mhz = bandwidth_11ac.or(bandwidth_11n).or(vht_width_mhz).or(ht_width_mhz);
     let fc_type = parse_opt_u8(fields.get(i).copied().unwrap_or(""));
     i += 1;
     let subtype = parse_opt_u8(fields.get(i).copied().unwrap_or(""));
@@ -2809,6 +2902,7 @@ fn parse_tshark_line(line: &str, layout: TSharkParseLayout) -> Option<ParsedFram
         rssi,
         channel,
         frequency,
+        channel_width_mhz,
         fc_type,
         subtype,
         eapol_msg,
@@ -3157,6 +3251,10 @@ mod tests {
             has_wps_serial_number_field: false,
             has_wps_device_name_field: false,
             has_wps_ssid_field: false,
+            has_wlan_radio_11n_bandwidth_field: false,
+            has_wlan_radio_11ac_bandwidth_field: false,
+            has_wlan_ht_info_chanwidth_field: false,
+            has_wlan_vht_op_channelwidth_field: false,
         }
     }
 

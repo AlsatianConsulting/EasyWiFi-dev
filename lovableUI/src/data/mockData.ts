@@ -31,6 +31,7 @@ export interface AccessPointRecord {
   countryCode80211d: string | null;
   channel: number | null;
   frequencyMhz: number | null;
+  channelWidthMhz: number | null;
   band: "2.4 GHz" | "5 GHz" | "6 GHz" | "Unknown";
   encryptionShort: string;
   encryptionFull: string;
@@ -118,7 +119,7 @@ export interface BluetoothDeviceRecord {
 export const accessPoints: AccessPointRecord[] = [
   {
     bssid: "AA:BB:CC:11:22:33", ssid: "CorpNet-5G", ouiManufacturer: "Cisco Systems",
-    sourceAdapters: ["wlan0mon"], countryCode80211d: "US", channel: 36, frequencyMhz: 5180,
+    sourceAdapters: ["wlan0mon"], countryCode80211d: "US", channel: 36, frequencyMhz: 5180, channelWidthMhz: 80,
     band: "5 GHz", encryptionShort: "WPA3", encryptionFull: "WPA3-SAE CCMP",
     rssiDbm: -42, numberOfClients: 14, firstSeen: "14:22:01", lastSeen: "14:35:12",
     handshakeCount: 2, notes: null, uptimeBeacons: 4521, wps: null,
@@ -126,7 +127,7 @@ export const accessPoints: AccessPointRecord[] = [
   },
   {
     bssid: "DD:EE:FF:44:55:66", ssid: "GuestWiFi", ouiManufacturer: "Ubiquiti Inc",
-    sourceAdapters: ["wlan0mon"], countryCode80211d: "US", channel: 6, frequencyMhz: 2437,
+    sourceAdapters: ["wlan0mon"], countryCode80211d: "US", channel: 6, frequencyMhz: 2437, channelWidthMhz: 20,
     band: "2.4 GHz", encryptionShort: "WPA2", encryptionFull: "WPA2-PSK CCMP",
     rssiDbm: -58, numberOfClients: 8, firstSeen: "14:22:01", lastSeen: "14:35:10",
     handshakeCount: 0, notes: null, uptimeBeacons: 3890, wps: { version: "2.0", state: "Configured", configMethods: "PBC", manufacturer: "Ubiquiti", modelName: "UAP-AC-Pro", modelNumber: null, serialNumber: null },
@@ -134,7 +135,7 @@ export const accessPoints: AccessPointRecord[] = [
   },
   {
     bssid: "11:22:33:AA:BB:CC", ssid: "IoT-Devices", ouiManufacturer: "TP-Link Technologies",
-    sourceAdapters: ["wlan0mon"], countryCode80211d: null, channel: 1, frequencyMhz: 2412,
+    sourceAdapters: ["wlan0mon"], countryCode80211d: null, channel: 1, frequencyMhz: 2412, channelWidthMhz: 20,
     band: "2.4 GHz", encryptionShort: "WPA2", encryptionFull: "WPA2-PSK TKIP+CCMP",
     rssiDbm: -65, numberOfClients: 23, firstSeen: "14:22:03", lastSeen: "14:35:11",
     handshakeCount: 0, notes: null, uptimeBeacons: 4100,  wps: null,
@@ -142,7 +143,7 @@ export const accessPoints: AccessPointRecord[] = [
   },
   {
     bssid: "44:55:66:DD:EE:FF", ssid: "NETGEAR-Home", ouiManufacturer: "Netgear Inc",
-    sourceAdapters: ["wlan0mon"], countryCode80211d: null, channel: 11, frequencyMhz: 2462,
+    sourceAdapters: ["wlan0mon"], countryCode80211d: null, channel: 11, frequencyMhz: 2462, channelWidthMhz: 20,
     band: "2.4 GHz", encryptionShort: "WPA", encryptionFull: "WPA-PSK TKIP",
     rssiDbm: -71, numberOfClients: 3, firstSeen: "14:22:05", lastSeen: "14:35:08",
     handshakeCount: 0, notes: null, uptimeBeacons: 3200, wps: { version: "1.0", state: "Not Configured", configMethods: "PBC Label", manufacturer: "Netgear", modelName: "R6700", modelNumber: null, serialNumber: null },
@@ -150,7 +151,7 @@ export const accessPoints: AccessPointRecord[] = [
   },
   {
     bssid: "77:88:99:AA:BB:CC", ssid: "FreeWiFi", ouiManufacturer: null,
-    sourceAdapters: ["wlan0mon"], countryCode80211d: null, channel: 44, frequencyMhz: 5220,
+    sourceAdapters: ["wlan0mon"], countryCode80211d: null, channel: 44, frequencyMhz: 5220, channelWidthMhz: 80,
     band: "5 GHz", encryptionShort: "OPEN", encryptionFull: "Open",
     rssiDbm: -78, numberOfClients: 1, firstSeen: "14:25:10", lastSeen: "14:34:55",
     handshakeCount: 0, notes: null, uptimeBeacons: 1800, wps: null,
@@ -158,7 +159,7 @@ export const accessPoints: AccessPointRecord[] = [
   },
   {
     bssid: "CC:DD:EE:11:22:33", ssid: "Lab-6GHz", ouiManufacturer: "Intel Corporation",
-    sourceAdapters: ["wlan0mon"], countryCode80211d: "US", channel: 1, frequencyMhz: 5955,
+    sourceAdapters: ["wlan0mon"], countryCode80211d: "US", channel: 1, frequencyMhz: 5955, channelWidthMhz: 160,
     band: "6 GHz", encryptionShort: "WPA3", encryptionFull: "WPA3-SAE CCMP-256",
     rssiDbm: -35, numberOfClients: 5, firstSeen: "14:22:00", lastSeen: "14:35:12",
     handshakeCount: 1, notes: null, uptimeBeacons: 5100, wps: null,
@@ -166,7 +167,7 @@ export const accessPoints: AccessPointRecord[] = [
   },
   {
     bssid: "FF:11:22:33:44:55", ssid: "xfinitywifi", ouiManufacturer: "Comcast",
-    sourceAdapters: ["wlan0mon"], countryCode80211d: null, channel: 149, frequencyMhz: 5745,
+    sourceAdapters: ["wlan0mon"], countryCode80211d: null, channel: 149, frequencyMhz: 5745, channelWidthMhz: 80,
     band: "5 GHz", encryptionShort: "OPEN", encryptionFull: "Open",
     rssiDbm: -82, numberOfClients: 0, firstSeen: "14:28:15", lastSeen: "14:33:40",
     handshakeCount: 0, notes: null, uptimeBeacons: 900, wps: null,
@@ -174,7 +175,7 @@ export const accessPoints: AccessPointRecord[] = [
   },
   {
     bssid: "AA:CC:EE:22:44:66", ssid: "SecureVault", ouiManufacturer: "Aruba Networks",
-    sourceAdapters: ["wlan0mon"], countryCode80211d: "US", channel: 48, frequencyMhz: 5240,
+    sourceAdapters: ["wlan0mon"], countryCode80211d: "US", channel: 48, frequencyMhz: 5240, channelWidthMhz: 80,
     band: "5 GHz", encryptionShort: "WPA3", encryptionFull: "WPA3-Enterprise CCMP",
     rssiDbm: -51, numberOfClients: 7, firstSeen: "14:22:01", lastSeen: "14:35:12",
     handshakeCount: 0, notes: null, uptimeBeacons: 4300, wps: null,
