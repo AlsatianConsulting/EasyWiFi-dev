@@ -778,10 +778,10 @@ pub fn list_supported_ht_modes(interface: &str) -> Result<Vec<String>> {
     let mut modes = Vec::new();
     let lower = text.to_ascii_lowercase();
 
-    // Conservative lock-channel modes that work with `iw dev set channel`.
+    // Modes that map to `iw dev <iface> set channel <ch> <mode>`.
     modes.push("HT20".to_string());
 
-    if lower.contains("ht20/ht40") || lower.contains("ht capabilities") {
+    if lower.contains("ht20/ht40") || lower.contains("ht capabilities") || lower.contains("ht40") {
         modes.push("HT40+".to_string());
         modes.push("HT40-".to_string());
     }
@@ -789,12 +789,35 @@ pub fn list_supported_ht_modes(interface: &str) -> Result<Vec<String>> {
         modes.push("NOHT".to_string());
     }
 
-    // Expose read-only hints for modern widths in the UI capability table.
+    if lower.contains("vht capabilities")
+        || lower.contains("he iftypes")
+        || lower.contains("he capabilities")
+        || lower.contains("eht")
+    {
+        modes.push("80MHz".to_string());
+    }
+    if lower.contains("160 mhz") || lower.contains("160mhz") || lower.contains("160") {
+        modes.push("160MHz".to_string());
+    }
+    if lower.contains("80+80") {
+        modes.push("80+80MHz".to_string());
+    }
+    if lower.contains("5 mhz") || lower.contains("5mhz") {
+        modes.push("5MHz".to_string());
+    }
+    if lower.contains("10 mhz") || lower.contains("10mhz") {
+        modes.push("10MHz".to_string());
+    }
+
+    // Keep capability hints visible for power users.
     if lower.contains("vht capabilities") {
         modes.push("VHT (device capability)".to_string());
     }
     if lower.contains("he iftypes") || lower.contains("he capabilities") {
         modes.push("HE (device capability)".to_string());
+    }
+    if lower.contains("eht") {
+        modes.push("EHT (device capability)".to_string());
     }
 
     modes.sort();

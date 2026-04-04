@@ -136,6 +136,7 @@ struct ScanSetupResponse {
     hop_channels: Vec<u16>,
     hop_dwell_ms: u64,
     hop_ht_mode: String,
+    channel_ht_modes: BTreeMap<u16, Vec<String>>,
     wifi_band: String,
     wifi_bandwidths: Vec<String>,
     bluetooth_controller: Option<String>,
@@ -152,6 +153,7 @@ struct ScanSetupRequest {
     hop_channels: Option<Vec<u16>>,
     hop_dwell_ms: Option<u64>,
     hop_ht_mode: Option<String>,
+    channel_ht_modes: Option<BTreeMap<u16, Vec<String>>>,
     wifi_band: Option<String>,
     wifi_bandwidths: Option<Vec<String>>,
     bluetooth_controller: Option<String>,
@@ -427,6 +429,7 @@ fn handle_client(
         let mut hop_channels = vec![1, 6, 11];
         let mut hop_dwell_ms = 200_u64;
         let mut hop_ht_mode = "HT20".to_string();
+        let mut channel_ht_modes = BTreeMap::<u16, Vec<String>>::new();
         let mut wifi_band = "all".to_string();
         let mut wifi_bandwidths = vec!["HT20".to_string()];
         if let Some(iface) = s.settings.interfaces.iter().find(|iface| iface.enabled) {
@@ -445,15 +448,16 @@ fn handle_client(
                     channels,
                     dwell_ms,
                     ht_mode,
-                    channel_ht_modes,
+                    channel_ht_modes: saved_channel_ht_modes,
                 } => {
                     mode = "hop_specific".to_string();
                     hop_channels = channels.clone();
                     hop_dwell_ms = *dwell_ms;
                     hop_ht_mode = ht_mode.clone();
-                    if !channel_ht_modes.is_empty() {
+                    channel_ht_modes = saved_channel_ht_modes.clone();
+                    if !saved_channel_ht_modes.is_empty() {
                         let mut merged = Vec::<String>::new();
-                        for modes in channel_ht_modes.values() {
+                        for modes in saved_channel_ht_modes.values() {
                             for mode in modes {
                                 if !merged.iter().any(|m| m.eq_ignore_ascii_case(mode)) {
                                     merged.push(mode.clone());
@@ -483,6 +487,7 @@ fn handle_client(
             hop_channels,
             hop_dwell_ms,
             hop_ht_mode,
+            channel_ht_modes,
             wifi_band,
             wifi_bandwidths,
             bluetooth_controller: s.settings.bluetooth_controller.clone(),
@@ -579,7 +584,27 @@ fn handle_client(
                 };
             }
             let mut channel_ht_modes = BTreeMap::<u16, Vec<String>>::new();
-            if !wifi_bandwidths.is_empty() {
+            let requested_channel_ht_modes = req.channel_ht_modes.unwrap_or_default();
+            if !requested_channel_ht_modes.is_empty() {
+                for channel in &channels {
+                    let requested_modes = requested_channel_ht_modes
+                        .get(channel)
+                        .cloned()
+                        .or_else(|| requested_channel_ht_modes.get(&0).cloned())
+                        .unwrap_or_default();
+                    let mut filtered_modes = requested_modes
+                        .into_iter()
+                        .map(|mode| mode.trim().to_string())
+                        .filter(|mode| !mode.is_empty())
+                        .filter(|mode| supported_modes.is_empty() || supported_modes.contains(mode))
+                        .collect::<Vec<_>>();
+                    filtered_modes.sort();
+                    filtered_modes.dedup();
+                    if !filtered_modes.is_empty() {
+                        channel_ht_modes.insert(*channel, filtered_modes);
+                    }
+                }
+            } else if !wifi_bandwidths.is_empty() {
                 for channel in &channels {
                     channel_ht_modes.insert(*channel, wifi_bandwidths.clone());
                 }
@@ -1011,7 +1036,6 @@ fn actionable_ht_modes_for_interface(interface: &str) -> Vec<String> {
         .map(|mode| mode.trim().to_string())
         .filter(|mode| !mode.is_empty())
         .filter(|mode| !mode.contains("device capability"))
-        .filter(|mode| matches!(mode.as_str(), "NOHT" | "HT20" | "HT40+" | "HT40-"))
         .collect::<Vec<_>>();
     if modes.is_empty() {
         modes.push("HT20".to_string());

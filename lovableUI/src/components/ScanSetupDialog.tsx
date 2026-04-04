@@ -24,6 +24,7 @@ export interface ScanSetupModel {
   hop_channels: number[];
   hop_dwell_ms: number;
   hop_ht_mode: string;
+  channel_ht_modes?: Record<string, string[]>;
   wifi_band: "all" | "2.4" | "5" | "6";
   wifi_bandwidths: string[];
   bluetooth_controller: string | null;
@@ -62,6 +63,7 @@ const ScanSetupDialog = ({
   const [model, setModel] = useState<ScanSetupModel | null>(setup);
   const [caps, setCaps] = useState<InterfaceCapabilities>(defaultCapabilities);
   const [saving, setSaving] = useState(false);
+  const [hopPreset, setHopPreset] = useState<"all" | "all_24" | "all_5" | "all_6" | "selected">("selected");
 
   useEffect(() => {
     if (open) {
@@ -104,6 +106,42 @@ const ScanSetupDialog = ({
     if (band === "5") return sortedChannels.filter((ch) => ch >= 32 && ch <= 177);
     return sortedChannels.filter((ch) => ch > 177);
   }, [model?.wifi_band, sortedChannels]);
+
+  useEffect(() => {
+    if (!open || !model) return;
+    const selected = [...(model.hop_channels || [])].sort((a, b) => a - b);
+    const all = [...sortedChannels].sort((a, b) => a - b);
+    const all24 = sortedChannels.filter((ch) => ch >= 1 && ch <= 14);
+    const all5 = sortedChannels.filter((ch) => ch >= 32 && ch <= 177);
+    const all6 = sortedChannels.filter((ch) => ch > 177);
+    const same = (left: number[], right: number[]) =>
+      left.length === right.length && left.every((v, i) => v === right[i]);
+    if (all.length > 0 && same(selected, all)) {
+      setHopPreset("all");
+    } else if (all24.length > 0 && same(selected, all24)) {
+      setHopPreset("all_24");
+    } else if (all5.length > 0 && same(selected, all5)) {
+      setHopPreset("all_5");
+    } else if (all6.length > 0 && same(selected, all6)) {
+      setHopPreset("all_6");
+    } else {
+      setHopPreset("selected");
+    }
+  }, [open, model, sortedChannels]);
+
+  const hopPresetChannels = useMemo(() => {
+    if (hopPreset === "all") return sortedChannels;
+    if (hopPreset === "all_24") return sortedChannels.filter((ch) => ch >= 1 && ch <= 14);
+    if (hopPreset === "all_5") return sortedChannels.filter((ch) => ch >= 32 && ch <= 177);
+    if (hopPreset === "all_6") return sortedChannels.filter((ch) => ch > 177);
+    return bandChannels;
+  }, [hopPreset, sortedChannels, bandChannels]);
+
+  const effectiveHopChannels = useMemo(() => {
+    if (!model || model.mode !== "hop_specific") return [] as number[];
+    if (hopPreset === "selected") return [...model.hop_channels].sort((a, b) => a - b);
+    return [...hopPresetChannels].sort((a, b) => a - b);
+  }, [model, hopPreset, hopPresetChannels]);
 
   if (!model) return null;
 
@@ -273,31 +311,115 @@ const ScanSetupDialog = ({
               </div>
             ) : (
               <div className="space-y-2">
-                <span className="text-xs text-muted-foreground">Hop Channels</span>
-                <div className="max-h-32 overflow-auto rounded border border-border p-2 grid grid-cols-5 gap-1">
-                  {bandChannels.map((ch) => {
-                    const checked = model.hop_channels.includes(ch);
-                    return (
-                      <label key={ch} className="flex items-center gap-1 text-[11px]">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            const enabled = e.target.checked;
-                            setModel((m) => {
-                              if (!m) return m;
-                              const next = enabled
-                                ? [...m.hop_channels, ch]
-                                : m.hop_channels.filter((value) => value !== ch);
-                              return { ...m, hop_channels: next.sort((a, b) => a - b) };
-                            });
-                          }}
-                        />
-                        {ch}
-                      </label>
-                    );
-                  })}
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Hop Preset</span>
+                  <Select
+                    value={hopPreset}
+                    onValueChange={(value) => {
+                      const preset = value as "all" | "all_24" | "all_5" | "all_6" | "selected";
+                      setHopPreset(preset);
+                      if (preset === "selected") return;
+                      const next =
+                        preset === "all"
+                          ? sortedChannels
+                          : preset === "all_24"
+                            ? sortedChannels.filter((ch) => ch >= 1 && ch <= 14)
+                            : preset === "all_5"
+                              ? sortedChannels.filter((ch) => ch >= 32 && ch <= 177)
+                              : sortedChannels.filter((ch) => ch > 177);
+                      setModel((m) => (m ? { ...m, hop_channels: next, wifi_band: "all" } : m));
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Channels</SelectItem>
+                      <SelectItem value="all_24">All 2.4 GHz</SelectItem>
+                      <SelectItem value="all_5">All 5 GHz</SelectItem>
+                      <SelectItem value="all_6">All 6 GHz</SelectItem>
+                      <SelectItem value="selected">Select Channels</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
+
+                {hopPreset === "selected" && (
+                  <>
+                    <span className="text-xs text-muted-foreground">Hop Channels</span>
+                    <div className="max-h-32 overflow-auto rounded border border-border p-2 grid grid-cols-5 gap-1">
+                      {bandChannels.map((ch) => {
+                        const checked = model.hop_channels.includes(ch);
+                        return (
+                          <label key={ch} className="flex items-center gap-1 text-[11px]">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                const enabled = e.target.checked;
+                                setModel((m) => {
+                                  if (!m) return m;
+                                  const next = enabled
+                                    ? [...m.hop_channels, ch]
+                                    : m.hop_channels.filter((value) => value !== ch);
+                                  return { ...m, hop_channels: next.sort((a, b) => a - b) };
+                                });
+                              }}
+                            />
+                            {ch}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Per-Channel Bandwidths</span>
+                  <div className="max-h-44 overflow-auto rounded border border-border p-2 space-y-2">
+                    {effectiveHopChannels.map((ch) => {
+                      const selectedForChannel = new Set(
+                        model.channel_ht_modes?.[String(ch)] ?? model.wifi_bandwidths,
+                      );
+                      return (
+                        <div key={ch} className="border-b border-border/40 pb-1 last:border-b-0">
+                          <div className="text-[11px] font-medium mb-1">Channel {ch}</div>
+                          <div className="grid grid-cols-3 gap-1">
+                            {caps.ht_modes.map((mode) => {
+                              const checked = selectedForChannel.has(mode);
+                              return (
+                                <label key={`${ch}-${mode}`} className="flex items-center gap-1 text-[11px]">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const enabled = e.target.checked;
+                                      setModel((m) => {
+                                        if (!m) return m;
+                                        const current = new Set(
+                                          m.channel_ht_modes?.[String(ch)] ?? m.wifi_bandwidths,
+                                        );
+                                        if (enabled) current.add(mode);
+                                        else current.delete(mode);
+                                        const channelModes = { ...(m.channel_ht_modes ?? {}) };
+                                        channelModes[String(ch)] = Array.from(current).sort();
+                                        return { ...m, channel_ht_modes: channelModes };
+                                      });
+                                    }}
+                                  />
+                                  {mode}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {effectiveHopChannels.length === 0 && (
+                      <div className="text-[11px] text-muted-foreground">No hop channels selected.</div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
                     <span className="text-xs text-muted-foreground">Hop Dwell (ms)</span>
@@ -311,26 +433,6 @@ const ScanSetupDialog = ({
                         )
                       }
                     />
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-xs text-muted-foreground">Hop Bandwidth</span>
-                    <Select
-                      value={model.hop_ht_mode || model.wifi_bandwidths[0] || caps.ht_modes[0] || "HT20"}
-                      onValueChange={(value) =>
-                        setModel((m) => (m ? { ...m, hop_ht_mode: value } : m))
-                      }
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {caps.ht_modes.map((mode) => (
-                          <SelectItem key={mode} value={mode}>
-                            {mode}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
                   </div>
                 </div>
               </div>
@@ -383,7 +485,27 @@ const ScanSetupDialog = ({
             onClick={async () => {
               setSaving(true);
               try {
-                await onApply(model);
+                const normalizedChannelModes =
+                  model.mode === "hop_specific"
+                    ? Object.fromEntries(
+                        effectiveHopChannels.map((ch) => [
+                          String(ch),
+                          (
+                            model.channel_ht_modes?.[String(ch)]?.length
+                              ? model.channel_ht_modes?.[String(ch)]
+                              : model.wifi_bandwidths
+                          ).filter(Boolean),
+                        ]),
+                      )
+                    : {};
+                await onApply({
+                  ...model,
+                  hop_channels:
+                    model.mode === "hop_specific"
+                      ? [...effectiveHopChannels]
+                      : model.hop_channels,
+                  channel_ht_modes: normalizedChannelModes,
+                });
                 onOpenChange(false);
               } finally {
                 setSaving(false);
